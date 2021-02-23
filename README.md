@@ -4,7 +4,7 @@ I used Unity Engine to develop a 3D tile-based island generation tool. There are
 ## Explanation
 ![flowChart](island-generation-flow-chart.png)
 
-By following the procedure above, a tile-based island can be generated in the scene. The screenshot below illustrates a top-down view of a procedrual generated island created by the tool.
+By following the procedure above, a tile-based island can be generated in the scene. The screenshot below illustrates a top-down view of a procedural generated island created by the tool.
 
 ![islandExample](island.png)
 
