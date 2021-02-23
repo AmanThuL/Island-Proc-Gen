@@ -1,4 +1,4 @@
 # Island-Proc-Gen
 
-## Procedural Generation in Steps
+## My Procedural Island Generation in Steps
 ![flowChart](island-generation-flow-chart.png)
