@@ -19,7 +19,7 @@ use rand_pcg::Pcg64Mcg;
 /// A deterministic 64-bit seed.
 ///
 /// Cheap to copy everywhere — it's just a `u64`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Seed(pub u64);
 
 impl Seed {
