@@ -15,6 +15,41 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+// ─── SummaryMetrics ───────────────────────────────────────────────────────────
+
+/// Per-run numerical summary used by the golden-seed regression tests.
+///
+/// Integer fields are compared exactly; float fields use `abs_tol = 1e-4`;
+/// `*_blake3` fields are bit-exact on the same host/toolchain (see
+/// `crates/data/tests/golden_seed_regression.rs` for the full comparison
+/// semantics and the cross-platform relaxation policy).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SummaryMetrics {
+    // ── integer metrics — regression must be exact ──────────────────────────
+    pub land_cell_count: u32,
+    pub coast_cell_count: u32,
+    pub river_cell_count: u32,
+    pub basin_count: u32,
+    pub river_mouth_count: u32,
+
+    // ── float metrics — abs tolerance 1e-4 ──────────────────────────────────
+    pub max_elevation: f32,
+    pub max_elevation_filled: f32,
+    pub mean_slope: f32,
+    /// Approximate: max accumulation on any river cell (refined in Sprint 2).
+    pub longest_river_length: f32,
+    /// Mean upstream cell count across the whole grid.
+    pub total_drainage_area: f32,
+
+    // ── field hashes — bit-exact on same host/toolchain ──────────────────────
+    pub height_blake3: [u8; 32],
+    pub z_filled_blake3: [u8; 32],
+    pub flow_dir_blake3: [u8; 32],
+    pub accumulation_blake3: [u8; 32],
+    pub basin_id_blake3: [u8; 32],
+    pub river_mask_blake3: [u8; 32],
+}
+
 // ─── error ────────────────────────────────────────────────────────────────────
 
 /// Error returned when golden seeds cannot be loaded.
