@@ -30,17 +30,17 @@ fn save_io_seed_replay_roundtrip_via_tempfile() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let path = tempdir.path().join("world.ipgs");
 
-    let world = WorldState::new(
-        Seed(42),
-        make_test_preset(),
-        Resolution::new(128, 128),
-    );
+    let world = WorldState::new(Seed(42), make_test_preset(), Resolution::new(128, 128));
 
     save_world_to_file(&world, SaveMode::SeedReplay, &path).expect("save");
     let loaded = load_world_from_file(&path).expect("load");
 
     match loaded {
-        LoadedWorld::SeedReplay { seed, preset_name, resolution } => {
+        LoadedWorld::SeedReplay {
+            seed,
+            preset_name,
+            resolution,
+        } => {
             assert_eq!(seed, world.seed);
             assert_eq!(preset_name, "integration_test");
             assert_eq!(resolution, world.resolution);
@@ -58,11 +58,7 @@ fn save_io_minimal_roundtrip_via_tempfile() {
     let tempdir = tempfile::tempdir().expect("tempdir");
     let path = tempdir.path().join("world_minimal.ipgs");
 
-    let mut world = WorldState::new(
-        Seed(99),
-        make_test_preset(),
-        Resolution::new(8, 8),
-    );
+    let mut world = WorldState::new(Seed(99), make_test_preset(), Resolution::new(8, 8));
 
     // Populate both authoritative fields
     let mut height = ScalarField2D::<f32>::new(8, 8);

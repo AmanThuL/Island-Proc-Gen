@@ -50,7 +50,11 @@ impl<T: Copy + Default> ScalarField2D<T> {
     #[inline]
     pub fn index(&self, x: u32, y: u32) -> usize {
         debug_assert!(x < self.width, "x={x} out of bounds (width={})", self.width);
-        debug_assert!(y < self.height, "y={y} out of bounds (height={})", self.height);
+        debug_assert!(
+            y < self.height,
+            "y={y} out of bounds (height={})",
+            self.height
+        );
         y as usize * self.width as usize + x as usize
     }
 
@@ -111,8 +115,12 @@ impl ScalarField2D<f32> {
         let mut max = f32::NEG_INFINITY;
         let mut sum = 0.0_f64;
         for &v in &self.data {
-            if v < min { min = v; }
-            if v > max { max = v; }
+            if v < min {
+                min = v;
+            }
+            if v > max {
+                max = v;
+            }
             sum += v as f64;
         }
         let mean = (sum / n) as f32;
@@ -262,7 +270,9 @@ pub enum FieldDecodeError {
     #[error("dtype mismatch: expected {expected}, got {actual}")]
     DtypeMismatch { expected: u8, actual: u8 },
 
-    #[error("length mismatch: header says {expected_elems} elements, body has {actual_bytes} bytes")]
+    #[error(
+        "length mismatch: header says {expected_elems} elements, body has {actual_bytes} bytes"
+    )]
     LengthMismatch {
         expected_elems: u64,
         actual_bytes: usize,
@@ -337,7 +347,8 @@ impl<T: FieldDtype> ScalarField2D<T> {
         // 6. body length
         let expected_body_bytes = expected_elems
             .checked_mul(T::ELEM_SIZE as u64)
-            .expect("overflow computing expected body size") as usize;
+            .expect("overflow computing expected body size")
+            as usize;
         if body.len() != expected_body_bytes {
             return Err(FieldDecodeError::LengthMismatch {
                 expected_elems,
@@ -351,7 +362,11 @@ impl<T: FieldDtype> ScalarField2D<T> {
             data.push(T::read_elem(chunk));
         }
 
-        Ok(Self { data, width, height })
+        Ok(Self {
+            data,
+            width,
+            height,
+        })
     }
 }
 

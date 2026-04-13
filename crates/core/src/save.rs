@@ -282,8 +282,8 @@ fn write_minimal<W: Write>(world: &WorldState, w: &mut W) -> Result<(), SaveErro
     w.write_all(&world.resolution.sim_height.to_le_bytes())?;
     w.write_all(&world.seed.0.to_le_bytes())?;
 
-    let preset_ron = ron::to_string(&world.preset)
-        .map_err(|e| SaveError::PresetSerialize(e.to_string()))?;
+    let preset_ron =
+        ron::to_string(&world.preset).map_err(|e| SaveError::PresetSerialize(e.to_string()))?;
     let preset_bytes = preset_ron.as_bytes();
     w.write_all(&(preset_bytes.len() as u32).to_le_bytes())?;
     w.write_all(preset_bytes)?;
@@ -404,8 +404,7 @@ mod tests {
     }
 
     fn make_test_world_with_fields() -> WorldState {
-        let mut world =
-            WorldState::new(Seed(42), make_test_preset(), Resolution::new(16, 16));
+        let mut world = WorldState::new(Seed(42), make_test_preset(), Resolution::new(16, 16));
         world.authoritative.height = Some(make_small_field(0.5));
         world.authoritative.sediment = Some(make_small_field(0.1));
         world
@@ -424,7 +423,11 @@ mod tests {
         let loaded = read_world(&mut cursor).expect("read failed");
 
         match loaded {
-            LoadedWorld::SeedReplay { seed, preset_name, resolution } => {
+            LoadedWorld::SeedReplay {
+                seed,
+                preset_name,
+                resolution,
+            } => {
                 assert_eq!(seed, Seed(42));
                 assert_eq!(preset_name, "vol_single");
                 assert_eq!(resolution, Resolution::new(256, 256));

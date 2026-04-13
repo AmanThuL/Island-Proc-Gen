@@ -202,7 +202,8 @@ mod tests {
     fn load_malformed_returns_err() {
         // Write bad RON to a temp file and use load_from_path directly
         let mut tmp = tempfile::NamedTempFile::new().expect("temp file");
-        tmp.write_all(b"this is { not valid ron at all !!!").unwrap();
+        tmp.write_all(b"this is { not valid ron at all !!!")
+            .unwrap();
         let result = load_from_path("malformed_test", tmp.path());
         assert!(
             matches!(result, Err(PresetLoadError::Parse { .. })),

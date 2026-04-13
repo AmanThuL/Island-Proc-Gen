@@ -154,8 +154,8 @@ mod tests {
         let ron_str = ron::to_string(&original).expect("serialization should succeed");
 
         // Deserialize back from RON string
-        let restored = ron::from_str::<GoldenSeeds>(&ron_str)
-            .expect("deserialization should succeed");
+        let restored =
+            ron::from_str::<GoldenSeeds>(&ron_str).expect("deserialization should succeed");
 
         assert_eq!(original, restored);
     }

@@ -40,7 +40,10 @@ pub struct Resolution {
 impl Resolution {
     /// Build a new [`Resolution`] from simulation-grid dimensions.
     pub fn new(sim_width: u32, sim_height: u32) -> Self {
-        Self { sim_width, sim_height }
+        Self {
+            sim_width,
+            sim_height,
+        }
     }
 }
 
@@ -170,7 +173,10 @@ mod tests {
     #[test]
     fn world_state_resolution_fields() {
         let r = Resolution::new(128, 64);
-        let Resolution { sim_width, sim_height } = r;
+        let Resolution {
+            sim_width,
+            sim_height,
+        } = r;
         assert_eq!(sim_width, 128);
         assert_eq!(sim_height, 64);
     }

@@ -122,16 +122,14 @@ mod tests {
     //    graphics / windowing / UI crates in the link line.
     #[test]
     fn pipeline_runs_without_graphics() {
-        let mut world = WorldState::new(
-            Seed(42),
-            test_preset(),
-            Resolution::new(256, 256),
-        );
+        let mut world = WorldState::new(Seed(42), test_preset(), Resolution::new(256, 256));
         assert!(world.authoritative.height.is_none()); // Sprint 0: still empty
 
         let mut pipeline = SimulationPipeline::new();
         pipeline.push(Box::new(NoopStage));
-        pipeline.run(&mut world).expect("pipeline should run cleanly");
+        pipeline
+            .run(&mut world)
+            .expect("pipeline should run cleanly");
 
         assert!(world.authoritative.height.is_none()); // NoopStage leaves it empty
     }
@@ -150,11 +148,7 @@ mod tests {
 
     #[test]
     fn pipeline_propagates_stage_error() {
-        let mut world = WorldState::new(
-            Seed(0),
-            test_preset(),
-            Resolution::new(16, 16),
-        );
+        let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(16, 16));
         let mut pipeline = SimulationPipeline::new();
         pipeline.push(Box::new(BoomStage));
         let res = pipeline.run(&mut world);
@@ -182,21 +176,28 @@ mod tests {
 
     #[test]
     fn pipeline_runs_all_stages_in_order() {
-        let mut world = WorldState::new(
-            Seed(1),
-            test_preset(),
-            Resolution::new(8, 8),
-        );
+        let mut world = WorldState::new(Seed(1), test_preset(), Resolution::new(8, 8));
         let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
 
         let mut pipeline = SimulationPipeline::new();
-        pipeline.push(Box::new(CountingStage { label: "a", log: log.clone() }));
-        pipeline.push(Box::new(CountingStage { label: "b", log: log.clone() }));
-        pipeline.push(Box::new(CountingStage { label: "c", log: log.clone() }));
+        pipeline.push(Box::new(CountingStage {
+            label: "a",
+            log: log.clone(),
+        }));
+        pipeline.push(Box::new(CountingStage {
+            label: "b",
+            log: log.clone(),
+        }));
+        pipeline.push(Box::new(CountingStage {
+            label: "c",
+            log: log.clone(),
+        }));
         assert_eq!(pipeline.len(), 3);
         assert!(!pipeline.is_empty());
 
-        pipeline.run(&mut world).expect("counting stages should succeed");
+        pipeline
+            .run(&mut world)
+            .expect("counting stages should succeed");
         assert_eq!(*log.borrow(), vec!["a", "b", "c"]);
     }
 }

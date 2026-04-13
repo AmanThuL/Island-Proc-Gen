@@ -13,11 +13,7 @@ use island_core::world::WorldState;
 ///
 /// Creates the file (truncating if it exists). Delegates to
 /// [`island_core::save::write_world`] for the actual byte-level encoding.
-pub fn save_world_to_file(
-    world: &WorldState,
-    mode: SaveMode,
-    path: &Path,
-) -> anyhow::Result<()> {
+pub fn save_world_to_file(world: &WorldState, mode: SaveMode, path: &Path) -> anyhow::Result<()> {
     let mut f = std::fs::File::create(path)?;
     island_core::save::write_world(world, mode, &mut f)?;
     Ok(())
