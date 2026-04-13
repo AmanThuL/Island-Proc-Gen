@@ -1,16 +1,66 @@
-# Rust
+# ─── Rust / Cargo ─────────────────────────────────────────────────────
 /target
 **/*.rs.bk
 
-# Sprint-specific ignored directories
+# Profiling / coverage artifacts (local-only, never checked in)
+*.profraw
+*.profdata
+/flamegraph.svg
+/perf.data
+/perf.data.old
+tarpaulin-report.*
+cobertura.xml
+
+# ─── Sprint-specific ignored directories ──────────────────────────────
+# Created by the app at runtime; screenshots, reference exports, and
+# benchmark harness output. Per docs/design/sprints/sprint_0_scaffolding.md.
 /captures/
 /benchmarks/
 
-# Logs
+# ─── Obsidian vault symlinks (local editing convenience) ──────────────
+# docs/design and docs/architecture are symlinks into the author's
+# personal Obsidian vault — absolute paths that won't resolve on any
+# other machine. The canonical source of sprint plans / architecture
+# notes lives outside the repo for now.
+/docs/design
+/docs/architecture
+
+# ─── Logs ─────────────────────────────────────────────────────────────
 *.log
 
-# OS / editor
+# ─── Environment / secrets ────────────────────────────────────────────
+# Defensive — none of these should ever be committed. Keep .env.example
+# as a template if one is ever added.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# ─── Claude Code / AI tool per-user overrides ─────────────────────────
+# CLAUDE.md is committed (team context); CLAUDE.local.md is per-user
+# and must not be shared.
+CLAUDE.local.md
+
+# ─── macOS ────────────────────────────────────────────────────────────
 .DS_Store
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
+.fseventsd
+.DocumentRevisions-V100
+.TemporaryItems
+.VolumeIcon.icns
+
+# ─── Editors / IDEs ───────────────────────────────────────────────────
 .idea/
 .vscode/
+.zed/
 *.swp
+*.swo
+*.swn
+*~
