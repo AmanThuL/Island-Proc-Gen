@@ -107,6 +107,49 @@ app ──▶ render ──▶ gpu ──┐
   `0.34.1`; `wgpu` `29.0.1`; `winit` `0.30.13`. Winit 0.30 uses the
   `ApplicationHandler` trait pattern, not the legacy `EventLoop::run` closure.
   Don't mix versions without verifying the egui / wgpu compatibility matrix.
+- **`FLOW_DIR_SINK` is `0xFF`, not `0`.** `0` is already the `E` direction in
+  the D8 encoding (`D8_OFFSETS[0] = (1, 0)`). The sprint doc originally wrote
+  the sink sentinel as `0`, but that collides with east-flowing cells. Every
+  Sprint 1A hydro stage reads the sentinel via
+  `use island_core::world::{D8_OFFSETS, FLOW_DIR_SINK}` — never hardcode
+  either. The constants live in `core::world` (not `sim::hydro`) so
+  `core::validation` can reference them without a reverse dep edge.
+- **Post-pit-fill sinks are NOT exactly `{ p : flow_dir[p] == FLOW_DIR_SINK }`.**
+  `CoastMaskStage` uses Von4 for `is_coast`, while `FlowRoutingStage` picks
+  downstream neighbours from the Moore8 set. A land cell with only a
+  *diagonal* sea neighbour is therefore not classified as coast, yet its D8
+  downstream is still that sea cell. For BasinsStage and river termination
+  validation, "sink" must include "land cell whose D8 downstream is sea or
+  out-of-bounds". `sim::hydro::basins.rs` encodes this as the extended sink
+  definition.
+- **`RiverExtractionStage` must gate candidates on `is_land`.** Because of
+  the same diagonal Moore8 edge case above, sea cells can legitimately
+  accumulate upstream flow (via `AccumulationStage` propagation from land to
+  the diagonal sea neighbour) and cross the river threshold. Without the
+  land gate, those sea cells get flagged as "rivers" and `ValidationStage`
+  fires `RiverInSea`. The full Sprint 1A pipeline test in
+  `sim::validation_stage::tests` catches this regression immediately.
+- **§D5 `coastal_falloff` formula in the sprint doc is written backwards.**
+  The prose says "让 z 在 island_radius 以外平滑跌到 sea_level 以下" but
+  the literal formula `amplitude * (1 - smoothstep(0.9r, r, dist))` evaluates
+  to `amplitude` *inside* the island and `0` *outside*, which is the opposite
+  direction. The implementation uses the corrected
+  `amplitude * smoothstep(0.9r, r, dist)` (0 inside the island, amplitude at
+  the rim) — see the inline comment in
+  `crates/sim/src/geomorph/topography.rs::build_coastal_falloff`.
+- **`cargo clippy --workspace -- -D warnings`** (no `--all-targets`) is the
+  hard CI gate — matches Sprint 0 CI config. `--all-targets` surfaces
+  pre-existing `approx_constant` lints in `crates/data/src/presets.rs` unit
+  tests (`1.5708` literals) that can't be replaced with `FRAC_PI_2` as a
+  one-liner because the RON presets use `1.5708` and `assert_eq!` needs bit
+  equality. Tracked as a Sprint 2+ cleanup task.
+- **`docs/design` is a gitignored symlink** into the author's Obsidian vault.
+  The sprint doc at `docs/design/sprints/sprint_1a_terrain_water.md` is
+  therefore NOT tracked in git — local edits to it persist on disk but do
+  not land in commits. Spec clarifications discovered during implementation
+  (e.g. the §D6 `FLOW_DIR_SINK` sentinel) must be mirrored in the commit
+  message and in CLAUDE.md / PROGRESS.md so they survive outside the
+  author's machine.
 
 ---
 

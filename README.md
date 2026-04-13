@@ -11,10 +11,20 @@ This is a single-developer research project. It is **pre-alpha** — read
 
 ## Status
 
+**Sprint 1A simulation pipeline shipped 2026-04-14.** All 8 Sprint 1A sim
+stages (`TopographyStage → CoastMaskStage → PitFillStage →
+DerivedGeomorphStage → FlowRoutingStage → AccumulationStage → BasinsStage →
+RiverExtractionStage`) plus a pipeline-end `ValidationStage` run at app
+startup and fully populate `WorldState.derived.*`. Three golden-seed
+regression snapshots lock the pipeline output bit-exact on the dev machine.
+`cargo run -p app` still renders the Sprint 0 placeholder rainbow quad —
+the real triangle mesh (Task 1A.9) and descriptor-based overlays (Task
+1A.10) are pending. See [`PROGRESS.md`](PROGRESS.md) for the full
+acceptance-checklist status.
+
 **Sprint 0 (scaffolding) shipped 2026-04-13.** The workspace boots, the
 `WorldState` three-layer split is in place, and a placeholder rainbow quad
-renders through the winit + wgpu + egui shell with orbit/pan/zoom. Sprint 1A
-(terrain + water skeleton) is next.
+renders through the winit + wgpu + egui shell with orbit/pan/zoom.
 
 ## Quick start
 
@@ -35,8 +45,8 @@ Controls in the app window:
 
 | Crate | Role |
 |---|---|
-| `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`. Must compile without any graphics crate. |
-| `crates/sim` | Simulation stages (Sprint 1A+) — geomorphology, hydrology, climate, ecology. |
+| `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`, `validation`, `FLOW_DIR_SINK` / `D8_OFFSETS` / neighborhood constants. Must compile without any graphics crate. |
+| `crates/sim` | Sprint 1A sim stages (Topography, Coast, PitFill, DerivedGeomorph, FlowRouting, Accumulation, Basins, Rivers) + `ValidationStage`. Climate + ecology land in Sprint 1B. |
 | `crates/hex` | Hex aggregation (Sprint 1B+). |
 | `crates/data` | Built-in presets (`volcanic_single`, `volcanic_twin`, `caldera`) and golden seeds. |
 | `crates/gpu` | `wgpu` device/surface management. |

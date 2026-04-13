@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-13
+**Last Updated:** 2026-04-14
 
 ---
 
@@ -21,48 +21,101 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 1A — Terrain + Water Skeleton. First real simulation
-stages (volcanic topography, flow routing, accumulation, river extraction)
-that replace the Sprint 0 rainbow placeholder quad with a genuine heightfield
-mesh.
+**Primary:** Sprint 1A — Terrain + Water Skeleton **simulation pipeline
+shipped**. All 8 sim stages plus validation + golden-seed regression land
+on `dev`; `cargo run -p app` still renders the Sprint 0 placeholder quad
+but the full `TopographyStage → CoastMaskStage → PitFillStage →
+DerivedGeomorphStage → FlowRoutingStage → AccumulationStage → BasinsStage
+→ RiverExtractionStage → ValidationStage` chain runs once at startup and
+produces a fully-populated `WorldState` before the window opens.
 
-**Secondary:** Sprint 1A prep-reading. Chen 2014 (LEM equation framework) and
-Temme 2017 (scope-vs-fidelity decision matrix) are the two mandatory reads
-before committing Sprint 1A implementation. Both already have `对本项目的落地点`
-sections in `docs/papers/core_pack/` pointing at the specific files Sprint 1A
-will produce.
+**Deferred from Sprint 1A (not yet shipped):**
+- **Task 1A.9** — real terrain mesh + §3.2 Visual Package (palette, camera
+  presets, lighting rig, blue-noise download, `shaders/terrain.wgsl`). Needs
+  a confirmed `cargo run -p app` window pass.
+- **Task 1A.10** — 6 descriptor-based overlays wired to the new
+  `derived.*` fields.
+- **Paper pack (non-blocking per §6)** — Chen 2014 / Génevaux 2013 deep
+  reads plus the 4 Core-Pack / Sprint-Pack notes still sitting at
+  `metadata_only`.
 
 ---
 
 ## DEVELOPMENT
 
-### Sprint 1A — Terrain + Water Skeleton
-**Status:** Not started (gated only on Chen/Temme read-through).
+### Sprint 1A — Terrain + Water Skeleton (simulation portion shipped)
+**Status:** Sim pipeline shipped on `dev` as of 2026-04-14. Render shell
+(Task 1A.9) and overlay wiring (Task 1A.10) still pending.
 **Doc:** [`docs/design/sprints/sprint_1a_terrain_water.md`](docs/design/sprints/sprint_1a_terrain_water.md)
 
-**Entry points already in the tree, waiting to be filled:**
-- `core::world::AuthoritativeFields.height: Option<ScalarField2D<f32>>` — land
-  the real heightfield here.
-- `core::world::DerivedCaches` — add `flow_dir: Option<ScalarField2D<u8>>`,
-  `accumulation: Option<ScalarField2D<f32>>`, `basin_id: Option<ScalarField2D<u32>>`,
-  `river_mask: Option<MaskField2D>`, `coast_mask: Option<MaskField2D>`.
-- `core::pipeline::SimulationStage` — implement it for each stage in
-  `crates/sim/src/geomorph/` (`topography.rs`) and `crates/sim/src/hydro/`
-  (`flow_routing.rs`, `accumulation.rs`, `river_extraction.rs`).
-- `render::OverlayRegistry::sprint_0_defaults` — three placeholder descriptors
-  already point at the field-key strings Sprint 1A needs (`height`,
-  `initial_uplift`, `accumulation`). Keep those strings in sync when the real
-  fields land.
-- `core::save` Minimal mode already serializes `authoritative.height` +
-  `authoritative.sediment` — once Sprint 1A populates `height`, that path is
-  live without any codec change.
+**Shipped this pass:**
+- **8 sim stages** — `sim::geomorph::{TopographyStage, CoastMaskStage,
+  PitFillStage, DerivedGeomorphStage}` + `sim::hydro::{FlowRoutingStage,
+  AccumulationStage, BasinsStage, RiverExtractionStage}`.
+- **Pipeline-end `sim::ValidationStage`** wrapping `core::validation`'s
+  four invariants (`river_termination`, `basin_partition_dag`,
+  `accumulation_monotone`, `coastline_consistency`).
+- **`core::world::{CoastMask, FLOW_DIR_SINK, D8_OFFSETS}`** + extended
+  `DerivedCaches` with all 9 Sprint 1A fields (`initial_uplift`, `z_filled`,
+  `slope`, `coast_mask`, `shoreline_normal`, `flow_dir`, `accumulation`,
+  `basin_id`, `river_mask`).
+- **`core::neighborhood::neighbour_offsets`** shared const fn + the 3
+  §D9 Sprint 1A constants (`COAST_DETECT_NEIGHBORHOOD = Von4`,
+  `RIVER_CC_NEIGHBORHOOD = Moore8`, `RIVER_COAST_CONTACT = Moore8`).
+- **`app::Runtime`** runs the full 9-stage pipeline once at startup and
+  stores the populated `WorldState` behind `Runtime::world()` for Sprint 1B+
+  overlay bindings.
+- **3 golden-seed regression snapshots** in `crates/data/golden/snapshots/`:
+  `seed_42_volcanic_single.ron`, `seed_123_volcanic_twin.ron`,
+  `seed_777_caldera.ron`. `SummaryMetrics` covers 5 integer counters, 5
+  float aggregates, and 6 blake3 field hashes with the mandated
+  `// Field hash vs. abs-tolerance semantics` classification comment.
 
-**Next concrete action:** Fill the `关键方程` and `对本项目的落地点` equation
-dump in `docs/papers/core_pack/chen_2014_lem_review.md`, then create
-`crates/sim/src/geomorph/topography.rs` with `TopographyStage` and its unit
-test. Wire `TopographyStage` into the pipeline in `crates/app/src/runtime.rs`.
+**Test deltas:** core 43 (+11), sim 62 (+62), data 10 (+3), hex 0 —
+**total 115 passing** (was 56 at end of Sprint 0). `cargo tree -p core`
+still clean of `wgpu` / `winit` / `egui*` / `png` / `image` / `tempfile`.
 
-**Blockers:** None technical.
+**Still to ship for Sprint 1A §6 full acceptance:**
+- **Task 1A.9:** replace the Sprint 0 rainbow quad with a real
+  `sim_width * sim_height` triangle mesh driven by `derived.z_filled`,
+  plus the §3.2 Visual Package — canonical 8-colour palette in
+  `crates/render/src/palette.rs`, `shaders/terrain.wgsl` combining A1
+  terrain / A2 sea / A3 sky / A4 lighting, `crates/render/src/camera.rs`
+  preset pack (Hero / Top Debug / Low Oblique), and blue-noise
+  download + runtime loader.
+- **Task 1A.10:** repoint the 6 `OverlayDescriptor` sources at the real
+  `derived.*` fields (descriptor-based, no draw closures) and lock the
+  overlay palettes per §3.2 A5.
+- **Paper pack §6:** Chen 2014 + Génevaux 2013 are the mandatory deep
+  reads before closing Sprint 1A; Lague 2014 is target-deep; the
+  three background-organization papers can stay at
+  `status: metadata_only`.
+
+**Spec clarifications discovered during implementation** (applied to the
+author's Obsidian vault — see `docs/design` which is a gitignored symlink):
+- **§D5 `coastal_falloff`** formula had `(1 - smoothstep(...))` which
+  evaluated backwards relative to the prose intent. The stage uses the
+  corrected `amplitude * smoothstep(0.9r, r, dist)` (0 inside, amplitude
+  outside).
+- **§D6 `flow_dir == 0`** can't be the "no downstream" sentinel because
+  `E = 0` in the D8 encoding. Replaced with `FLOW_DIR_SINK = 0xFF` (now
+  a shared constant in `core::world`). §Task 1A.5 and §Task 1A.7 both
+  updated to reference the constant by name.
+- **§Task 1A.7 sink definition** extended from
+  `is_land && flow_dir == FLOW_DIR_SINK` to also include land cells whose
+  D8 downstream is a sea cell or OOB. `CoastMaskStage` uses Von4 for
+  `is_coast` while `FlowRoutingStage` sees Moore8, so a land cell with
+  only a *diagonal* sea neighbour is not classified as coast but still
+  drains directly to the ocean. Without the extension those cells and
+  their upstream stay at `basin_id = 0`.
+- **`RiverExtractionStage` candidates** must gate on `is_land` — sea cells
+  can accumulate upstream flow via the same diagonal Moore8 edge case and
+  would otherwise be flagged as river candidates. The bug surfaced during
+  `ValidationStage::run()` (`river_termination` returned `RiverInSea`) —
+  one of the clearest wins for running validation at the pipeline tail.
+
+**Blockers:** None technical. Task 1A.9 / 1A.10 need a confirmed
+`cargo run -p app` window session to close.
 
 ---
 
@@ -75,6 +128,42 @@ distribution, no wasm build, no binary releases.
 ---
 
 ## RECENTLY COMPLETED
+
+### Sprint 1A — Terrain + Water Skeleton (sim pipeline, 2026-04-14, 10 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_1a_terrain_water.md`](docs/design/sprints/sprint_1a_terrain_water.md)
+**Test totals:** 115 passing (43 core + 62 sim + 10 data + 0 hex).
+**CI gate:** `cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test -p core -p sim -p hex -p data` all green.
+**Architectural invariant check:** `cargo tree -p core` clean (no `wgpu` /
+`winit` / `egui` / `png` / `image` / `tempfile`).
+
+Delivered (this pass covers Tasks 1A.1–1A.8, 1A.11, 1A.12 + the
+`app::Runtime` wiring):
+
+- **8 sim stages + pipeline-end validation** — see the Sprint 1A
+  DEVELOPMENT entry above for the full stage list.
+- **3-layer `DerivedCaches` fully populated at boot.** Every field the
+  sprint doc §3.1 promised (`initial_uplift`, `z_filled`, `slope`,
+  `coast_mask`, `shoreline_normal`, `flow_dir`, `accumulation`,
+  `basin_id`, `river_mask`) is written by the Sprint 1A pipeline run.
+- **§D9 neighborhood constants** — `COAST_DETECT_NEIGHBORHOOD = Von4`
+  (coastline aesthetics), `RIVER_CC_NEIGHBORHOOD = Moore8` (connect
+  diagonally-reaching rivers), `RIVER_COAST_CONTACT = Moore8` (keep
+  river components that only touch the coast diagonally) all live in
+  `core::neighborhood` behind a shared `neighbour_offsets()` helper.
+- **`core::validation`** — four pure-CPU invariant functions with their
+  own unit tests, plus a thin `sim::ValidationStage` wrapper so
+  `SimulationPipeline::run` asserts correctness at the tail.
+- **Golden-seed regression** — 3 (seed, preset) pairs at 128x128 snapshot
+  int/float/blake3 tiers. Re-running the pipeline on the same host is
+  bit-exact; cross-platform drift falls through to the 1e-4 float
+  tolerance per the mandated field-hash semantics comment block.
+- **`app::Runtime`** now depends on `sim`, runs the full 9-stage pipeline
+  before the window opens, and logs `land_cells` at completion. Pipeline
+  errors prevent window creation via `?`.
+
+Not yet done (see DEVELOPMENT above): Task 1A.9 render mesh + §3.2 Visual
+Package, Task 1A.10 overlay wiring, paper-pack deep reads.
 
 ### Sprint 0 — Scaffolding (2026-04-13, 14 commits on `dev`)
 
@@ -164,11 +253,20 @@ Nothing paused.
 
 ## QUICK REFERENCE
 
-**High energy?** → Read Chen 2014, then draft `TopographyStage` in
-`crates/sim/src/geomorph/topography.rs`.
-**Low energy?** → Fill in Sprint-1A-deferred `TODO` sections in
-`docs/papers/core_pack/*.md` with real equation dumps for the papers that
-currently only have frontmatter.
+**High energy?** → Close Task 1A.9: wire `derived.z_filled` into a real
+triangle mesh in `crates/render/src/terrain.rs`, land the §3.2 canonical
+palette in `crates/render/src/palette.rs`, and a first cut of
+`shaders/terrain.wgsl` combining A1–A4. Requires a confirmed
+`cargo run -p app` window pass with me before shipping.
+**Medium energy?** → Close Task 1A.10: repoint the 6 `OverlayDescriptor`
+`source` fields at the real `derived.*` field names. No draw closures
+(§CLAUDE.md invariant #7). Test that each overlay toggles cleanly.
+**Low energy?** → Fill the `关键方程` and `对本项目的落地点` sections in
+`docs/papers/core_pack/chen_2014_lem_review.md` and
+`genevaux_2013_hydrology_terrain.md` — both are mandatory deep reads per
+sprint doc §6, currently only frontmatter. Also Kwang & Parker's
+`m/n = 0.5` warning still needs to land in
+`sprint_2_geomorph_credibility.md` open questions.
 **Quick win?** → Download the four remaining `metadata_only` PDFs
 (`chen_2014_lem_review`, `smith_barstad_2004_linear_orographic`,
 `fisher_2018_vegetation_demographics_esm`, `hergarten_robl_2022_lfpm`) when
