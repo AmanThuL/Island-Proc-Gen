@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-14
+**Last Updated:** 2026-04-15
 
 ---
 
@@ -21,34 +21,52 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 1A — Terrain + Water Skeleton **simulation pipeline
-shipped**. All 8 sim stages plus validation + golden-seed regression land
-on `dev`; `cargo run -p app` still renders the Sprint 0 placeholder quad
-but the full `TopographyStage → CoastMaskStage → PitFillStage →
-DerivedGeomorphStage → FlowRoutingStage → AccumulationStage → BasinsStage
-→ RiverExtractionStage → ValidationStage` chain runs once at startup and
-produces a fully-populated `WorldState` before the window opens.
+**Primary:** Sprint 1A — simulation pipeline **and** non-window-dependent
+render shell both shipped on `dev`. What's left is a single window-
+session pass to actually wire the new `MeshData` + `shaders/terrain.wgsl`
++ 6 overlays into `TerrainRenderer`, swap the Sprint 0 rainbow quad for
+the real mesh, and capture the 9 baseline screenshots §7 requires.
 
-**Deferred from Sprint 1A (not yet shipped):**
-- **Task 1A.9** — real terrain mesh + §3.2 Visual Package (palette, camera
-  presets, lighting rig, blue-noise download, `shaders/terrain.wgsl`). Needs
-  a confirmed `cargo run -p app` window pass.
-- **Task 1A.10** — 6 descriptor-based overlays wired to the new
-  `derived.*` fields.
-- **Paper pack (non-blocking per §6)** — Chen 2014 / Génevaux 2013 deep
-  reads plus the 4 Core-Pack / Sprint-Pack notes still sitting at
+All Sprint 1A code that can be unit-tested headlessly is in place:
+8 sim stages → 4 validation invariants → `sim::ValidationStage` at the
+pipeline tail → 3 golden-seed regression snapshots → canonical
+8-colour palette locked against `assets/visual/palette_reference.jpg` →
+Viridis / Turbo / Categorical / TerrainHeight / BinaryBlue LUTs →
+Hero / TopDebug / LowOblique camera presets → blue-noise loader with
+the 3 Calinou 2D textures checked in + a deterministic fallback →
+`build_terrain_mesh` / `build_sea_quad` mesh builders →
+`shaders/terrain.wgsl` combining §3.2 A1 / A2 / A4 via a uniform-buffer
+palette (naga-validated headlessly) → 6 real `OverlayDescriptor`s
+pointing at the correct `derived.*` fields.
+
+**Remaining for Sprint 1A §6 full acceptance:**
+- **Window session (Task 1A.9 integration):** refactor `TerrainRenderer`
+  to consume `MeshData` + `shaders/terrain.wgsl`, populate the `View`
+  / `Palette` / `LightRig` uniform buffers, wire the camera-preset
+  dropdown into `ParamsPanel`, and hand off `world.derived.z_filled`
+  + `preset.sea_level` at boot. Needs `cargo run -p app`.
+- **Overlay render path (Task 1A.10 integration):** CPU-side texture
+  upload from the 6 `OverlayDescriptor` sources via a single
+  `render_overlay_to_gpu(desc, world)` helper, with alpha blending
+  over the terrain pass. Needs the window session too.
+- **9 baseline screenshots:** 3 camera presets × 3 golden seeds in
+  `docs/design/sprints/sprint_1a_visual_acceptance/` as the Sprint 1B
+  regression baseline.
+- **Paper pack (non-blocking per §6):** Chen 2014 / Génevaux 2013 deep
+  reads; Lague 2014 target-deep; background papers can stay at
   `metadata_only`.
 
 ---
 
 ## DEVELOPMENT
 
-### Sprint 1A — Terrain + Water Skeleton (simulation portion shipped)
-**Status:** Sim pipeline shipped on `dev` as of 2026-04-14. Render shell
-(Task 1A.9) and overlay wiring (Task 1A.10) still pending.
+### Sprint 1A — Terrain + Water Skeleton
+**Status:** Sim pipeline and render-shell library pieces all shipped on
+`dev` as of 2026-04-15. Only the actual render-path integration + the
+9-screenshot visual baseline remain, both of which need a window session.
 **Doc:** [`docs/design/sprints/sprint_1a_terrain_water.md`](docs/design/sprints/sprint_1a_terrain_water.md)
 
-**Shipped this pass:**
+**Shipped this pass (sim pipeline, 2026-04-14):**
 - **8 sim stages** — `sim::geomorph::{TopographyStage, CoastMaskStage,
   PitFillStage, DerivedGeomorphStage}` + `sim::hydro::{FlowRoutingStage,
   AccumulationStage, BasinsStage, RiverExtractionStage}`.
@@ -56,40 +74,75 @@ produces a fully-populated `WorldState` before the window opens.
   four invariants (`river_termination`, `basin_partition_dag`,
   `accumulation_monotone`, `coastline_consistency`).
 - **`core::world::{CoastMask, FLOW_DIR_SINK, D8_OFFSETS}`** + extended
-  `DerivedCaches` with all 9 Sprint 1A fields (`initial_uplift`, `z_filled`,
-  `slope`, `coast_mask`, `shoreline_normal`, `flow_dir`, `accumulation`,
-  `basin_id`, `river_mask`).
+  `DerivedCaches` with all 9 Sprint 1A fields.
 - **`core::neighborhood::neighbour_offsets`** shared const fn + the 3
-  §D9 Sprint 1A constants (`COAST_DETECT_NEIGHBORHOOD = Von4`,
-  `RIVER_CC_NEIGHBORHOOD = Moore8`, `RIVER_COAST_CONTACT = Moore8`).
+  §D9 Sprint 1A constants.
 - **`app::Runtime`** runs the full 9-stage pipeline once at startup and
-  stores the populated `WorldState` behind `Runtime::world()` for Sprint 1B+
-  overlay bindings.
-- **3 golden-seed regression snapshots** in `crates/data/golden/snapshots/`:
-  `seed_42_volcanic_single.ron`, `seed_123_volcanic_twin.ron`,
-  `seed_777_caldera.ron`. `SummaryMetrics` covers 5 integer counters, 5
-  float aggregates, and 6 blake3 field hashes with the mandated
-  `// Field hash vs. abs-tolerance semantics` classification comment.
+  stores the populated `WorldState` behind `Runtime::world()`.
+- **3 golden-seed regression snapshots** in `crates/data/golden/snapshots/`
+  locked by `SummaryMetrics` (int/float/blake3 tiers) + the mandated
+  field-hash classification comment.
 
-**Test deltas:** core 43 (+11), sim 62 (+62), data 10 (+3), hex 0 —
-**total 115 passing** (was 56 at end of Sprint 0). `cargo tree -p core`
-still clean of `wgpu` / `winit` / `egui*` / `png` / `image` / `tempfile`.
+**Shipped this pass (render-shell non-window work, 2026-04-15):**
+- **`crates/render/src/palette.rs`** rebuilt: 8 canonical `[f32; 4]`
+  constants (DEEP_WATER / SHALLOW_WATER / LOWLAND / MIDLAND / HIGHLAND /
+  RIVER / BASIN_ACCENT / OVERLAY_NEUTRAL), all locked against
+  `assets/visual/palette_reference.jpg` via pixel-sampling; `PaletteId`
+  grew `TerrainHeight` + `BinaryBlue`; Viridis and Turbo are now real
+  256-entry LUTs (Matplotlib BSD / Google Apache); `Categorical` uses
+  a fixed 16-entry muted-blue table around `BASIN_ACCENT`.
+- **`crates/render/src/camera.rs`** (new): §3.2 A6 camera preset pack —
+  `PRESET_HERO` (3/4 perspective, pitch 30°, distance 1.6×r),
+  `PRESET_TOP_DEBUG` (orthographic, pitch π/2−0.01), `PRESET_LOW_OBLIQUE`
+  (pitch 12.5°, distance 2.0×r). Stateless `view_projection` + the
+  orbit camera in `app::camera` coexist independently.
+- **`crates/render/src/noise.rs`** (new): blue-noise PNG loader that
+  accepts 8-bit Grayscale/Rgb/Rgba and strips RGBA→L via the R channel,
+  plus a deterministic `splitmix64`-based fallback when the asset is
+  missing. Calinou-format validated.
+- **`assets/noise/`** — the 3 real Calinou 2D blue-noise textures
+  (`blue_noise_2d_{64,128,256}.png`, copies of `LDR_LLL1_0.png`) + a
+  CC0 attribution `LICENSE.md`. The shipping default test now asserts
+  the loader takes the real-PNG branch rather than falling back.
+- **`crates/render/src/terrain.rs`** grew `MeshData { vertices, indices }`,
+  `TerrainVertex { position, normal, uv }`, `build_terrain_mesh(z_filled)`,
+  and `build_sea_quad(sea_level)`. Sprint 0 `TerrainRenderer` is still
+  the render path in `app::Runtime` — the new mesh builders are library
+  functions only, waiting on the window-session wiring.
+- **`shaders/terrain.wgsl`** (new top-level): §3.2 A1 height ramp / A2 sea
+  blend / A4 key+fill+ambient lighting wired through three uniform
+  buffers (`View`, `Palette`, `LightRig`). Zero color literals — the
+  §3.2 acceptance grep passes. naga 29.0.1 dev-dep validates the shader
+  headlessly in CI.
+- **`crates/render/src/overlay.rs`** — `sprint_0_defaults()` deleted;
+  `sprint_1a_defaults()` now returns the 6 real descriptors wired to
+  `derived.*` fields + palette families per §3.2 A5. `final_elevation`
+  source is locked to `ScalarDerived("z_filled")` (not
+  `ScalarAuthoritative("height")`) by a dedicated named test.
+  `ValueRange::LogCompressed` is new for the flow-accumulation overlay.
+
+**Test deltas:** core 43 (+11), sim 62 (+62), data 10 (+3), render
+56 (+45 vs Sprint 0's 11), hex 0. `cargo test --workspace` — **177
+tests, 0 failed**. `cargo tree -p core` still clean of `wgpu` /
+`winit` / `egui*` / `png` / `image` / `tempfile` / `naga`.
 
 **Still to ship for Sprint 1A §6 full acceptance:**
-- **Task 1A.9:** replace the Sprint 0 rainbow quad with a real
-  `sim_width * sim_height` triangle mesh driven by `derived.z_filled`,
-  plus the §3.2 Visual Package — canonical 8-colour palette in
-  `crates/render/src/palette.rs`, `shaders/terrain.wgsl` combining A1
-  terrain / A2 sea / A3 sky / A4 lighting, `crates/render/src/camera.rs`
-  preset pack (Hero / Top Debug / Low Oblique), and blue-noise
-  download + runtime loader.
-- **Task 1A.10:** repoint the 6 `OverlayDescriptor` sources at the real
-  `derived.*` fields (descriptor-based, no draw closures) and lock the
-  overlay palettes per §3.2 A5.
-- **Paper pack §6:** Chen 2014 + Génevaux 2013 are the mandatory deep
-  reads before closing Sprint 1A; Lague 2014 is target-deep; the
-  three background-organization papers can stay at
-  `status: metadata_only`.
+- **Window-session integration (Task 1A.9):** swap Sprint 0's `TerrainRenderer`
+  for a new pipeline consuming `MeshData` + `shaders/terrain.wgsl`,
+  populate `View` / `Palette` / `LightRig` uniforms from
+  `palette::*` + `preset.sea_level` + a light rig const, wire the
+  camera preset dropdown into `ParamsPanel`, add a depth buffer (the
+  Sprint 0 path has no depth attachment and the sea quad will z-fight
+  the terrain mesh).
+- **Overlay render path (Task 1A.10):** one `render_overlay_to_gpu(desc,
+  world)` per visible descriptor — CPU-side texture upload keyed by
+  `OverlaySource`, alpha-blended over the terrain. Shader can reuse
+  `palette::sample_f32`.
+- **9-screenshot visual baseline** in
+  `docs/design/sprints/sprint_1a_visual_acceptance/` (3 camera presets
+  × 3 golden seeds).
+- **Paper pack §6:** Chen 2014 + Génevaux 2013 deep reads, Lague 2014
+  target-deep.
 
 **Spec clarifications discovered during implementation** (applied to the
 author's Obsidian vault — see `docs/design` which is a gitignored symlink):
@@ -113,9 +166,23 @@ author's Obsidian vault — see `docs/design` which is a gitignored symlink):
   would otherwise be flagged as river candidates. The bug surfaced during
   `ValidationStage::run()` (`river_termination` returned `RiverInSea`) —
   one of the clearest wins for running validation at the pipeline tail.
+- **§3.2 Deep Water hex** drifted in the reference image:
+  `palette_reference.jpg` samples `#1C416B` at every interior region,
+  not `#24466B` as the table had. The eight-color constants now lock
+  against pixel-samples of the image (ΔE < 6 tolerance, with Deep Water
+  updated). Palette reference image is the golden source going forward.
+- **§3.2 shader colour literals ban applies to WGSL too.** The acceptance
+  grep covers `shaders/*.wgsl`, so `terrain.wgsl` threads all eight
+  colours through a `Palette` uniform buffer instead of baking them as
+  vec3/vec4 literals. Future shaders must do the same.
+- **Calinou LDR_LLL1 blue-noise files are 8-bit RGBA** with L replicated
+  across R=G=B, not true grayscale. `noise::try_load_png` now accepts
+  Grayscale/RGB/RGBA and strips to the R channel to recover the
+  luminance sample.
 
 **Blockers:** None technical. Task 1A.9 / 1A.10 need a confirmed
-`cargo run -p app` window session to close.
+`cargo run -p app` window session to close — all library code compiles
+and unit-tests green.
 
 ---
 
@@ -128,6 +195,57 @@ distribution, no wasm build, no binary releases.
 ---
 
 ## RECENTLY COMPLETED
+
+### Sprint 1A — Render shell library (2026-04-15, 7 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_1a_terrain_water.md`](docs/design/sprints/sprint_1a_terrain_water.md) §3.2 + §4 Task 1A.9/1A.10
+**Test totals:** 177 passing across the workspace (43 core + 62 sim +
+10 data + 56 render + 4 app + 2 hex + …).
+**CI gate:** `cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace` all green.
+**Architectural invariant check:** `cargo tree -p core` clean (no
+`wgpu` / `winit` / `egui` / `png` / `image` / `tempfile` / `naga`).
+
+Delivered (everything that compiles and tests headlessly; window-session
+wiring to `TerrainRenderer` + the 9 baseline screenshots are the only
+Sprint 1A §6 items still open):
+
+- **`render::palette` rebuild** — 8 canonical `[f32; 4]` constants
+  locked against `assets/visual/palette_reference.jpg` via pixel-sampling,
+  including the `canonical_constants_match_palette_reference` test that
+  fires on any drift. Real 256-entry Matplotlib Viridis / Google Turbo
+  LUTs, 16-entry muted categorical table around `BASIN_ACCENT`,
+  `TerrainHeight` 3-stop lerp (LOWLAND → MIDLAND → HIGHLAND), and
+  `BinaryBlue` for the river-mask overlay.
+- **`render::camera` preset module** — `PRESET_HERO` /
+  `PRESET_TOP_DEBUG` (orthographic) / `PRESET_LOW_OBLIQUE` with
+  stateless `view_projection(preset, island_radius, aspect) -> Mat4`
+  + row-major `ALL_PRESETS` + `preset_by_id` for UI wiring. The
+  interactive orbit camera in `app::camera` is unchanged.
+- **`render::noise` blue-noise loader** — `load_blue_noise_2d(size)`
+  reads 8-bit Grayscale/RGB/RGBA (strips to R channel for Calinou's
+  LDR_LLL1 format) and falls back to a deterministic splitmix64-based
+  pattern on any failure. Real 2D textures checked in at
+  `assets/noise/blue_noise_2d_{64,128,256}.png` (copies of
+  `LDR_LLL1_0.png` from Calinou/free-blue-noise-textures, CC0)
+  with `assets/noise/LICENSE.md` attribution.
+- **`render::terrain` mesh builder** — `MeshData` + `TerrainVertex` +
+  `build_terrain_mesh(&ScalarField2D<f32>)` producing a full
+  `sim_width * sim_height` grid mesh with central-diff normals
+  (single-sided at edges), plus `build_sea_quad(sea_level)`. Sprint 0
+  `TerrainRenderer` is still the live render path — the new mesh
+  builders are library functions.
+- **`shaders/terrain.wgsl`** (new top-level directory) — §3.2 A1
+  height ramp + A2 sea-depth blend + A4 key/fill/ambient lighting,
+  threaded through `View` / `Palette` / `LightRig` uniform buffers.
+  ZERO colour literals in the WGSL; grep + a dedicated test enforce
+  this. naga 29.0.1 dev-dep validates the shader semantically in a
+  headless test.
+- **`render::overlay` Task 1A.10 repointing** — `sprint_0_defaults()`
+  replaced by `sprint_1a_defaults()` returning the 6 real Sprint 1A
+  overlays wired to their actual `derived.*` fields.
+  `final_elevation.source == ScalarDerived("z_filled")` is the
+  mandatory §7 criterion, locked by a dedicated named test.
+  `ValueRange::LogCompressed` is new for `flow_accumulation`.
 
 ### Sprint 1A — Terrain + Water Skeleton (sim pipeline, 2026-04-14, 10 commits on `dev`)
 

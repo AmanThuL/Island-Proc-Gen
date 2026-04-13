@@ -11,16 +11,27 @@ This is a single-developer research project. It is **pre-alpha** — read
 
 ## Status
 
-**Sprint 1A simulation pipeline shipped 2026-04-14.** All 8 Sprint 1A sim
-stages (`TopographyStage → CoastMaskStage → PitFillStage →
-DerivedGeomorphStage → FlowRoutingStage → AccumulationStage → BasinsStage →
-RiverExtractionStage`) plus a pipeline-end `ValidationStage` run at app
-startup and fully populate `WorldState.derived.*`. Three golden-seed
-regression snapshots lock the pipeline output bit-exact on the dev machine.
-`cargo run -p app` still renders the Sprint 0 placeholder rainbow quad —
-the real triangle mesh (Task 1A.9) and descriptor-based overlays (Task
-1A.10) are pending. See [`PROGRESS.md`](PROGRESS.md) for the full
-acceptance-checklist status.
+**Sprint 1A render-shell library shipped 2026-04-15**, building on the
+sim pipeline that landed 2026-04-14. The whole simulation chain runs at
+app startup and the entire non-window render shell is in place:
+canonical 8-colour palette locked against
+`assets/visual/palette_reference.jpg`, real Viridis / Turbo / Categorical
+/ TerrainHeight / BinaryBlue lookup tables, three camera presets
+(Hero / Top Debug / Low Oblique), a blue-noise loader wired to the
+Calinou CC0 textures at `assets/noise/`, the `build_terrain_mesh` /
+`build_sea_quad` mesh builders, `shaders/terrain.wgsl` combining the
+§3.2 A1/A2/A4 visual package, and all 6 Sprint 1A overlays pointing
+at the real `derived.*` fields.
+
+Only the final wiring remains: swap Sprint 0's placeholder `TerrainRenderer`
+for the new mesh + WGSL pipeline, hand the 6 `OverlayDescriptor`s to a
+CPU-side overlay render path, and capture the 9 baseline screenshots
+(3 camera presets × 3 golden seeds). All of those need a confirmed
+`cargo run -p app` window-session pass. Until then `cargo run -p app`
+still draws the Sprint 0 rainbow quad.
+
+See [`PROGRESS.md`](PROGRESS.md) for the full acceptance-checklist
+status.
 
 **Sprint 0 (scaffolding) shipped 2026-04-13.** The workspace boots, the
 `WorldState` three-layer split is in place, and a placeholder rainbow quad

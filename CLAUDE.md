@@ -150,6 +150,36 @@ app ──▶ render ──▶ gpu ──┐
   (e.g. the §D6 `FLOW_DIR_SINK` sentinel) must be mirrored in the commit
   message and in CLAUDE.md / PROGRESS.md so they survive outside the
   author's machine.
+- **The canonical 8-colour palette is pixel-locked to
+  `assets/visual/palette_reference.jpg`,** not to the hex table in the
+  sprint doc. `canonical_constants_match_palette_reference` in
+  `crates/render/src/palette.rs` fires on any drift. Change a constant
+  only after re-sampling the reference image with a ΔE < 6 tolerance
+  in sRGB; smaller drifts are JPEG noise, larger drifts mean the
+  reference image was intentionally re-generated and the code constant
+  should update to match.
+- **CLAUDE.md invariant #8 (no hardcoded colours outside `palette.rs`)
+  applies to `shaders/*.wgsl` as well.** Sprint 1A's `terrain.wgsl`
+  threads all 8 canonical colours through a `Palette` uniform buffer
+  at `@group(0) @binding(1)`; WGSL `vec3<f32>(0.xx, 0.xx, 0.xx)` /
+  `vec4<f32>(0.xx, ...)` style colour literals are forbidden. The
+  `terrain_wgsl_has_no_literal_colors` test enforces this mechanically.
+- **Calinou blue-noise files are 8-bit RGBA,** not grayscale, with L
+  replicated across R=G=B in the `LDR_LLL1_*` variant. `noise::try_load_png`
+  accepts Grayscale/RGB/RGBA and strips to the R channel to recover the
+  luminance sample — keep that behaviour when porting the loader.
+- **`render::camera` preset module ≠ `app::camera` orbit camera.** They
+  coexist: the orbit camera is the interactive winit-event consumer in
+  `Runtime`; the preset module is stateless LUT math for the
+  Hero/TopDebug/LowOblique dropdown. Don't try to unify them —
+  Runtime owns interaction, render owns capture geometry.
+- **`naga` is a dev-dep on `render`, never a runtime dep.** The
+  `terrain_wgsl_parses_successfully` test uses
+  `naga::front::wgsl::parse_str` + `naga::valid::Validator` for
+  headless shader validation, but the shader module is loaded at
+  runtime via wgpu's internal naga. Keep naga in
+  `[dev-dependencies]` and pin the version to the one wgpu pulls
+  transitively (currently `29.0.1`) so the two parsers never disagree.
 
 ---
 
