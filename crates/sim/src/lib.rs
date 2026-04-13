@@ -5,5 +5,6 @@
 pub mod geomorph;
 
 pub use geomorph::CoastMaskStage;
+pub use geomorph::DerivedGeomorphStage;
 pub use geomorph::PitFillStage;
 pub use geomorph::TopographyStage;
