@@ -9,25 +9,11 @@
 //! classification is independent of the routing correction.
 
 use island_core::field::{MaskField2D, VectorField2D};
-use island_core::neighborhood::{COAST_DETECT_NEIGHBORHOOD, Neighborhood};
+use island_core::neighborhood::COAST_DETECT_NEIGHBORHOOD;
 use island_core::pipeline::SimulationStage;
 use island_core::world::{CoastMask, WorldState};
 
-/// Neighbour offsets for the given [`Neighborhood`] kind.
-///
-/// Sprint 1A coast detection consumes this via [`COAST_DETECT_NEIGHBORHOOD`]
-/// so flipping the §D9 constant actually re-routes the stage — the link is
-/// mechanical, not documentary.
-const fn neighbour_offsets(kind: Neighborhood) -> &'static [(i32, i32)] {
-    match kind {
-        Neighborhood::Von4 => &[(0, -1), (1, 0), (0, 1), (-1, 0)],
-        Neighborhood::Moore8 => &[
-            (-1, -1), (0, -1), (1, -1),
-            (-1,  0),          (1,  0),
-            (-1,  1), (0,  1), (1,  1),
-        ],
-    }
-}
+use super::neighbour_offsets;
 
 /// Sprint 1A Task 1A.2: land / sea / coast classification on z_raw.
 pub struct CoastMaskStage;
