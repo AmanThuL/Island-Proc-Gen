@@ -12,7 +12,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::field::ScalarField2D;
+use crate::field::{MaskField2D, ScalarField2D, VectorField2D};
 use crate::preset::IslandArchetypePreset;
 use crate::seed::Seed;
 
@@ -79,13 +79,58 @@ pub struct AuthoritativeFields {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BakedSnapshot {}
 
+/// Land / sea / coast classification produced by `CoastMaskStage`.
+///
+/// `land_cell_count` is cached so downstream stages avoid re-popcounting
+/// `is_land`. `river_mouth_mask` starts `None` and is backfilled by
+/// `RiverExtractionStage`.
+#[derive(Debug, Clone)]
+pub struct CoastMask {
+    pub is_land: MaskField2D,
+    pub is_sea: MaskField2D,
+    pub is_coast: MaskField2D,
+    pub land_cell_count: u32,
+    pub river_mouth_mask: Option<MaskField2D>,
+}
+
 /// Roadmap §数据层分离 §Derived fields — pure runtime caches (flow_dir,
 /// flow_accumulation, coast_mask, river_mask, …).
 ///
 /// **Not serialized.** Reconstructable from `authoritative + preset` on
-/// load/replay. Sprint 0 leaves it empty.
+/// load/replay. Sprint 1A fills this struct; Sprint 0 left it empty.
 #[derive(Debug, Clone, Default)]
-pub struct DerivedCaches {}
+pub struct DerivedCaches {
+    /// Sprint 1A TopographyStage: snapshot of `volcanic_base + ridge_field`
+    /// BEFORE coastal_falloff is subtracted. Used by `initial_uplift` overlay.
+    pub initial_uplift: Option<ScalarField2D<f32>>,
+
+    /// Sprint 1A PitFillStage: pit-filled terrain (`z_filled >= z_raw`).
+    /// `authoritative.height` is z_raw and stays unchanged.
+    pub z_filled: Option<ScalarField2D<f32>>,
+
+    /// Sprint 1A DerivedGeomorphStage: `|grad z_filled|` finite-diff cache.
+    /// Consumed by slope overlay, Sprint 1B biome suitability, Sprint 2 SPIM.
+    pub slope: Option<ScalarField2D<f32>>,
+
+    /// Sprint 1A CoastMaskStage: land / sea / coast masks + cached counts.
+    pub coast_mask: Option<CoastMask>,
+
+    /// Sprint 1A CoastMaskStage: per-coast-cell outward shoreline normal.
+    pub shoreline_normal: Option<VectorField2D>,
+
+    /// Sprint 1A FlowRoutingStage: D8 downstream direction code
+    /// (see `FlowDir` constants; 0xFF = sink / no downstream).
+    pub flow_dir: Option<ScalarField2D<u8>>,
+
+    /// Sprint 1A AccumulationStage: upstream cell count (f32 for `A^m` in stream power).
+    pub accumulation: Option<ScalarField2D<f32>>,
+
+    /// Sprint 1A BasinsStage: drainage basin id (0 = sea/unlabeled; 1+ = by row-major sink order).
+    pub basin_id: Option<ScalarField2D<u32>>,
+
+    /// Sprint 1A RiverExtractionStage: extracted main river network.
+    pub river_mask: Option<MaskField2D>,
+}
 
 // ─── WorldState ──────────────────────────────────────────────────────────────
 

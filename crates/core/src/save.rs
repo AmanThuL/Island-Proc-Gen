@@ -134,7 +134,9 @@ pub enum LoadedWorld {
     },
     /// `Minimal` file: fully reconstructed [`WorldState`] with
     /// `authoritative.height` and `authoritative.sediment` populated.
-    Minimal(WorldState),
+    ///
+    /// Boxed because `WorldState` is large relative to `SeedReplay`.
+    Minimal(Box<WorldState>),
 }
 
 impl LoadedWorld {
@@ -339,7 +341,7 @@ fn read_minimal<R: Read>(r: &mut R) -> Result<LoadedWorld, SaveError> {
     );
     world.authoritative.height = Some(height);
     world.authoritative.sediment = Some(sediment);
-    Ok(LoadedWorld::Minimal(world))
+    Ok(LoadedWorld::Minimal(Box::new(world)))
 }
 
 /// Read a length-prefixed `ScalarField2D<f32>` blob: 4-byte LE length, then
