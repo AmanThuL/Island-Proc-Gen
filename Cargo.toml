@@ -2,6 +2,13 @@
 members  = ["crates/*"]
 resolver = "2"
 
+[workspace.package]
+version     = "0.1.0"
+edition     = "2024"
+rust-version = "1.85"
+license     = "MIT OR Apache-2.0"
+authors     = ["Aman Thul"]
+
 [workspace.dependencies]
 wgpu             = "29.0.1"
 winit            = "0.30.13"
