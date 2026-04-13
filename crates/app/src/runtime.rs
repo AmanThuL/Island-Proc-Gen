@@ -7,7 +7,7 @@ use std::time::Instant;
 use anyhow::Context as _;
 use tracing::{debug, info, warn};
 use winit::{
-    dpi::PhysicalSize,
+    dpi::{LogicalSize, PhysicalSize},
     event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
     event_loop::ActiveEventLoop,
     window::{Window, WindowAttributes},
@@ -28,6 +28,25 @@ use sim::{
 
 use crate::camera::{Camera, InputState};
 
+// ── Startup defaults (edit here to change initial window / camera state) ──────
+
+/// Initial logical window dimensions on first open. The OS may shrink this to
+/// fit the display.
+pub(crate) const INITIAL_WINDOW_WIDTH: u32 = 1280;
+pub(crate) const INITIAL_WINDOW_HEIGHT: u32 = 800;
+
+/// Vertical exaggeration applied to the terrain mesh at render time. Values
+/// below 1.0 compress the Y axis (makes tall islands look less dramatic),
+/// above 1.0 stretch it. Applied purely via the view-projection matrix — sim
+/// data and the fragment sea test still use the unscaled heightfield.
+pub(crate) const INITIAL_VERTICAL_SCALE: f32 = 0.5;
+
+/// Orbit camera defaults used at first open AND by the camera panel "Reset"
+/// button. Target Y is overridden at runtime to `preset.sea_level`.
+pub(crate) const INITIAL_CAMERA_DISTANCE: f32 = 1.8;
+pub(crate) const INITIAL_CAMERA_YAW: f32 = 0.0;
+pub(crate) const INITIAL_CAMERA_PITCH: f32 = -0.5;
+
 // ── Runtime ───────────────────────────────────────────────────────────────────
 
 /// Holds all per-window application state.
@@ -44,6 +63,7 @@ pub struct Runtime {
     // camera
     camera: Camera,
     input: InputState,
+    vertical_scale: f32,
 
     // timing / display
     last_frame: Instant,
@@ -70,7 +90,9 @@ impl Runtime {
     /// and egui.
     pub fn new(event_loop: &ActiveEventLoop) -> anyhow::Result<Self> {
         // ── Window ────────────────────────────────────────────────────────────
-        let attrs = WindowAttributes::default().with_title("Island Proc-Gen — Sprint 0");
+        let attrs = WindowAttributes::default()
+            .with_title("Island Proc-Gen — Sprint 1A")
+            .with_inner_size(LogicalSize::new(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT));
         let window = Arc::new(event_loop.create_window(attrs).context("create_window")?);
 
         // ── GPU ───────────────────────────────────────────────────────────────
@@ -116,7 +138,9 @@ impl Runtime {
 
         // Centre the camera on the island mesh ([0,1]×[0,1] on XZ, Y=height).
         camera.target = glam::Vec3::new(0.5, preset.sea_level, 0.5);
-        camera.distance = 1.8;
+        camera.distance = INITIAL_CAMERA_DISTANCE;
+        camera.yaw = INITIAL_CAMERA_YAW;
+        camera.pitch = INITIAL_CAMERA_PITCH;
 
         Ok(Self {
             window,
@@ -127,6 +151,7 @@ impl Runtime {
             egui_renderer,
             camera,
             input: InputState::default(),
+            vertical_scale: INITIAL_VERTICAL_SCALE,
             last_frame: Instant::now(),
             fps: 0.0,
             preset,
@@ -240,7 +265,14 @@ impl Runtime {
         // ── Sim step (Sprint 0: no-op) ────────────────────────────────────────
 
         // ── Upload camera ─────────────────────────────────────────────────────
-        let vp = self.camera.view_projection();
+        // Compose a (1, vertical_scale, 1) world-space scale INTO the view-proj so
+        // the mesh appears vertically compressed/exaggerated without mutating the
+        // canonical heightfield. The fragment shader's sea test still reads the
+        // unscaled world_pos.y passed from vs_terrain. Normals are not rebuilt
+        // either, so lighting keeps the unscaled mesh's shading — intentional
+        // for Sprint 1A; Sprint 2+ can refit if the mismatch becomes visible.
+        let scale = glam::Mat4::from_scale(glam::Vec3::new(1.0, self.vertical_scale, 1.0));
+        let vp = self.camera.view_projection() * scale;
         let eye = self.camera.eye();
         self.terrain.update_view(&self.gpu.queue, vp, eye);
 
@@ -304,20 +336,23 @@ impl Runtime {
         }
 
         // ── egui pass ─────────────────────────────────────────────────────────
-        // Extract values before the mutable borrow of overlay_registry.
+        // Extract values before the mutable borrows that follow.
         let fps = self.fps;
         let resolution = self.resolution;
         let seed = self.seed;
         let preset = &self.preset;
         let registry = &mut self.overlay_registry;
+        let camera = &mut self.camera;
+        let vertical_scale = &mut self.vertical_scale;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
 
         // Use begin_pass / end_pass (the non-deprecated path in egui 0.34).
         self.egui_ctx.begin_pass(raw_input);
 
-        // Three panels replacing the Task 0.7 FPS-only "Info" window.
+        // Four panels: Overlays → Camera → Params → Stats.
         ui::OverlayPanel::show(&self.egui_ctx, registry);
+        crate::camera_panel::CameraPanel::show(&self.egui_ctx, camera, vertical_scale);
         ui::ParamsPanel::show(&self.egui_ctx, preset);
         ui::StatsPanel::show(
             &self.egui_ctx,
