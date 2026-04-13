@@ -8,7 +8,7 @@
 // ─── types ────────────────────────────────────────────────────────────────────
 
 /// Age of the island (affects erosion, relief, and geomorphology).
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum IslandAge {
     /// Volcanic shield is active; sharp peaks, high relief.
     Young,

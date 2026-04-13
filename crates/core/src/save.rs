@@ -61,7 +61,7 @@ use std::io::{Read, Write};
 use crate::field::{FieldDecodeError, ScalarField2D};
 use crate::preset::IslandArchetypePreset;
 use crate::seed::Seed;
-use crate::world::{AuthoritativeFields, BakedSnapshot, DerivedCaches, Resolution, WorldState};
+use crate::world::{Resolution, WorldState};
 
 // ─── constants ───────────────────────────────────────────────────────────────
 
@@ -200,11 +200,8 @@ pub fn write_world<W: Write>(
     w: &mut W,
 ) -> Result<(), SaveError> {
     // Reject unsupported modes before writing anything
-    match mode {
-        SaveMode::Full | SaveMode::DebugCapture => {
-            return Err(SaveError::NotYetSupported(mode));
-        }
-        _ => {}
+    if matches!(mode, SaveMode::Full | SaveMode::DebugCapture) {
+        return Err(SaveError::NotYetSupported(mode));
     }
 
     // Outer header
@@ -333,17 +330,15 @@ fn read_minimal<R: Read>(r: &mut R) -> Result<LoadedWorld, SaveError> {
     let height = read_field_f32(r)?;
     let sediment = read_field_f32(r)?;
 
-    let world = WorldState {
-        seed: Seed(seed_raw),
+    // Use WorldState::new so Sprint 1A+ additions to BakedSnapshot /
+    // DerivedCaches with non-trivial defaults don't require an edit here.
+    let mut world = WorldState::new(
+        Seed(seed_raw),
         preset,
-        resolution: Resolution::new(sim_width, sim_height),
-        authoritative: AuthoritativeFields {
-            height: Some(height),
-            sediment: Some(sediment),
-        },
-        baked: BakedSnapshot::default(),
-        derived: DerivedCaches::default(),
-    };
+        Resolution::new(sim_width, sim_height),
+    );
+    world.authoritative.height = Some(height);
+    world.authoritative.sediment = Some(sediment);
     Ok(LoadedWorld::Minimal(world))
 }
 
@@ -397,9 +392,7 @@ mod tests {
 
     fn make_small_field(v: f32) -> ScalarField2D<f32> {
         let mut f = ScalarField2D::<f32>::new(4, 4);
-        for elem in f.data.iter_mut() {
-            *elem = v;
-        }
+        f.data.fill(v);
         f
     }
 

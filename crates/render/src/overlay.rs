@@ -94,11 +94,6 @@ pub struct OverlayRegistry {
 }
 
 impl OverlayRegistry {
-    /// Create an empty registry with no entries.
-    pub fn new() -> Self {
-        Self { entries: vec![] }
-    }
-
     /// Return the Sprint 0 placeholder registry.
     ///
     /// Three entries whose `OverlaySource` key strings match the field names
@@ -106,38 +101,39 @@ impl OverlayRegistry {
     /// `DerivedCaches`. The render path draws a transparent placeholder
     /// texture while those fields remain `None`.
     pub fn sprint_0_defaults() -> Self {
-        let entries = vec![
-            OverlayDescriptor {
-                id: "initial_uplift",
-                label: "Initial uplift",
-                // Sprint 1A: add `initial_uplift: Option<ScalarField2D<f32>>`
-                // to DerivedCaches and keep this key in sync.
-                source: OverlaySource::ScalarDerived("initial_uplift"),
-                palette: PaletteId::Grayscale,
-                value_range: ValueRange::Auto,
-                visible: false,
-            },
-            OverlayDescriptor {
-                id: "final_elevation",
-                label: "Final elevation",
-                // Sprint 1A: `AuthoritativeFields.height` maps to this key.
-                source: OverlaySource::ScalarAuthoritative("height"),
-                palette: PaletteId::Grayscale,
-                value_range: ValueRange::Auto,
-                visible: true, // default on
-            },
-            OverlayDescriptor {
-                id: "flow_accumulation",
-                label: "Flow accumulation",
-                // Sprint 1A: add `accumulation: Option<ScalarField2D<f32>>`
-                // to DerivedCaches and keep this key in sync.
-                source: OverlaySource::ScalarDerived("accumulation"),
-                palette: PaletteId::Grayscale,
-                value_range: ValueRange::Auto,
-                visible: false,
-            },
-        ];
-        Self { entries }
+        Self {
+            entries: vec![
+                OverlayDescriptor {
+                    id: "initial_uplift",
+                    label: "Initial uplift",
+                    // Sprint 1A: add `initial_uplift: Option<ScalarField2D<f32>>`
+                    // to DerivedCaches and keep this key in sync.
+                    source: OverlaySource::ScalarDerived("initial_uplift"),
+                    palette: PaletteId::Grayscale,
+                    value_range: ValueRange::Auto,
+                    visible: false,
+                },
+                OverlayDescriptor {
+                    id: "final_elevation",
+                    label: "Final elevation",
+                    // Sprint 1A: `AuthoritativeFields.height` maps to this key.
+                    source: OverlaySource::ScalarAuthoritative("height"),
+                    palette: PaletteId::Grayscale,
+                    value_range: ValueRange::Auto,
+                    visible: true, // default on
+                },
+                OverlayDescriptor {
+                    id: "flow_accumulation",
+                    label: "Flow accumulation",
+                    // Sprint 1A: add `accumulation: Option<ScalarField2D<f32>>`
+                    // to DerivedCaches and keep this key in sync.
+                    source: OverlaySource::ScalarDerived("accumulation"),
+                    palette: PaletteId::Grayscale,
+                    value_range: ValueRange::Auto,
+                    visible: false,
+                },
+            ],
+        }
     }
 
     /// Return a slice of all registered descriptors.

@@ -318,13 +318,19 @@ impl<T: FieldDtype> ScalarField2D<T> {
         }
 
         // 2. magic
-        let magic: [u8; 4] = bytes[0..4].try_into().unwrap();
+        let magic: [u8; 4] = bytes[0..4]
+            .try_into()
+            .expect("HEADER_LEN guard above ensures ≥17 bytes");
         if magic != MAGIC {
             return Err(FieldDecodeError::BadMagic(magic));
         }
 
         // 3. format version
-        let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        let version = u32::from_le_bytes(
+            bytes[4..8]
+                .try_into()
+                .expect("HEADER_LEN guard above ensures ≥17 bytes"),
+        );
         if version != FORMAT_VERSION {
             return Err(FieldDecodeError::UnsupportedVersion(version));
         }
@@ -339,8 +345,16 @@ impl<T: FieldDtype> ScalarField2D<T> {
         }
 
         // 5. dimensions
-        let width = u32::from_le_bytes(bytes[9..13].try_into().unwrap());
-        let height = u32::from_le_bytes(bytes[13..17].try_into().unwrap());
+        let width = u32::from_le_bytes(
+            bytes[9..13]
+                .try_into()
+                .expect("HEADER_LEN guard above ensures ≥17 bytes"),
+        );
+        let height = u32::from_le_bytes(
+            bytes[13..17]
+                .try_into()
+                .expect("HEADER_LEN guard above ensures ≥17 bytes"),
+        );
         let expected_elems = width as u64 * height as u64;
         let body = &bytes[HEADER_LEN..];
 

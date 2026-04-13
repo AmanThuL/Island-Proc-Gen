@@ -10,6 +10,5 @@ authors.workspace = true
 wgpu      = { workspace = true }
 winit     = { workspace = true }
 anyhow    = { workspace = true }
-thiserror = { workspace = true }
 tracing   = { workspace = true }
 pollster  = { workspace = true }

@@ -48,6 +48,7 @@ impl SimulationStage for NoopStage {
 ///
 /// Stages are stored behind `Box<dyn SimulationStage>` so new stage types
 /// can be added in downstream crates without touching `core`.
+#[derive(Default)]
 pub struct SimulationPipeline {
     stages: Vec<Box<dyn SimulationStage>>,
 }
@@ -80,12 +81,6 @@ impl SimulationPipeline {
             s.run(world)?;
         }
         Ok(())
-    }
-}
-
-impl Default for SimulationPipeline {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

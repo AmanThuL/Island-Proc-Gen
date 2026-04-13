@@ -218,13 +218,9 @@ impl Runtime {
         let frame = match self.gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Suboptimal(_) => {
-                self.gpu
-                    .surface
-                    .configure(&self.gpu.device, &self.gpu.config);
-                return;
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
+            wgpu::CurrentSurfaceTexture::Outdated
+            | wgpu::CurrentSurfaceTexture::Suboptimal(_)
+            | wgpu::CurrentSurfaceTexture::Lost => {
                 self.gpu
                     .surface
                     .configure(&self.gpu.device, &self.gpu.config);

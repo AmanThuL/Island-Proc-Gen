@@ -19,7 +19,7 @@ impl OverlayPanel {
             .show(ctx, |ui| {
                 // Snapshot ids first to avoid a simultaneous shared + mutable
                 // borrow of `registry` inside the closure.
-                let ids: Vec<(&'static str, bool, &'static str)> = registry
+                let ids: Vec<_> = registry
                     .all()
                     .iter()
                     .map(|d| (d.id, d.visible, d.label))
