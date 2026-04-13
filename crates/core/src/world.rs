@@ -47,6 +47,27 @@ impl Resolution {
     }
 }
 
+// ─── D8 flow-direction constants ─────────────────────────────────────────────
+
+/// Sentinel written to `DerivedCaches::flow_dir` for coast cells, sea cells,
+/// and genuine sinks (no downstream). Non-sentinel values `0..=7` encode D8
+/// direction indices (E=0, NE=1, ..., SE=7).
+pub const FLOW_DIR_SINK: u8 = 0xFF;
+
+/// D8 neighbour offset table. Index `i` in `0..=7` maps to `(dx, dy)`.
+///
+/// Order: E, NE, N, NW, W, SW, S, SE — clockwise from east.
+pub const D8_OFFSETS: [(i32, i32); 8] = [
+    ( 1,  0), // 0: E
+    ( 1, -1), // 1: NE
+    ( 0, -1), // 2: N
+    (-1, -1), // 3: NW
+    (-1,  0), // 4: W
+    (-1,  1), // 5: SW
+    ( 0,  1), // 6: S
+    ( 1,  1), // 7: SE
+];
+
 // ─── 3-layer sub-structs ─────────────────────────────────────────────────────
 
 /// Roadmap §数据层分离 §Minimal replay state — the "world truth" required to

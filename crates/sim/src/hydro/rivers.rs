@@ -77,11 +77,15 @@ impl SimulationStage for RiverExtractionStage {
 
             let threshold = RIVER_THRESHOLD_FACTOR * coast.land_cell_count as f32;
 
-            // Candidate mask (0/1) — CLAUDE.md forbids Vec<bool>.
+            // Candidate mask (0/1) — land-only: sea cells can accumulate
+            // contributions from diagonal Moore8 land neighbours and thus
+            // exceed the threshold, but they are not rivers.
             let mut candidate: Vec<u8> = vec![0; n];
             for y in 0..h {
                 for x in 0..w {
-                    if accum.get(x as u32, y as u32) >= threshold {
+                    if coast.is_land.get(x as u32, y as u32) == 1
+                        && accum.get(x as u32, y as u32) >= threshold
+                    {
                         candidate[y * w + x] = 1;
                     }
                 }

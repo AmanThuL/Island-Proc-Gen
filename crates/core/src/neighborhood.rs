@@ -26,3 +26,18 @@ pub const RIVER_CC_NEIGHBORHOOD: Neighborhood = Neighborhood::Moore8;
 /// Neighborhood used when testing whether a river cell touches the coast
 /// (river-mouth detection in `RiverExtractionStage`).
 pub const RIVER_COAST_CONTACT: Neighborhood = Neighborhood::Moore8;
+
+/// Neighbour offsets for the given [`Neighborhood`] kind.
+///
+/// Returns a `'static` slice of `(dx, dy)` pairs. Von4 uses N/E/S/W order;
+/// Moore8 uses row-major order omitting the centre.
+pub const fn neighbour_offsets(kind: Neighborhood) -> &'static [(i32, i32)] {
+    match kind {
+        Neighborhood::Von4 => &[(0, -1), (1, 0), (0, 1), (-1, 0)],
+        Neighborhood::Moore8 => &[
+            (-1, -1), (0, -1), (1, -1),
+            (-1,  0),          (1,  0),
+            (-1,  1), (0,  1), (1,  1),
+        ],
+    }
+}

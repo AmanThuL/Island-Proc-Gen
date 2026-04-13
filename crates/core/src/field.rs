@@ -501,7 +501,7 @@ mod tests {
         let mut orig = VectorField2D::new(2, 2);
         orig.data[0] = [1.0, -1.0];
         orig.data[1] = [0.5, 0.5];
-        orig.data[2] = [-99.0, 3.14];
+        orig.data[2] = [-99.0, std::f32::consts::PI];
         orig.data[3] = [0.0, 0.0];
         let bytes = orig.to_bytes();
         let decoded = VectorField2D::from_bytes(&bytes).expect("should decode");
