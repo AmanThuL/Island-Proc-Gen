@@ -21,6 +21,6 @@ anyhow    = { workspace = true }
 tracing   = { workspace = true }
 rand      = { workspace = true }
 rand_pcg  = { workspace = true }
+ron       = { workspace = true }
 
 [dev-dependencies]
-ron = { workspace = true }
