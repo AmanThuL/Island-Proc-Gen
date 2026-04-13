@@ -15,7 +15,7 @@ use winit::{
 
 use gpu::GpuContext;
 use island_core::{preset::IslandArchetypePreset, seed::Seed, world::Resolution};
-use render::{overlay::OverlayRegistry, TerrainRenderer};
+use render::{TerrainRenderer, overlay::OverlayRegistry};
 
 use crate::camera::{Camera, InputState};
 
@@ -56,11 +56,8 @@ impl Runtime {
     /// and egui.
     pub fn new(event_loop: &ActiveEventLoop) -> anyhow::Result<Self> {
         // ── Window ────────────────────────────────────────────────────────────
-        let attrs = WindowAttributes::default()
-            .with_title("Island Proc-Gen — Sprint 0");
-        let window = Arc::new(
-            event_loop.create_window(attrs).context("create_window")?,
-        );
+        let attrs = WindowAttributes::default().with_title("Island Proc-Gen — Sprint 0");
+        let window = Arc::new(event_loop.create_window(attrs).context("create_window")?);
 
         // ── GPU ───────────────────────────────────────────────────────────────
         let gpu = GpuContext::new(window.clone()).context("GpuContext::new")?;
@@ -74,9 +71,9 @@ impl Runtime {
         let egui_state = egui_winit::State::new(
             egui_ctx.clone(),
             egui::ViewportId::ROOT,
-            &*window,                        // &dyn HasDisplayHandle
+            &*window, // &dyn HasDisplayHandle
             Some(window.scale_factor() as f32),
-            None,                            // theme
+            None, // theme
             Some(gpu.device.limits().max_texture_dimension_2d as usize),
         );
 
@@ -148,23 +145,21 @@ impl Runtime {
             }
 
             // ── Camera input ──────────────────────────────────────────────────
-            WindowEvent::MouseInput { state, button, .. } => {
-                match button {
-                    MouseButton::Left => {
-                        self.input.left_pressed = state == ElementState::Pressed;
-                        if state == ElementState::Released {
-                            self.input.last_cursor = None;
-                        }
+            WindowEvent::MouseInput { state, button, .. } => match button {
+                MouseButton::Left => {
+                    self.input.left_pressed = state == ElementState::Pressed;
+                    if state == ElementState::Released {
+                        self.input.last_cursor = None;
                     }
-                    MouseButton::Right => {
-                        self.input.right_pressed = state == ElementState::Pressed;
-                        if state == ElementState::Released {
-                            self.input.last_cursor = None;
-                        }
-                    }
-                    _ => {}
                 }
-            }
+                MouseButton::Right => {
+                    self.input.right_pressed = state == ElementState::Pressed;
+                    if state == ElementState::Released {
+                        self.input.last_cursor = None;
+                    }
+                }
+                _ => {}
+            },
 
             WindowEvent::CursorMoved { position, .. } => {
                 let (cx, cy) = (position.x, position.y);
@@ -222,15 +217,17 @@ impl Runtime {
         // ── Acquire surface ───────────────────────────────────────────────────
         let frame = match self.gpu.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
-            wgpu::CurrentSurfaceTexture::Timeout
-            | wgpu::CurrentSurfaceTexture::Occluded => return,
-            wgpu::CurrentSurfaceTexture::Outdated
-            | wgpu::CurrentSurfaceTexture::Suboptimal(_) => {
-                self.gpu.surface.configure(&self.gpu.device, &self.gpu.config);
+            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Suboptimal(_) => {
+                self.gpu
+                    .surface
+                    .configure(&self.gpu.device, &self.gpu.config);
                 return;
             }
             wgpu::CurrentSurfaceTexture::Lost => {
-                self.gpu.surface.configure(&self.gpu.device, &self.gpu.config);
+                self.gpu
+                    .surface
+                    .configure(&self.gpu.device, &self.gpu.config);
                 return;
             }
             wgpu::CurrentSurfaceTexture::Validation => return,
@@ -240,12 +237,12 @@ impl Runtime {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
-        let mut encoder =
-            self.gpu
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("frame_encoder"),
-                });
+        let mut encoder = self
+            .gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame_encoder"),
+            });
 
         // ── Terrain pass ─────────────────────────────────────────────────────
         {

@@ -22,5 +22,3 @@ tracing   = { workspace = true }
 rand      = { workspace = true }
 rand_pcg  = { workspace = true }
 ron       = { workspace = true }
-
-[dev-dependencies]

@@ -51,11 +51,11 @@ impl ValueRange {
 /// doc for the full guardrail explanation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlaySource {
-    /// A field in [`crate::world::AuthoritativeFields`] — world-truth data.
+    /// A field in `island_core::world::AuthoritativeFields` — world-truth data.
     ScalarAuthoritative(&'static str),
-    /// A field in [`crate::world::BakedSnapshot`] — stable derived snapshot.
+    /// A field in `island_core::world::BakedSnapshot` — stable derived snapshot.
     ScalarBaked(&'static str),
-    /// A field in [`crate::world::DerivedCaches`] — pure runtime cache.
+    /// A field in `island_core::world::DerivedCaches` — pure runtime cache.
     ScalarDerived(&'static str),
     /// A mask field (boolean/u8) from any layer.
     Mask(&'static str),

@@ -107,7 +107,10 @@ mod tests {
         let mut cam = Camera::new(1.0);
         let yaw_before = cam.yaw;
         cam.orbit(0.1, 0.0);
-        assert!(cam.yaw > yaw_before, "yaw should increase after positive dx orbit");
+        assert!(
+            cam.yaw > yaw_before,
+            "yaw should increase after positive dx orbit"
+        );
     }
 
     #[test]
@@ -141,7 +144,10 @@ mod tests {
         let vp = cam.view_projection();
         // All elements should be finite
         for col in vp.to_cols_array() {
-            assert!(col.is_finite(), "view_projection should produce finite values");
+            assert!(
+                col.is_finite(),
+                "view_projection should produce finite values"
+            );
         }
     }
 }

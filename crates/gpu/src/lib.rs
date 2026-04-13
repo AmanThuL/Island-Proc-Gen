@@ -31,9 +31,7 @@ impl GpuContext {
         let size = window.inner_size();
 
         // ── Instance ─────────────────────────────────────────────────────────
-        let instance = wgpu::Instance::new(
-            wgpu::InstanceDescriptor::new_without_display_handle(),
-        );
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
 
         // ── Surface ──────────────────────────────────────────────────────────
         // The window Arc is cloned in so the surface can't outlive it.
@@ -56,14 +54,12 @@ impl GpuContext {
         );
 
         // ── Device + Queue ───────────────────────────────────────────────────
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("island-proc-gen device"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                ..Default::default()
-            },
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("island-proc-gen device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            ..Default::default()
+        }))
         .context("request_device")?;
 
         // ── Surface configuration ────────────────────────────────────────────

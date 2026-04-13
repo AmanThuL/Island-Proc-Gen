@@ -6,8 +6,8 @@
 //! visible output.
 
 use bytemuck::{Pod, Zeroable};
-use gpu::GpuContext;
 use glam::Mat4;
+use gpu::GpuContext;
 
 // ── WGSL ─────────────────────────────────────────────────────────────────────
 
@@ -70,10 +70,22 @@ impl Vertex {
 //   ( 1, 0,  1) → blue
 //   (-1, 0,  1) → yellow
 const VERTICES: [Vertex; 4] = [
-    Vertex { position: [-1.0, 0.0, -1.0], color: [1.0, 0.0, 0.0] },
-    Vertex { position: [ 1.0, 0.0, -1.0], color: [0.0, 1.0, 0.0] },
-    Vertex { position: [ 1.0, 0.0,  1.0], color: [0.0, 0.0, 1.0] },
-    Vertex { position: [-1.0, 0.0,  1.0], color: [1.0, 1.0, 0.0] },
+    Vertex {
+        position: [-1.0, 0.0, -1.0],
+        color: [1.0, 0.0, 0.0],
+    },
+    Vertex {
+        position: [1.0, 0.0, -1.0],
+        color: [0.0, 1.0, 0.0],
+    },
+    Vertex {
+        position: [1.0, 0.0, 1.0],
+        color: [0.0, 0.0, 1.0],
+    },
+    Vertex {
+        position: [-1.0, 0.0, 1.0],
+        color: [1.0, 1.0, 0.0],
+    },
 ];
 
 const INDICES: [u16; 6] = [0, 1, 2, 0, 2, 3];
@@ -126,7 +138,9 @@ impl TerrainRenderer {
         });
 
         // Uniform buffer (view-projection matrix, identity for now)
-        let identity = Uniforms { view_proj: Mat4::IDENTITY.to_cols_array_2d() };
+        let identity = Uniforms {
+            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+        };
         let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("terrain_uniforms"),
             contents: bytemuck::cast_slice(&[identity]),
@@ -215,7 +229,9 @@ impl TerrainRenderer {
 
     /// Upload an updated view-projection matrix before each frame.
     pub fn update_view_proj(&self, queue: &wgpu::Queue, view_proj: Mat4) {
-        let uniforms = Uniforms { view_proj: view_proj.to_cols_array_2d() };
+        let uniforms = Uniforms {
+            view_proj: view_proj.to_cols_array_2d(),
+        };
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
