@@ -14,8 +14,20 @@ name = "app"
 path = "src/main.rs"
 
 [dependencies]
-island_core = { path = "../core", package = "core" }
-anyhow      = { workspace = true }
+island_core        = { path = "../core", package = "core" }
+data               = { path = "../data" }
+gpu                = { path = "../gpu" }
+render             = { path = "../render" }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+winit              = { workspace = true }
+wgpu               = { workspace = true }
+egui               = { workspace = true }
+egui-wgpu          = { workspace = true }
+egui-winit         = { workspace = true }
+glam               = { workspace = true }
+pollster           = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
