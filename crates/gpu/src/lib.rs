@@ -9,6 +9,9 @@ use anyhow::Context as _;
 use tracing::info;
 use winit::{dpi::PhysicalSize, window::Window};
 
+/// Depth buffer format used for the main render pass.
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
 /// Everything wgpu needs to render into a window surface.
 pub struct GpuContext {
     pub instance: wgpu::Instance,
@@ -20,6 +23,12 @@ pub struct GpuContext {
     pub size: PhysicalSize<u32>,
     /// The surface texture format chosen from adapter capabilities.
     pub surface_format: wgpu::TextureFormat,
+    /// Depth buffer texture (Depth32Float).
+    pub depth_texture: wgpu::Texture,
+    /// View into the depth texture for use as a depth attachment.
+    pub depth_view: wgpu::TextureView,
+    /// Format of the depth texture (always `DEPTH_FORMAT`).
+    pub depth_format: wgpu::TextureFormat,
 }
 
 impl GpuContext {
@@ -86,6 +95,9 @@ impl GpuContext {
         };
         surface.configure(&device, &config);
 
+        // ── Depth texture ────────────────────────────────────────────────────
+        let (depth_texture, depth_view) = create_depth(&device, &config, DEPTH_FORMAT);
+
         info!(
             width = config.width,
             height = config.height,
@@ -102,6 +114,9 @@ impl GpuContext {
             config,
             size,
             surface_format,
+            depth_texture,
+            depth_view,
+            depth_format: DEPTH_FORMAT,
         })
     }
 
@@ -114,5 +129,34 @@ impl GpuContext {
         self.config.width = new_size.width;
         self.config.height = new_size.height;
         self.surface.configure(&self.device, &self.config);
+        // Recreate depth texture at the new resolution.
+        let (tex, view) = create_depth(&self.device, &self.config, DEPTH_FORMAT);
+        self.depth_texture = tex;
+        self.depth_view = view;
     }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn create_depth(
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+    format: wgpu::TextureFormat,
+) -> (wgpu::Texture, wgpu::TextureView) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("depth_texture"),
+        size: wgpu::Extent3d {
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    (texture, view)
 }

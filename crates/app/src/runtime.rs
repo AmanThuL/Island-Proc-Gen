@@ -76,9 +76,6 @@ impl Runtime {
         // ── GPU ───────────────────────────────────────────────────────────────
         let gpu = GpuContext::new(window.clone()).context("GpuContext::new")?;
 
-        // ── Terrain renderer ──────────────────────────────────────────────────
-        let terrain = TerrainRenderer::new(&gpu);
-
         // ── egui ──────────────────────────────────────────────────────────────
         let egui_ctx = egui::Context::default();
 
@@ -100,7 +97,7 @@ impl Runtime {
         // ── Camera ────────────────────────────────────────────────────────────
         let PhysicalSize { width, height } = gpu.size;
         let aspect = width as f32 / height.max(1) as f32;
-        let camera = Camera::new(aspect);
+        let mut camera = Camera::new(aspect);
 
         // ── Preset ───────────────────────────────────────────────────────────
         let preset = load_preset();
@@ -113,6 +110,13 @@ impl Runtime {
         // ── Sprint 1A pipeline (runs once at boot) ───────────────────────────
         let world = run_sprint_1a_pipeline(seed, preset.clone(), resolution)
             .context("run_sprint_1a_pipeline")?;
+
+        // ── Terrain renderer (must follow pipeline so z_filled is populated) ─
+        let terrain = TerrainRenderer::new(&gpu, &world, &preset);
+
+        // Centre the camera on the island mesh ([0,1]×[0,1] on XZ, Y=height).
+        camera.target = glam::Vec3::new(0.5, preset.sea_level, 0.5);
+        camera.distance = 1.8;
 
         Ok(Self {
             window,
@@ -237,7 +241,8 @@ impl Runtime {
 
         // ── Upload camera ─────────────────────────────────────────────────────
         let vp = self.camera.view_projection();
-        self.terrain.update_view_proj(&self.gpu.queue, vp);
+        let eye = self.camera.eye();
+        self.terrain.update_view(&self.gpu.queue, vp, eye);
 
         // ── Acquire surface ───────────────────────────────────────────────────
         let frame = match self.gpu.surface.get_current_texture() {
@@ -283,7 +288,14 @@ impl Runtime {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil_attachment: None,
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.gpu.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,

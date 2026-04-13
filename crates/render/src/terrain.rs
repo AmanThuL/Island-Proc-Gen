@@ -1,198 +1,268 @@
-//! Terrain rendering: Sprint 0 placeholder quad renderer and Sprint 1A CPU
-//! mesh builder.
+//! Terrain rendering: Sprint 1A mesh renderer driven by the sim pipeline.
 //!
-//! The existing `TerrainRenderer` is kept untouched — Runtime still drives it
-//! while the window path is live.  The new `build_terrain_mesh` and
-//! `build_sea_quad` functions are standalone and used by tests and the
-//! upcoming Sprint 1A pipeline.
+//! `TerrainRenderer` owns the GPU pipeline, four vertex/index buffers (terrain
+//! VBO+IBO and sea VBO+IBO), and three uniform buffers (View / Palette /
+//! LightRig).  It reads the heightfield from `world.derived.z_filled` and the
+//! shader from `shaders/terrain.wgsl`.
+//!
+//! The `build_terrain_mesh` / `build_sea_quad` library functions and the
+//! `TerrainVertex` / `MeshData` types below are unchanged from their Sprint 1A
+//! unit-tested state.
+
+use std::mem::size_of;
 
 use bytemuck::{Pod, Zeroable};
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use gpu::GpuContext;
+use wgpu::util::DeviceExt as _;
 
-// ── WGSL ─────────────────────────────────────────────────────────────────────
+use crate::palette::{
+    BASIN_ACCENT, DEEP_WATER, HIGHLAND, LOWLAND, MIDLAND, OVERLAY_NEUTRAL, RIVER, SHALLOW_WATER,
+};
 
-const TERRAIN_WGSL: &str = r#"
-struct Uniforms {
-    view_proj: mat4x4<f32>,
-}
-@group(0) @binding(0) var<uniform> u: Uniforms;
+// ── Uniform structs (must match terrain.wgsl field order exactly) ─────────────
 
-struct VsIn {
-    @location(0) position: vec3<f32>,
-    @location(1) color:    vec3<f32>,
-}
-struct VsOut {
-    @builtin(position) clip_position: vec4<f32>,
-    @location(0)       color:         vec3<f32>,
-}
-
-@vertex
-fn vs_main(input: VsIn) -> VsOut {
-    var out: VsOut;
-    out.clip_position = u.view_proj * vec4<f32>(input.position, 1.0);
-    out.color = input.color;
-    return out;
-}
-
-@fragment
-fn fs_main(input: VsOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(input.color, 1.0);
-}
-"#;
-
-// ── Vertex layout ─────────────────────────────────────────────────────────────
-
+/// View uniform — binding 0.  80 bytes.
+///
+/// Matches `struct View` in terrain.wgsl: view_proj (mat4×mat4 = 64 B) then
+/// eye_pos (vec4 = 16 B).  `#[repr(C)]` guarantees field order for std140.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 3],
+struct ViewUniform {
+    view_proj: [[f32; 4]; 4], // 64 bytes
+    eye_pos: [f32; 4],        // 16 bytes (xyz = eye, w = 0 padding)
 }
 
-impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] = wgpu::vertex_attr_array![
-        0 => Float32x3,
-        1 => Float32x3
-    ];
+/// Palette uniform — binding 1.  128 bytes (8 × vec4<f32>).
+///
+/// Field order matches `struct Palette` in terrain.wgsl.  Values are
+/// populated from `crates/render/src/palette.rs` constants — no colour
+/// literals here per CLAUDE.md §invariant 8.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct PaletteUniform {
+    deep_water: [f32; 4],
+    shallow_water: [f32; 4],
+    lowland: [f32; 4],
+    midland: [f32; 4],
+    highland: [f32; 4],
+    river: [f32; 4],
+    basin_accent: [f32; 4],
+    overlay_neutral: [f32; 4],
+}
 
-    fn layout() -> wgpu::VertexBufferLayout<'static> {
-        wgpu::VertexBufferLayout {
-            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
+impl PaletteUniform {
+    fn from_palette_constants() -> Self {
+        Self {
+            deep_water: DEEP_WATER,
+            shallow_water: SHALLOW_WATER,
+            lowland: LOWLAND,
+            midland: MIDLAND,
+            highland: HIGHLAND,
+            river: RIVER,
+            basin_accent: BASIN_ACCENT,
+            overlay_neutral: OVERLAY_NEUTRAL,
         }
     }
 }
 
-// Quad vertices: XZ plane at y = 0
-//   (-1, 0, -1) → red
-//   ( 1, 0, -1) → green
-//   ( 1, 0,  1) → blue
-//   (-1, 0,  1) → yellow
-const VERTICES: [Vertex; 4] = [
-    Vertex {
-        position: [-1.0, 0.0, -1.0],
-        color: [1.0, 0.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, 0.0, -1.0],
-        color: [0.0, 1.0, 0.0],
-    },
-    Vertex {
-        position: [1.0, 0.0, 1.0],
-        color: [0.0, 0.0, 1.0],
-    },
-    Vertex {
-        position: [-1.0, 0.0, 1.0],
-        color: [1.0, 1.0, 0.0],
-    },
-];
-
-const INDICES: [u16; 6] = [0, 1, 2, 0, 2, 3];
-
-// ── Uniform buffer ─────────────────────────────────────────────────────────────
-
+/// Light-rig uniform — binding 2.  64 bytes (4 × vec4<f32>).
+///
+/// Field order matches `struct LightRig` in terrain.wgsl.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
-struct Uniforms {
-    view_proj: [[f32; 4]; 4],
+struct LightRigUniform {
+    key_dir: [f32; 4],   // xyz = direction light→surface, w = intensity
+    fill_dir: [f32; 4],  // xyz = direction light→surface, w = intensity
+    ambient: [f32; 4],   // rgb = tint, a = scalar lift
+    sea_level: [f32; 4], // x = sea_level, yzw = padding
+}
+
+impl LightRigUniform {
+    /// Sprint 1A §3.2 A4 three-term rig.
+    ///
+    /// key_dir:   normalize(-1, -2, -1)  w=1.0  (√6 ≈ 2.449)
+    /// fill_dir:  normalize( 1, -1,  1)  w=0.3  (√3 ≈ 1.732)
+    /// ambient:   subtle cool tint + 0.15 scalar lift
+    fn sprint_1a_default(sea_level: f32) -> Self {
+        let key_n = Vec3::new(-1.0, -2.0, -1.0).normalize();
+        let fill_n = Vec3::new(1.0, -1.0, 1.0).normalize();
+
+        Self {
+            key_dir: [key_n.x, key_n.y, key_n.z, 1.0],
+            fill_dir: [fill_n.x, fill_n.y, fill_n.z, 0.3],
+            // §3.2 A4 target is "ambient ≈ 0.15 × key". The shader sums
+            // ambient.rgb + ambient.a into the same floor, so rgb stays at
+            // zero — the full 0.15 lift comes from the scalar slot.
+            ambient: [0.0, 0.0, 0.0, 0.15],
+            sea_level: [sea_level, 0.0, 0.0, 0.0],
+        }
+    }
 }
 
 // ── TerrainRenderer ───────────────────────────────────────────────────────────
 
-/// Draws a single placeholder quad. Holds a wgpu render pipeline, vertex /
-/// index buffers, and a uniform buffer for the view-projection matrix.
+/// Sprint 1A terrain + sea-plane renderer.
+///
+/// Drives two indexed draws per frame — the heightfield mesh and a sea quad —
+/// sharing one pipeline and one bind group.  Requires the Sprint 1A sim
+/// pipeline to have run (i.e. `world.derived.z_filled` must be `Some`).
 pub struct TerrainRenderer {
     pipeline: wgpu::RenderPipeline,
-    vertex_buf: wgpu::Buffer,
-    index_buf: wgpu::Buffer,
-    uniform_buf: wgpu::Buffer,
+    terrain_vbo: wgpu::Buffer,
+    terrain_ibo: wgpu::Buffer,
+    terrain_index_count: u32,
+    sea_vbo: wgpu::Buffer,
+    sea_ibo: wgpu::Buffer,
+    sea_index_count: u32,
+    view_buf: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
 }
 
 impl TerrainRenderer {
-    /// Construct the renderer from an already-initialised [`GpuContext`].
-    pub fn new(gpu: &GpuContext) -> Self {
-        use wgpu::util::DeviceExt as _;
-
+    /// Construct the renderer from an already-initialised [`GpuContext`], the
+    /// simulated [`WorldState`], and the island preset (for `sea_level`).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `world.derived.z_filled` is `None` — the Sprint 1A pipeline
+    /// must run before this constructor is called.
+    pub fn new(
+        gpu: &GpuContext,
+        world: &island_core::world::WorldState,
+        preset: &island_core::preset::IslandArchetypePreset,
+    ) -> Self {
         let device = &gpu.device;
 
-        // Shader
+        // ── Heightfield (must exist — pipeline ran before us) ─────────────────
+        let z_filled = world
+            .derived
+            .z_filled
+            .as_ref()
+            .expect("TerrainRenderer::new: world.derived.z_filled must be populated (Sprint 1A pipeline has not run)");
+
+        // ── CPU mesh build ────────────────────────────────────────────────────
+        let terrain_mesh = build_terrain_mesh(z_filled);
+        let sea_mesh = build_sea_quad(preset.sea_level);
+
+        // ── Shader ───────────────────────────────────────────────────────────
+        // Path: crates/render/src/ + ../../../shaders/ = repo root shaders/
+        let wgsl_src = include_str!("../../../shaders/terrain.wgsl");
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("terrain_shader"),
-            source: wgpu::ShaderSource::Wgsl(TERRAIN_WGSL.into()),
+            source: wgpu::ShaderSource::Wgsl(wgsl_src.into()),
         });
 
-        // Vertex buffer
-        let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("terrain_vertices"),
-            contents: bytemuck::cast_slice(&VERTICES),
+        // ── Vertex / index buffers ────────────────────────────────────────────
+        let terrain_vbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain_vbo"),
+            contents: bytemuck::cast_slice(&terrain_mesh.vertices),
             usage: wgpu::BufferUsages::VERTEX,
         });
-
-        // Index buffer
-        let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("terrain_indices"),
-            contents: bytemuck::cast_slice(&INDICES),
+        let terrain_ibo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain_ibo"),
+            contents: bytemuck::cast_slice(&terrain_mesh.indices),
             usage: wgpu::BufferUsages::INDEX,
         });
+        let terrain_index_count = terrain_mesh.indices.len() as u32;
 
-        // Uniform buffer (view-projection matrix, identity for now)
-        let identity = Uniforms {
+        let sea_vbo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sea_vbo"),
+            contents: bytemuck::cast_slice(&sea_mesh.vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let sea_ibo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("sea_ibo"),
+            contents: bytemuck::cast_slice(&sea_mesh.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let sea_index_count = sea_mesh.indices.len() as u32;
+
+        // ── Uniform buffers ───────────────────────────────────────────────────
+        let identity_view = ViewUniform {
             view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            eye_pos: [0.0; 4],
         };
-        let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("terrain_uniforms"),
-            contents: bytemuck::cast_slice(&[identity]),
+        let view_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain_view_buf"),
+            contents: bytemuck::cast_slice(&[identity_view]),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Bind group layout
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("terrain_bgl"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
+        let palette_data = PaletteUniform::from_palette_constants();
+        let palette_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain_palette_buf"),
+            contents: bytemuck::cast_slice(&[palette_data]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // Bind group
+        let light_data = LightRigUniform::sprint_1a_default(preset.sea_level);
+        let light_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("terrain_light_buf"),
+            contents: bytemuck::cast_slice(&[light_data]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        // ── Bind group layout (3 uniform entries) ─────────────────────────────
+        let uniform_entry = |binding, visibility| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("terrain_bgl"),
+            entries: &[
+                uniform_entry(0, wgpu::ShaderStages::VERTEX), // View
+                uniform_entry(1, wgpu::ShaderStages::FRAGMENT), // Palette
+                uniform_entry(2, wgpu::ShaderStages::FRAGMENT), // LightRig (+ sea_level)
+            ],
+        });
+
+        // ── Bind group ────────────────────────────────────────────────────────
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("terrain_bg"),
             layout: &bgl,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buf.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: view_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: palette_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: light_buf.as_entire_binding(),
+                },
+            ],
         });
 
-        // Pipeline layout
+        // ── Pipeline layout ───────────────────────────────────────────────────
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("terrain_pipeline_layout"),
             bind_group_layouts: &[Some(&bgl)],
             immediate_size: 0,
         });
 
-        // Render pipeline — no depth attachment for Sprint 0
+        // ── Render pipeline ───────────────────────────────────────────────────
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain_pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[Vertex::layout()],
+                entry_point: Some("vs_terrain"),
+                buffers: &[TerrainVertex::layout()],
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some("fs_terrain"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: gpu.surface_format,
                     blend: Some(wgpu::BlendState::REPLACE),
@@ -204,12 +274,19 @@ impl TerrainRenderer {
                 topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
                 front_face: wgpu::FrontFace::Ccw,
-                cull_mode: None, // show both sides of the quad
+                // Mesh builder generates CCW winding viewed from +Y — backface cull is safe.
+                cull_mode: Some(wgpu::Face::Back),
                 polygon_mode: wgpu::PolygonMode::Fill,
                 unclipped_depth: false,
                 conservative: false,
             },
-            depth_stencil: None, // no depth buffer in Sprint 0
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: gpu.depth_format,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::Less),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
             multisample: wgpu::MultisampleState {
                 count: 1,
                 mask: !0,
@@ -221,28 +298,40 @@ impl TerrainRenderer {
 
         Self {
             pipeline,
-            vertex_buf,
-            index_buf,
-            uniform_buf,
+            terrain_vbo,
+            terrain_ibo,
+            terrain_index_count,
+            sea_vbo,
+            sea_ibo,
+            sea_index_count,
+            view_buf,
             bind_group,
         }
     }
 
-    /// Upload an updated view-projection matrix before each frame.
-    pub fn update_view_proj(&self, queue: &wgpu::Queue, view_proj: Mat4) {
-        let uniforms = Uniforms {
+    /// Upload updated view matrix and eye position before each frame.
+    pub fn update_view(&self, queue: &wgpu::Queue, view_proj: Mat4, eye_pos: Vec3) {
+        let uniform = ViewUniform {
             view_proj: view_proj.to_cols_array_2d(),
+            eye_pos: [eye_pos.x, eye_pos.y, eye_pos.z, 0.0],
         };
-        queue.write_buffer(&self.uniform_buf, 0, bytemuck::cast_slice(&[uniforms]));
+        queue.write_buffer(&self.view_buf, 0, bytemuck::cast_slice(&[uniform]));
     }
 
-    /// Record the terrain draw call into `render_pass`.
+    /// Record terrain and sea-plane draw calls into `render_pass`.
     pub fn draw<'rp>(&'rp self, render_pass: &mut wgpu::RenderPass<'rp>) {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.bind_group, &[]);
-        render_pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
-        render_pass.set_index_buffer(self.index_buf.slice(..), wgpu::IndexFormat::Uint16);
-        render_pass.draw_indexed(0..INDICES.len() as u32, 0, 0..1);
+
+        // Terrain mesh
+        render_pass.set_vertex_buffer(0, self.terrain_vbo.slice(..));
+        render_pass.set_index_buffer(self.terrain_ibo.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..self.terrain_index_count, 0, 0..1);
+
+        // Sea plane — drawn after terrain so depth test resolves z-fighting correctly
+        render_pass.set_vertex_buffer(0, self.sea_vbo.slice(..));
+        render_pass.set_index_buffer(self.sea_ibo.slice(..), wgpu::IndexFormat::Uint32);
+        render_pass.draw_indexed(0..self.sea_index_count, 0, 0..1);
     }
 }
 
@@ -253,14 +342,34 @@ impl TerrainRenderer {
 #[derive(Copy, Clone, Pod, Zeroable)]
 pub struct TerrainVertex {
     pub position: [f32; 3],
-    pub normal:   [f32; 3],
-    pub uv:       [f32; 2],
+    pub normal: [f32; 3],
+    pub uv: [f32; 2],
+}
+
+impl TerrainVertex {
+    /// Vertex buffer layout: 3 attributes, 32-byte stride.
+    ///
+    /// location 0 — position (Float32x3, offset 0)
+    /// location 1 — normal   (Float32x3, offset 12)
+    /// location 2 — uv       (Float32x2, offset 24)
+    pub fn layout() -> wgpu::VertexBufferLayout<'static> {
+        const ATTRIBS: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
+            0 => Float32x3,
+            1 => Float32x3,
+            2 => Float32x2
+        ];
+        wgpu::VertexBufferLayout {
+            array_stride: size_of::<TerrainVertex>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &ATTRIBS,
+        }
+    }
 }
 
 /// CPU-side mesh ready for GPU upload.
 pub struct MeshData {
     pub vertices: Vec<TerrainVertex>,
-    pub indices:  Vec<u32>,
+    pub indices: Vec<u32>,
 }
 
 impl MeshData {
@@ -364,13 +473,31 @@ pub fn build_terrain_mesh(z_filled: &island_core::field::ScalarField2D<f32>) -> 
 
 /// Build the sea-plane quad at `y = sea_level`.
 ///
-/// A single CCW 2-triangle quad covering `[0, 1] × [0, 1]` on XZ.
+/// A single CCW 2-triangle quad covering `[0, 1] × [0, 1]` on XZ. Paired with
+/// `cull_mode: Back` the quad disappears when the camera dips below
+/// `sea_level`; Sprint 1A §3.2 A2 does not require underwater visibility.
 pub fn build_sea_quad(sea_level: f32) -> MeshData {
     let vertices = vec![
-        TerrainVertex { position: [0.0, sea_level, 0.0], normal: [0.0, 1.0, 0.0], uv: [0.0, 0.0] },
-        TerrainVertex { position: [1.0, sea_level, 0.0], normal: [0.0, 1.0, 0.0], uv: [1.0, 0.0] },
-        TerrainVertex { position: [0.0, sea_level, 1.0], normal: [0.0, 1.0, 0.0], uv: [0.0, 1.0] },
-        TerrainVertex { position: [1.0, sea_level, 1.0], normal: [0.0, 1.0, 0.0], uv: [1.0, 1.0] },
+        TerrainVertex {
+            position: [0.0, sea_level, 0.0],
+            normal: [0.0, 1.0, 0.0],
+            uv: [0.0, 0.0],
+        },
+        TerrainVertex {
+            position: [1.0, sea_level, 0.0],
+            normal: [0.0, 1.0, 0.0],
+            uv: [1.0, 0.0],
+        },
+        TerrainVertex {
+            position: [0.0, sea_level, 1.0],
+            normal: [0.0, 1.0, 0.0],
+            uv: [0.0, 1.0],
+        },
+        TerrainVertex {
+            position: [1.0, sea_level, 1.0],
+            normal: [0.0, 1.0, 0.0],
+            uv: [1.0, 1.0],
+        },
     ];
     // CCW winding viewed from +Y: triangle A = [0, 2, 1], triangle B = [1, 2, 3]
     let indices = vec![0, 2, 1, 1, 2, 3];
@@ -462,12 +589,20 @@ mod tests {
 
         // vertex (3, 3) → uv [1, 1]
         let uv_33 = mesh.vertices[3 * w + 3].uv;
-        assert!((uv_33[0] - 1.0).abs() < eps && (uv_33[1] - 1.0).abs() < eps, "uv(3,3) wrong: {:?}", uv_33);
+        assert!(
+            (uv_33[0] - 1.0).abs() < eps && (uv_33[1] - 1.0).abs() < eps,
+            "uv(3,3) wrong: {:?}",
+            uv_33
+        );
 
         // vertex (1, 1) → uv [1/3, 1/3]
         let uv_11 = mesh.vertices[w + 1].uv;
         let third = 1.0_f32 / 3.0;
-        assert!((uv_11[0] - third).abs() < eps && (uv_11[1] - third).abs() < eps, "uv(1,1) wrong: {:?}", uv_11);
+        assert!(
+            (uv_11[0] - third).abs() < eps && (uv_11[1] - third).abs() < eps,
+            "uv(1,1) wrong: {:?}",
+            uv_11
+        );
     }
 
     #[test]
@@ -523,5 +658,20 @@ mod tests {
     fn sea_level_height_matches_input() {
         let mesh = build_sea_quad(0.42);
         assert!((mesh.vertices[0].position[1] - 0.42).abs() < 1e-6);
+    }
+
+    #[test]
+    fn terrain_vertex_layout_stride_matches_size() {
+        let layout = TerrainVertex::layout();
+        assert_eq!(
+            layout.array_stride,
+            size_of::<TerrainVertex>() as wgpu::BufferAddress,
+            "layout stride must equal sizeof(TerrainVertex)"
+        );
+        assert_eq!(
+            size_of::<TerrainVertex>(),
+            32,
+            "TerrainVertex must be 32 bytes (3+3+2 f32s)"
+        );
     }
 }
