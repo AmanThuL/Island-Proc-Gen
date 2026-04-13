@@ -1,6 +1,7 @@
 //! Rendering layer — terrain placeholder quad + overlay descriptor registry.
 
 pub mod camera;
+pub mod noise;
 pub mod overlay;
 pub mod palette;
 pub mod terrain;
@@ -9,6 +10,7 @@ pub use camera::{
     ALL_PRESETS, CameraPreset, CameraPresetId, PRESET_HERO, PRESET_LOW_OBLIQUE, PRESET_TOP_DEBUG,
     preset_by_id, view_projection as camera_view_projection,
 };
+pub use noise::{BlueNoiseTexture, NoiseLoadError, load_blue_noise_2d};
 pub use overlay::{OverlayDescriptor, OverlayRegistry, OverlaySource, ValueRange};
 pub use palette::{
     BASIN_ACCENT, DEEP_WATER, HIGHLAND, LOWLAND, MIDLAND, OVERLAY_NEUTRAL, PaletteId, RIVER,

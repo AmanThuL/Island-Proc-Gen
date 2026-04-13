@@ -26,5 +26,6 @@ thiserror        = "2.0.18"
 rand             = "0.9"
 rand_pcg         = "0.9"
 tempfile         = "3"
+png              = "0.17"
 pollster         = "0.4"
 bytemuck         = { version = "1.25", features = ["derive"] }
