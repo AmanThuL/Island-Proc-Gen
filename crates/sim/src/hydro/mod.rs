@@ -4,9 +4,11 @@
 //! Task 1A.7 `BasinsStage`, Task 1A.8 `RiverExtractionStage`.
 
 pub mod accumulation;
+pub mod basins;
 pub mod flow_routing;
 
 pub use accumulation::AccumulationStage;
+pub use basins::BasinsStage;
 pub use flow_routing::FlowRoutingStage;
 
 /// D8 neighbour offset table. Index 0..7 encoded in `flow_dir[p]`.
