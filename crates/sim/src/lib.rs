@@ -12,3 +12,4 @@ pub use geomorph::TopographyStage;
 pub use hydro::AccumulationStage;
 pub use hydro::BasinsStage;
 pub use hydro::FlowRoutingStage;
+pub use hydro::RiverExtractionStage;

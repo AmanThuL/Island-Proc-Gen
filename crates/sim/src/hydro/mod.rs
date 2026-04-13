@@ -6,10 +6,12 @@
 pub mod accumulation;
 pub mod basins;
 pub mod flow_routing;
+pub mod rivers;
 
 pub use accumulation::AccumulationStage;
 pub use basins::BasinsStage;
 pub use flow_routing::FlowRoutingStage;
+pub use rivers::RiverExtractionStage;
 
 /// D8 neighbour offset table. Index 0..7 encoded in `flow_dir[p]`.
 ///
