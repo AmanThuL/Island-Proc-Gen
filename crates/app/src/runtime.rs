@@ -42,10 +42,14 @@ pub(crate) const INITIAL_WINDOW_HEIGHT: u32 = 800;
 pub(crate) const INITIAL_VERTICAL_SCALE: f32 = 0.5;
 
 /// Orbit camera defaults used at first open AND by the camera panel "Reset"
-/// button. Target Y is overridden at runtime to `preset.sea_level`.
-pub(crate) const INITIAL_CAMERA_DISTANCE: f32 = 1.8;
-pub(crate) const INITIAL_CAMERA_YAW: f32 = 0.0;
-pub(crate) const INITIAL_CAMERA_PITCH: f32 = -0.5;
+/// button. Target Y is overridden at runtime to `preset.sea_level`. The
+/// angles/distance below capture the user-approved preview view: a ~13° yaw
+/// / ~13° pitch / 1.44-distance orbit that frames the island with the
+/// volcano peak prominent, the coastline visible, and the camera safely
+/// above `sea_level` (negative pitch would put the eye below the water).
+pub(crate) const INITIAL_CAMERA_DISTANCE: f32 = 1.44;
+pub(crate) const INITIAL_CAMERA_YAW: f32 = 0.23;
+pub(crate) const INITIAL_CAMERA_PITCH: f32 = 0.22;
 
 // ── Runtime ───────────────────────────────────────────────────────────────────
 
