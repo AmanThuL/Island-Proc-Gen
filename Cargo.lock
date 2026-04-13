@@ -114,6 +114,7 @@ dependencies = [
  "glam",
  "gpu",
  "render",
+ "sim",
  "tempfile",
  "tracing",
  "tracing-subscriber",

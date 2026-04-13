@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Context as _;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 use winit::{
     dpi::PhysicalSize,
     event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent},
@@ -14,8 +14,17 @@ use winit::{
 };
 
 use gpu::GpuContext;
-use island_core::{preset::IslandArchetypePreset, seed::Seed, world::Resolution};
+use island_core::{
+    pipeline::SimulationPipeline,
+    preset::IslandArchetypePreset,
+    seed::Seed,
+    world::{Resolution, WorldState},
+};
 use render::{TerrainRenderer, overlay::OverlayRegistry};
+use sim::{
+    AccumulationStage, BasinsStage, CoastMaskStage, DerivedGeomorphStage, FlowRoutingStage,
+    PitFillStage, RiverExtractionStage, TopographyStage, ValidationStage,
+};
 
 use crate::camera::{Camera, InputState};
 
@@ -49,6 +58,11 @@ pub struct Runtime {
     // simulation metadata (Task 0.8)
     seed: Seed,
     resolution: Resolution,
+
+    // Sprint 1A: the simulated world the pipeline produced at startup.
+    // Sprint 1A runs the pipeline once at boot; Sprint 2+ will re-run it
+    // when preset params change interactively.
+    world: WorldState,
 }
 
 impl Runtime {
@@ -96,6 +110,10 @@ impl Runtime {
         let seed = Seed(42);
         let resolution = Resolution::new(256, 256);
 
+        // ── Sprint 1A pipeline (runs once at boot) ───────────────────────────
+        let world = run_sprint_1a_pipeline(seed, preset.clone(), resolution)
+            .context("run_sprint_1a_pipeline")?;
+
         Ok(Self {
             window,
             gpu,
@@ -111,12 +129,19 @@ impl Runtime {
             overlay_registry,
             seed,
             resolution,
+            world,
         })
     }
 
     /// Request a repaint from the OS (called from `about_to_wait`).
     pub fn request_redraw(&self) {
         self.window.request_redraw();
+    }
+
+    /// Borrow the simulated world. Sprint 1B+ overlay bindings will consume
+    /// this to look up `derived.*` fields by name.
+    pub fn world(&self) -> &WorldState {
+        &self.world
     }
 
     /// Handle a `WindowEvent` from winit.
@@ -354,6 +379,45 @@ impl Runtime {
         self.window.pre_present_notify();
         frame.present();
     }
+}
+
+// ── Sprint 1A pipeline runner ─────────────────────────────────────────────────
+
+/// Construct the Sprint 1A `SimulationPipeline` and run it once against a
+/// fresh [`WorldState`]. Returns the populated world.
+fn run_sprint_1a_pipeline(
+    seed: Seed,
+    preset: IslandArchetypePreset,
+    resolution: Resolution,
+) -> anyhow::Result<WorldState> {
+    let mut world = WorldState::new(seed, preset, resolution);
+
+    let mut pipeline = SimulationPipeline::new();
+    pipeline.push(Box::new(TopographyStage));
+    pipeline.push(Box::new(CoastMaskStage));
+    pipeline.push(Box::new(PitFillStage));
+    pipeline.push(Box::new(DerivedGeomorphStage));
+    pipeline.push(Box::new(FlowRoutingStage));
+    pipeline.push(Box::new(AccumulationStage));
+    pipeline.push(Box::new(BasinsStage));
+    pipeline.push(Box::new(RiverExtractionStage));
+    pipeline.push(Box::new(ValidationStage));
+
+    pipeline.run(&mut world).context("pipeline.run")?;
+
+    let land_cells = world
+        .derived
+        .coast_mask
+        .as_ref()
+        .map(|c| c.land_cell_count)
+        .unwrap_or(0);
+    info!(
+        stages = 9,
+        land_cells,
+        "Sprint 1A pipeline completed (all invariants passed)"
+    );
+
+    Ok(world)
 }
 
 // ── Preset loading helper ─────────────────────────────────────────────────────
