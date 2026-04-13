@@ -30,7 +30,7 @@ pub enum NoiseLoadError {
         expected: u32,
     },
 
-    #[error("blue noise PNG at {path} is not 8-bit grayscale (color_type={color_type:?}, bit_depth={bit_depth:?})")]
+    #[error("blue noise PNG at {path} is not 8-bit (color_type={color_type:?}, bit_depth={bit_depth:?})")]
     WrongFormat {
         path: PathBuf,
         color_type: png::ColorType,
@@ -84,8 +84,23 @@ pub(crate) fn try_load_png(path: &Path, size: u32) -> Result<BlueNoiseTexture, N
         source: e,
     })?;
 
+    // Accept 8-bit Grayscale / Rgb / Rgba — the Calinou LDR_LLL1_* textures
+    // are encoded as RGBA but replicate L across R=G=B, so taking the R
+    // channel recovers the original grayscale sample.
     let info = reader.info();
-    if info.color_type != png::ColorType::Grayscale || info.bit_depth != png::BitDepth::Eight {
+    let stride: usize = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        _ => {
+            return Err(NoiseLoadError::WrongFormat {
+                path: path.to_path_buf(),
+                color_type: info.color_type,
+                bit_depth: info.bit_depth,
+            });
+        }
+    };
+    if info.bit_depth != png::BitDepth::Eight {
         return Err(NoiseLoadError::WrongFormat {
             path: path.to_path_buf(),
             color_type: info.color_type,
@@ -108,10 +123,16 @@ pub(crate) fn try_load_png(path: &Path, size: u32) -> Result<BlueNoiseTexture, N
             source: e,
         })?;
 
+    let data = if stride == 1 {
+        buf
+    } else {
+        buf.chunks_exact(stride).map(|c| c[0]).collect()
+    };
+
     Ok(BlueNoiseTexture {
         width: size,
         height: size,
-        data: buf,
+        data,
     })
 }
 
@@ -161,13 +182,26 @@ mod tests {
         writer.write_image_data(data).unwrap();
     }
 
-    fn write_rgb_png(path: &std::path::Path, width: u32, height: u32) {
+    fn write_rgb_png(path: &std::path::Path, width: u32, height: u32, fill_r: u8) {
         let file = std::fs::File::create(path).unwrap();
         let mut enc = png::Encoder::new(file, width, height);
         enc.set_color(png::ColorType::Rgb);
         enc.set_depth(png::BitDepth::Eight);
         let mut writer = enc.write_header().unwrap();
-        let data = vec![0_u8; (width * height * 3) as usize];
+        let mut data = vec![0_u8; (width * height * 3) as usize];
+        for px in data.chunks_exact_mut(3) {
+            px[0] = fill_r;
+        }
+        writer.write_image_data(&data).unwrap();
+    }
+
+    fn write_16bit_grayscale_png(path: &std::path::Path, width: u32, height: u32) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut enc = png::Encoder::new(file, width, height);
+        enc.set_color(png::ColorType::Grayscale);
+        enc.set_depth(png::BitDepth::Sixteen);
+        let mut writer = enc.write_header().unwrap();
+        let data = vec![0_u8; (width * height * 2) as usize];
         writer.write_image_data(&data).unwrap();
     }
 
@@ -250,10 +284,41 @@ mod tests {
         assert_eq!(tex.data.len(), 64 * 64);
     }
 
+    // If the real Calinou PNG is committed, the public loader must take the
+    // PNG branch — not the synthesized fallback. We detect this by comparing
+    // against what the fallback would have returned: the two are equal only
+    // if the fallback fired, so this test passes iff we actually loaded the
+    // on-disk asset.
     #[test]
-    fn wrong_format_rejected() {
+    fn shipped_default_loads_real_png_not_fallback() {
+        let asset = repo_relative_path(64);
+        if !asset.exists() {
+            return; // asset not on disk — test is vacuous
+        }
+        let loaded = load_blue_noise_2d(64);
+        let fallback = synthesize_fallback(64);
+        assert_ne!(
+            loaded.data, fallback.data,
+            "load_blue_noise_2d(64) silently fell back while the on-disk PNG exists"
+        );
+    }
+
+    #[test]
+    fn rgb_png_accepted_via_r_channel() {
+        // Calinou LDR_LLL1_* files are 8-bit RGBA with L replicated to R=G=B.
+        // Write an RGB PNG with R=42 across every pixel, then assert the
+        // loader strips it back to 42s.
         let tmp = NamedTempFile::new().unwrap();
-        write_rgb_png(tmp.path(), 64, 64);
+        write_rgb_png(tmp.path(), 64, 64, 42);
+        let loaded = try_load_png(tmp.path(), 64).unwrap();
+        assert_eq!(loaded.data.len(), 64 * 64);
+        assert!(loaded.data.iter().all(|&b| b == 42));
+    }
+
+    #[test]
+    fn non_eight_bit_depth_rejected() {
+        let tmp = NamedTempFile::new().unwrap();
+        write_16bit_grayscale_png(tmp.path(), 64, 64);
         let err = try_load_png(tmp.path(), 64).unwrap_err();
         assert!(
             matches!(err, NoiseLoadError::WrongFormat { .. }),
