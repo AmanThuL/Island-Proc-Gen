@@ -24,6 +24,9 @@ pub enum ValueRange {
     Auto,
     /// Fixed `[lo, hi]` mapping regardless of the field's actual range.
     Fixed(f32, f32),
+    /// Auto-ranged on `log(value + 1)`. Used for flow accumulation where
+    /// the raw distribution spans several decades.
+    LogCompressed,
 }
 
 impl ValueRange {
@@ -31,10 +34,15 @@ impl ValueRange {
     ///
     /// * `Auto` → returns `(field_min, field_max)` from the supplied values.
     /// * `Fixed(lo, hi)` → returns `(lo, hi)` unchanged.
+    /// * `LogCompressed` → returns `(ln(1+field_min), ln(1+field_max))`.
     pub fn resolve(self, field_min: f32, field_max: f32) -> (f32, f32) {
         match self {
             ValueRange::Auto => (field_min, field_max),
             ValueRange::Fixed(lo, hi) => (lo, hi),
+            ValueRange::LogCompressed => (
+                (1.0 + field_min.max(0.0)).ln(),
+                (1.0 + field_max.max(0.0)).ln(),
+            ),
         }
     }
 }
@@ -94,20 +102,16 @@ pub struct OverlayRegistry {
 }
 
 impl OverlayRegistry {
-    /// Return the Sprint 0 placeholder registry.
+    /// Return the Sprint 1A overlay registry wired to the 6 real `DerivedCaches` fields.
     ///
-    /// Three entries whose `OverlaySource` key strings match the field names
-    /// Sprint 1A will introduce under `AuthoritativeFields` and
-    /// `DerivedCaches`. The render path draws a transparent placeholder
-    /// texture while those fields remain `None`.
-    pub fn sprint_0_defaults() -> Self {
+    /// `final_elevation` reads `z_filled` (not `height`) — `authoritative.height` stores
+    /// `z_raw` pre-pit-fill; the render path and flow routing both see `z_filled`.
+    pub fn sprint_1a_defaults() -> Self {
         Self {
             entries: vec![
                 OverlayDescriptor {
                     id: "initial_uplift",
                     label: "Initial uplift",
-                    // Sprint 1A: add `initial_uplift: Option<ScalarField2D<f32>>`
-                    // to DerivedCaches and keep this key in sync.
                     source: OverlaySource::ScalarDerived("initial_uplift"),
                     palette: PaletteId::Grayscale,
                     value_range: ValueRange::Auto,
@@ -116,20 +120,41 @@ impl OverlayRegistry {
                 OverlayDescriptor {
                     id: "final_elevation",
                     label: "Final elevation",
-                    // Sprint 1A: `AuthoritativeFields.height` maps to this key.
-                    source: OverlaySource::ScalarAuthoritative("height"),
-                    palette: PaletteId::Grayscale,
+                    source: OverlaySource::ScalarDerived("z_filled"),
+                    palette: PaletteId::TerrainHeight,
                     value_range: ValueRange::Auto,
-                    visible: true, // default on
+                    visible: true,
+                },
+                OverlayDescriptor {
+                    id: "slope",
+                    label: "Slope",
+                    source: OverlaySource::ScalarDerived("slope"),
+                    palette: PaletteId::Viridis,
+                    value_range: ValueRange::Auto,
+                    visible: false,
                 },
                 OverlayDescriptor {
                     id: "flow_accumulation",
                     label: "Flow accumulation",
-                    // Sprint 1A: add `accumulation: Option<ScalarField2D<f32>>`
-                    // to DerivedCaches and keep this key in sync.
                     source: OverlaySource::ScalarDerived("accumulation"),
-                    palette: PaletteId::Grayscale,
+                    palette: PaletteId::Turbo,
+                    value_range: ValueRange::LogCompressed,
+                    visible: false,
+                },
+                OverlayDescriptor {
+                    id: "basin_partition",
+                    label: "Basin partition",
+                    source: OverlaySource::ScalarDerived("basin_id"),
+                    palette: PaletteId::Categorical,
                     value_range: ValueRange::Auto,
+                    visible: false,
+                },
+                OverlayDescriptor {
+                    id: "river_network",
+                    label: "River network",
+                    source: OverlaySource::Mask("river_mask"),
+                    palette: PaletteId::BinaryBlue,
+                    value_range: ValueRange::Fixed(0.0, 1.0),
                     visible: false,
                 },
             ],
@@ -167,7 +192,7 @@ impl OverlayRegistry {
 
 impl Default for OverlayRegistry {
     fn default() -> Self {
-        Self::sprint_0_defaults()
+        Self::sprint_1a_defaults()
     }
 }
 
@@ -177,78 +202,111 @@ impl Default for OverlayRegistry {
 mod tests {
     use super::*;
 
-    // 1. Sprint 0 defaults contain exactly 3 entries.
     #[test]
-    fn registry_has_3_sprint_0_defaults() {
-        assert_eq!(OverlayRegistry::sprint_0_defaults().all().len(), 3);
+    fn registry_has_6_sprint_1a_defaults() {
+        assert_eq!(OverlayRegistry::sprint_1a_defaults().all().len(), 6);
     }
 
-    // 2. All three default ids can be queried via by_id.
     #[test]
     fn by_id_queries_all_defaults() {
-        let reg = OverlayRegistry::sprint_0_defaults();
+        let reg = OverlayRegistry::sprint_1a_defaults();
         assert!(reg.by_id("initial_uplift").is_some());
         assert!(reg.by_id("final_elevation").is_some());
+        assert!(reg.by_id("slope").is_some());
         assert!(reg.by_id("flow_accumulation").is_some());
+        assert!(reg.by_id("basin_partition").is_some());
+        assert!(reg.by_id("river_network").is_some());
     }
 
-    // 3. Unknown id returns None.
     #[test]
     fn by_id_unknown_returns_none() {
-        let reg = OverlayRegistry::sprint_0_defaults();
+        let reg = OverlayRegistry::sprint_1a_defaults();
         assert!(reg.by_id("nope").is_none());
     }
 
-    // 4. set_visibility flips the visible flag.
     #[test]
     fn set_visibility_changes_flag() {
-        let mut reg = OverlayRegistry::sprint_0_defaults();
-        // initial_uplift starts invisible
+        let mut reg = OverlayRegistry::sprint_1a_defaults();
         assert!(!reg.by_id("initial_uplift").unwrap().visible);
         reg.set_visibility("initial_uplift", true);
         assert!(reg.by_id("initial_uplift").unwrap().visible);
     }
 
-    // 5. visible_entries returns only visible ones.
-    // Sprint 0 defaults: only final_elevation is visible → count == 1.
+    // Sprint 1A defaults: only final_elevation is visible → count == 1.
     #[test]
     fn visible_entries_filters() {
-        let reg = OverlayRegistry::sprint_0_defaults();
+        let reg = OverlayRegistry::sprint_1a_defaults();
         assert_eq!(reg.visible_entries().count(), 1);
     }
 
-    // 6. Source field-key strings match the names Sprint 1A will use.
-    //
-    // Sprint 1A must keep these in sync:
-    //   * "height"         → AuthoritativeFields.height
-    //   * "initial_uplift" → DerivedCaches.initial_uplift
-    //   * "accumulation"   → DerivedCaches.accumulation
     #[test]
     fn source_field_keys_match_sprint_1a_plan() {
-        let reg = OverlayRegistry::sprint_0_defaults();
+        let reg = OverlayRegistry::sprint_1a_defaults();
 
-        // final_elevation → AuthoritativeFields.height
-        let final_elev = reg.by_id("final_elevation").unwrap();
         assert_eq!(
-            final_elev.source,
-            OverlaySource::ScalarAuthoritative("height"),
-            // Sprint 1A: keep in sync with AuthoritativeFields.height field name
-        );
-
-        // initial_uplift → DerivedCaches.initial_uplift
-        let initial_uplift = reg.by_id("initial_uplift").unwrap();
-        assert_eq!(
-            initial_uplift.source,
+            reg.by_id("initial_uplift").unwrap().source,
             OverlaySource::ScalarDerived("initial_uplift"),
-            // Sprint 1A: keep in sync with DerivedCaches.initial_uplift field name
         );
-
-        // flow_accumulation → DerivedCaches.accumulation
-        let flow_accum = reg.by_id("flow_accumulation").unwrap();
+        // §7 acceptance criterion: z_filled, NOT height.
         assert_eq!(
-            flow_accum.source,
-            OverlaySource::ScalarDerived("accumulation"),
-            // Sprint 1A: keep in sync with DerivedCaches.accumulation field name
+            reg.by_id("final_elevation").unwrap().source,
+            OverlaySource::ScalarDerived("z_filled"),
         );
+        assert_eq!(
+            reg.by_id("slope").unwrap().source,
+            OverlaySource::ScalarDerived("slope"),
+        );
+        assert_eq!(
+            reg.by_id("flow_accumulation").unwrap().source,
+            OverlaySource::ScalarDerived("accumulation"),
+        );
+        assert_eq!(
+            reg.by_id("basin_partition").unwrap().source,
+            OverlaySource::ScalarDerived("basin_id"),
+        );
+        assert_eq!(
+            reg.by_id("river_network").unwrap().source,
+            OverlaySource::Mask("river_mask"),
+        );
+    }
+
+    // Dedicated guard: future refactorers must not silently revert to height.
+    #[test]
+    fn final_elevation_not_authoritative_height() {
+        let reg = OverlayRegistry::sprint_1a_defaults();
+        let d = reg.by_id("final_elevation").unwrap();
+        assert_ne!(d.source, OverlaySource::ScalarAuthoritative("height"));
+        assert_eq!(d.source, OverlaySource::ScalarDerived("z_filled"));
+    }
+
+    #[test]
+    fn flow_accumulation_uses_log_compressed() {
+        let reg = OverlayRegistry::sprint_1a_defaults();
+        assert_eq!(
+            reg.by_id("flow_accumulation").unwrap().value_range,
+            ValueRange::LogCompressed,
+        );
+    }
+
+    #[test]
+    fn river_network_uses_binary_blue() {
+        let reg = OverlayRegistry::sprint_1a_defaults();
+        let d = reg.by_id("river_network").unwrap();
+        assert_eq!(d.palette, PaletteId::BinaryBlue);
+        assert_eq!(d.source, OverlaySource::Mask("river_mask"));
+    }
+
+    #[test]
+    fn log_compressed_resolve() {
+        let (lo, hi) = ValueRange::LogCompressed.resolve(0.0, std::f32::consts::E - 1.0);
+        assert!((lo - 0.0).abs() < 1e-5, "lo={lo}");
+        assert!((hi - 1.0).abs() < 1e-4, "hi={hi}");
+    }
+
+    #[test]
+    fn log_compressed_clamps_negative_min() {
+        // Negative field_min treated as 0 before ln.
+        let (lo, _hi) = ValueRange::LogCompressed.resolve(-5.0, 10.0);
+        assert!((lo - 0.0).abs() < 1e-5, "lo={lo}");
     }
 }

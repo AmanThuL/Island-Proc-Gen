@@ -106,7 +106,7 @@ impl Runtime {
         let preset = load_preset();
 
         // ── Overlay / sim metadata ───────────────────────────────────────────
-        let overlay_registry = OverlayRegistry::sprint_0_defaults();
+        let overlay_registry = OverlayRegistry::sprint_1a_defaults();
         let seed = Seed(42);
         let resolution = Resolution::new(256, 256);
 
