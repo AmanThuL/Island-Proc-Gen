@@ -18,6 +18,7 @@ island_core        = { path = "../core", package = "core" }
 data               = { path = "../data" }
 gpu                = { path = "../gpu" }
 render             = { path = "../render" }
+ui                 = { path = "../ui" }
 anyhow             = { workspace = true }
 tracing            = { workspace = true }
 tracing-subscriber = { workspace = true }

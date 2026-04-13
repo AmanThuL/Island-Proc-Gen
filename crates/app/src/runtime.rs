@@ -14,7 +14,8 @@ use winit::{
 };
 
 use gpu::GpuContext;
-use render::TerrainRenderer;
+use island_core::{preset::IslandArchetypePreset, seed::Seed, world::Resolution};
+use render::{overlay::OverlayRegistry, TerrainRenderer};
 
 use crate::camera::{Camera, InputState};
 
@@ -39,8 +40,15 @@ pub struct Runtime {
     last_frame: Instant,
     fps: f32,
 
-    // preset info loaded at startup
-    preset_name: String,
+    // preset loaded at startup
+    preset: IslandArchetypePreset,
+
+    // overlay registry (Task 0.8)
+    overlay_registry: OverlayRegistry,
+
+    // simulation metadata (Task 0.8)
+    seed: Seed,
+    resolution: Resolution,
 }
 
 impl Runtime {
@@ -84,7 +92,12 @@ impl Runtime {
         let camera = Camera::new(aspect);
 
         // ── Preset ───────────────────────────────────────────────────────────
-        let preset_name = load_preset_name();
+        let preset = load_preset();
+
+        // ── Overlay / sim metadata ───────────────────────────────────────────
+        let overlay_registry = OverlayRegistry::sprint_0_defaults();
+        let seed = Seed(42);
+        let resolution = Resolution::new(256, 256);
 
         Ok(Self {
             window,
@@ -97,7 +110,10 @@ impl Runtime {
             input: InputState::default(),
             last_frame: Instant::now(),
             fps: 0.0,
-            preset_name,
+            preset,
+            overlay_registry,
+            seed,
+            resolution,
         })
     }
 
@@ -258,26 +274,29 @@ impl Runtime {
         }
 
         // ── egui pass ─────────────────────────────────────────────────────────
+        // Extract values before the mutable borrow of overlay_registry.
         let fps = self.fps;
-        let preset_name = self.preset_name.clone();
-        let eye = self.camera.eye();
-        let distance = self.camera.distance;
+        let resolution = self.resolution;
+        let seed = self.seed;
+        let preset = &self.preset;
+        let registry = &mut self.overlay_registry;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
 
         // Use begin_pass / end_pass (the non-deprecated path in egui 0.34).
         self.egui_ctx.begin_pass(raw_input);
 
-        egui::Window::new("Info")
-            .resizable(false)
-            .show(&self.egui_ctx, |ui| {
-                ui.label(format!("FPS: {fps:.1}"));
-                ui.label(format!("preset: {preset_name}"));
-                ui.label(format!(
-                    "eye: ({:.2}, {:.2}, {:.2})  dist: {distance:.2}",
-                    eye.x, eye.y, eye.z
-                ));
-            });
+        // Three panels replacing the Task 0.7 FPS-only "Info" window.
+        ui::OverlayPanel::show(&self.egui_ctx, registry);
+        ui::ParamsPanel::show(&self.egui_ctx, preset);
+        ui::StatsPanel::show(
+            &self.egui_ctx,
+            &ui::StatsPanelData {
+                fps,
+                resolution,
+                seed,
+            },
+        );
 
         let full_output = self.egui_ctx.end_pass();
 
@@ -346,12 +365,21 @@ impl Runtime {
 
 // ── Preset loading helper ─────────────────────────────────────────────────────
 
-fn load_preset_name() -> String {
+fn load_preset() -> IslandArchetypePreset {
     match data::presets::load_preset("volcanic_single") {
-        Ok(p) => p.name,
+        Ok(p) => p,
         Err(e) => {
-            warn!("Could not load preset: {e} — using fallback name");
-            "volcanic_single".to_string()
+            warn!("Could not load preset: {e} — using inline fallback");
+            island_core::preset::IslandArchetypePreset {
+                name: "volcanic_single".to_string(),
+                island_radius: 0.6,
+                max_relief: 0.8,
+                volcanic_center_count: 1,
+                island_age: island_core::preset::IslandAge::Young,
+                prevailing_wind_dir: 0.0,
+                marine_moisture_strength: 0.7,
+                sea_level: 0.3,
+            }
         }
     }
 }
