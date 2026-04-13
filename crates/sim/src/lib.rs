@@ -4,4 +4,5 @@
 
 pub mod geomorph;
 
+pub use geomorph::CoastMaskStage;
 pub use geomorph::TopographyStage;
