@@ -7,14 +7,16 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-wgpu      = { workspace = true }
-glam      = { workspace = true }
-anyhow    = { workspace = true }
-bytemuck  = { workspace = true }
-thiserror = { workspace = true }
-tracing   = { workspace = true }
-png       = { workspace = true }
-gpu       = { path = "../gpu" }
+wgpu        = { workspace = true }
+glam        = { workspace = true }
+anyhow      = { workspace = true }
+bytemuck    = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }
+png         = { workspace = true }
+gpu         = { path = "../gpu" }
+island_core = { path = "../core", package = "core" }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+naga     = { version = "29.0.1", features = ["wgsl-in"] }

@@ -16,4 +16,4 @@ pub use palette::{
     BASIN_ACCENT, DEEP_WATER, HIGHLAND, LOWLAND, MIDLAND, OVERLAY_NEUTRAL, PaletteId, RIVER,
     SHALLOW_WATER, sample as palette_sample, sample_f32 as palette_sample_f32,
 };
-pub use terrain::TerrainRenderer;
+pub use terrain::{MeshData, TerrainRenderer, TerrainVertex, build_sea_quad, build_terrain_mesh};

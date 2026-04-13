@@ -2170,8 +2170,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
+ "core",
  "glam",
  "gpu",
+ "naga",
  "png 0.17.16",
  "tempfile",
  "thiserror 2.0.18",
