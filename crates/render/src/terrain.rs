@@ -203,7 +203,41 @@ impl TerrainRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
 
-        // ── Bind group layout (3 uniform entries) ─────────────────────────────
+        // ── Blue noise texture (§3.2 B3 dither) ──────────────────────────────
+        let noise = crate::noise::load_blue_noise_2d(64);
+        let blue_noise_tex = device.create_texture_with_data(
+            &gpu.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("blue_noise_tex"),
+                size: wgpu::Extent3d {
+                    width: noise.width,
+                    height: noise.height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &noise.data,
+        );
+        let blue_noise_view = blue_noise_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        // 2D texture → address_mode_w falls through to the default
+        // (ClampToEdge); keeping it absent avoids implying a third axis exists.
+        let blue_noise_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("blue_noise_sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
+        });
+
+        // ── Bind group layout (3 uniform + 2 texture/sampler entries) ─────────
         let uniform_entry = |binding, visibility| wgpu::BindGroupLayoutEntry {
             binding,
             visibility,
@@ -220,6 +254,22 @@ impl TerrainRenderer {
                 uniform_entry(0, wgpu::ShaderStages::VERTEX), // View
                 uniform_entry(1, wgpu::ShaderStages::FRAGMENT), // Palette
                 uniform_entry(2, wgpu::ShaderStages::FRAGMENT), // LightRig (+ sea_level)
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
             ],
         });
 
@@ -239,6 +289,14 @@ impl TerrainRenderer {
                 wgpu::BindGroupEntry {
                     binding: 2,
                     resource: light_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&blue_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(&blue_noise_sampler),
                 },
             ],
         });

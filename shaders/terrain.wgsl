@@ -34,6 +34,8 @@ struct LightRig {
 @group(0) @binding(0) var<uniform> view:    View;
 @group(0) @binding(1) var<uniform> palette: Palette;
 @group(0) @binding(2) var<uniform> light:   LightRig;
+@group(0) @binding(3) var          blue_noise:         texture_2d<f32>;
+@group(0) @binding(4) var          blue_noise_sampler: sampler;
 
 // ── Vertex stage ─────────────────────────────────────────────────────────────
 
@@ -113,5 +115,15 @@ fn fs_terrain(input: VsOut) -> @location(0) vec4<f32> {
         !is_sea,
     );
 
-    return vec4<f32>(lit_rgb, 1.0);
+    // §3.2 B3 blue noise dither — breaks the height ramp's gradient banding.
+    // DITHER_TILE = 8.0 repeats the 64×64 noise tile across each 1/8 of UV
+    // space; combined with Repeat address mode this gives a pleasantly
+    // random-looking dither across the full mesh. Amplitude is 1.0/255.0
+    // centred on zero — ±½ LSB of the final 8-bit sRGB output, visible only
+    // as reduced banding.
+    let dither_tile = 8.0;
+    let dither = (textureSample(blue_noise, blue_noise_sampler,
+                                input.uv * dither_tile).r - 0.5) * (1.0 / 255.0);
+
+    return vec4<f32>(lit_rgb + vec3<f32>(dither), 1.0);
 }
