@@ -376,7 +376,12 @@ impl Runtime {
 
         // Four panels: Overlays → Camera → Params → Stats.
         ui::OverlayPanel::show(&self.egui_ctx, registry);
-        crate::camera_panel::CameraPanel::show(&self.egui_ctx, camera, vertical_scale);
+        crate::camera_panel::CameraPanel::show(
+            &self.egui_ctx,
+            camera,
+            vertical_scale,
+            preset.island_radius,
+        );
         ui::ParamsPanel::show(&self.egui_ctx, preset);
         ui::StatsPanel::show(
             &self.egui_ctx,

@@ -9,6 +9,11 @@
 //! then passed to [`Camera::process_drag`] / [`Camera::process_scroll`].
 
 use glam::{Mat4, Vec3};
+use render::CameraPreset;
+
+/// Hard pitch clamp (≈ 89°, just shy of +π/2) to keep `look_at_rh` non-singular
+/// at the zenith and nadir. Shared by interactive orbit and preset snap.
+const PITCH_CLAMP: f32 = 1.553;
 
 // ── Camera ────────────────────────────────────────────────────────────────────
 
@@ -62,7 +67,7 @@ impl Camera {
     pub fn orbit(&mut self, dx: f32, dy: f32) {
         const SENSITIVITY: f32 = 2.5;
         self.yaw += dx * SENSITIVITY;
-        self.pitch = (self.pitch + dy * SENSITIVITY).clamp(-1.553, 1.553);
+        self.pitch = (self.pitch + dy * SENSITIVITY).clamp(-PITCH_CLAMP, PITCH_CLAMP);
     }
 
     /// Pan the target point in screen-space XZ (right-button drag).
@@ -83,6 +88,23 @@ impl Camera {
     pub fn set_aspect(&mut self, aspect: f32) {
         self.aspect = aspect;
     }
+
+    /// Snap the orbit camera to a canonical capture preset.
+    ///
+    /// Sets `target`, `distance`, `yaw`, and `pitch` from the preset table.
+    /// `fov_y` and `aspect` are left untouched — presets control geometry, not
+    /// the interactive camera's FOV.
+    ///
+    /// The target is placed at `(0.5, 0.0, 0.5)`, matching
+    /// `render::camera::view_projection`'s canonical island centre.
+    pub fn apply_preset(&mut self, preset: CameraPreset, island_radius: f32) {
+        self.target = Vec3::new(0.5, 0.0, 0.5);
+        self.distance = preset.distance_factor * island_radius.max(0.01);
+        self.yaw = preset.yaw;
+        // Note: TopDebug's pitch (π/2 − 0.01 ≈ 1.5608) is clamped to ~89°
+        // because look_at_rh becomes singular at exactly +π/2.
+        self.pitch = preset.pitch.clamp(-PITCH_CLAMP, PITCH_CLAMP);
+    }
 }
 
 // ── InputState ────────────────────────────────────────────────────────────────
@@ -101,6 +123,85 @@ pub struct InputState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use render::{ALL_PRESETS, PRESET_HERO, PRESET_TOP_DEBUG};
+
+    #[test]
+    fn apply_preset_hero_sets_spherical_coords() {
+        let mut cam = Camera::new(1.0);
+        let default_fov = cam.fov_y;
+        cam.apply_preset(PRESET_HERO, 0.5);
+
+        assert_eq!(
+            cam.target,
+            Vec3::new(0.5, 0.0, 0.5),
+            "target must be set to canonical island centre"
+        );
+        assert!(
+            (cam.distance - PRESET_HERO.distance_factor * 0.5).abs() < 1e-6,
+            "distance must equal distance_factor * island_radius"
+        );
+        assert!(
+            (cam.yaw - PRESET_HERO.yaw).abs() < 1e-6,
+            "yaw must match preset"
+        );
+        assert!(
+            (cam.pitch - PRESET_HERO.pitch).abs() < 1e-6,
+            "Hero pitch ({}) is within clamp, must match preset exactly",
+            PRESET_HERO.pitch
+        );
+        assert!(
+            (cam.fov_y - default_fov).abs() < 1e-6,
+            "apply_preset must not touch fov_y"
+        );
+    }
+
+    #[test]
+    fn apply_preset_top_debug_clamps_pitch() {
+        let mut cam = Camera::new(1.0);
+        cam.apply_preset(PRESET_TOP_DEBUG, 0.5);
+
+        assert!(
+            cam.pitch <= PITCH_CLAMP,
+            "TopDebug pitch must be clamped to ≤ {PITCH_CLAMP}, got {}",
+            cam.pitch
+        );
+        assert!(
+            cam.pitch >= 1.55,
+            "TopDebug pitch must remain near the top (≥ 1.55), got {}",
+            cam.pitch
+        );
+    }
+
+    #[test]
+    fn apply_preset_round_trip_all_three_presets() {
+        let island_radius = 0.45_f32;
+        for preset in ALL_PRESETS {
+            let mut cam = Camera::new(16.0 / 9.0);
+            cam.apply_preset(preset, island_radius);
+
+            assert!(
+                cam.distance > 0.0,
+                "distance must be positive after apply_preset({:?})",
+                preset.id
+            );
+
+            let eye = cam.eye();
+            assert!(
+                eye.x.is_finite() && eye.y.is_finite() && eye.z.is_finite(),
+                "eye() must be finite after apply_preset({:?})",
+                preset.id
+            );
+
+            let vp = cam.view_projection();
+            for elem in vp.to_cols_array() {
+                assert!(
+                    elem.is_finite(),
+                    "view_projection() must be all-finite after apply_preset({:?})",
+                    preset.id
+                );
+            }
+        }
+    }
 
     #[test]
     fn orbit_changes_yaw() {
@@ -118,9 +219,12 @@ mod tests {
         let mut cam = Camera::new(1.0);
         cam.orbit(0.0, 100.0);
         // Pitch must not exceed ~89°
-        assert!(cam.pitch <= 1.553, "pitch must be clamped below 89°");
+        assert!(cam.pitch <= PITCH_CLAMP, "pitch must be clamped below 89°");
         cam.orbit(0.0, -200.0);
-        assert!(cam.pitch >= -1.553, "pitch must be clamped above -89°");
+        assert!(
+            cam.pitch >= -PITCH_CLAMP,
+            "pitch must be clamped above -89°"
+        );
     }
 
     #[test]
