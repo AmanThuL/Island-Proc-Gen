@@ -20,7 +20,7 @@ use island_core::{
     seed::Seed,
     world::{Resolution, WorldState},
 };
-use render::{SkyRenderer, TerrainRenderer, overlay::OverlayRegistry};
+use render::{OverlayRenderer, SkyRenderer, TerrainRenderer, overlay::OverlayRegistry};
 use sim::{
     AccumulationStage, BasinsStage, CoastMaskStage, DerivedGeomorphStage, FlowRoutingStage,
     PitFillStage, RiverExtractionStage, TopographyStage, ValidationStage,
@@ -58,6 +58,7 @@ pub struct Runtime {
     window: Arc<Window>,
     gpu: GpuContext,
     terrain: TerrainRenderer,
+    overlay: OverlayRenderer,
     sky: SkyRenderer,
 
     // egui
@@ -141,6 +142,17 @@ impl Runtime {
         // ── Terrain renderer (must follow pipeline so z_filled is populated) ─
         let terrain = TerrainRenderer::new(&gpu, &world, &preset);
 
+        // ── Overlay renderer — shares terrain VBO/IBO/view_buf ────────────────
+        let overlay = OverlayRenderer::new(
+            &gpu,
+            &world,
+            &overlay_registry,
+            terrain.view_buf(),
+            terrain.terrain_vbo(),
+            terrain.terrain_ibo(),
+            terrain.terrain_index_count(),
+        );
+
         // ── Sky renderer (depends only on gpu) ───────────────────────────────
         let sky = SkyRenderer::new(&gpu);
 
@@ -154,6 +166,7 @@ impl Runtime {
             window,
             gpu,
             terrain,
+            overlay,
             sky,
             egui_ctx,
             egui_state,
@@ -343,6 +356,7 @@ impl Runtime {
             });
             self.sky.draw(&mut rpass);
             self.terrain.draw(&mut rpass);
+            self.overlay.draw(&mut rpass, &self.overlay_registry);
         }
 
         // ── egui pass ─────────────────────────────────────────────────────────

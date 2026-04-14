@@ -309,6 +309,30 @@ impl TerrainRenderer {
         }
     }
 
+    /// Return a reference to the view uniform buffer.
+    ///
+    /// `OverlayRenderer` binds this same buffer into its group-0 bind group,
+    /// so `update_view` writes once per frame and both passes see the same
+    /// uploaded matrix without a second `queue.write_buffer`.
+    pub fn view_buf(&self) -> &wgpu::Buffer {
+        &self.view_buf
+    }
+
+    /// Return a reference to the terrain vertex buffer.
+    pub fn terrain_vbo(&self) -> &wgpu::Buffer {
+        &self.terrain_vbo
+    }
+
+    /// Return a reference to the terrain index buffer.
+    pub fn terrain_ibo(&self) -> &wgpu::Buffer {
+        &self.terrain_ibo
+    }
+
+    /// Return the number of terrain mesh indices (for `draw_indexed`).
+    pub fn terrain_index_count(&self) -> u32 {
+        self.terrain_index_count
+    }
+
     /// Upload updated view matrix and eye position before each frame.
     pub fn update_view(&self, queue: &wgpu::Queue, view_proj: Mat4, eye_pos: Vec3) {
         let uniform = ViewUniform {

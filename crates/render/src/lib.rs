@@ -3,6 +3,7 @@
 pub mod camera;
 pub mod noise;
 pub mod overlay;
+pub mod overlay_render;
 pub mod palette;
 pub mod sky;
 pub mod terrain;
@@ -13,6 +14,7 @@ pub use camera::{
 };
 pub use noise::{BlueNoiseTexture, NoiseLoadError, load_blue_noise_2d};
 pub use overlay::{OverlayDescriptor, OverlayRegistry, OverlaySource, ValueRange};
+pub use overlay_render::OverlayRenderer;
 pub use palette::{
     BASIN_ACCENT, DEEP_WATER, HIGHLAND, LOWLAND, MIDLAND, OVERLAY_NEUTRAL, PaletteId, RIVER,
     SHALLOW_WATER, SKY_HORIZON, SKY_ZENITH, sample as palette_sample,

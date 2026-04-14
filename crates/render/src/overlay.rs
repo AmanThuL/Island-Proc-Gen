@@ -13,6 +13,11 @@
 //! and `crates/data` must never use string-key access to `WorldState` fields —
 //! they always go through typed struct field paths.
 
+use island_core::{
+    field::{MaskField2D, ScalarField2D},
+    world::WorldState,
+};
+
 use crate::palette::PaletteId;
 
 // ─── ValueRange ──────────────────────────────────────────────────────────────
@@ -193,6 +198,47 @@ impl OverlayRegistry {
 impl Default for OverlayRegistry {
     fn default() -> Self {
         Self::sprint_1a_defaults()
+    }
+}
+
+// ─── ResolvedField ────────────────────────────────────────────────────────────
+
+/// Typed borrow of a `WorldState` field — returned by [`resolve_scalar_source`].
+///
+/// Confines all `&'static str` field-key dispatch to this file. `overlay_render`
+/// receives this typed handle and never sees the string keys.
+pub(crate) enum ResolvedField<'a> {
+    F32(&'a ScalarField2D<f32>),
+    U32(&'a ScalarField2D<u32>),
+    Mask(&'a MaskField2D),
+}
+
+/// Resolve an [`OverlaySource`] to a typed field borrow from `world`.
+///
+/// Returns `None` if the field has not been populated yet (e.g. the pipeline
+/// has not run) or if the source key is unrecognised for Sprint 1A.
+/// All `&'static str` dispatch lives **only** here — callers work with the
+/// typed [`ResolvedField`] enum.
+pub(crate) fn resolve_scalar_source<'w>(
+    world: &'w WorldState,
+    source: OverlaySource,
+) -> Option<ResolvedField<'w>> {
+    use OverlaySource::*;
+    match source {
+        ScalarDerived("initial_uplift") => {
+            world.derived.initial_uplift.as_ref().map(ResolvedField::F32)
+        }
+        ScalarDerived("z_filled") => world.derived.z_filled.as_ref().map(ResolvedField::F32),
+        ScalarDerived("slope") => world.derived.slope.as_ref().map(ResolvedField::F32),
+        ScalarDerived("accumulation") => {
+            world.derived.accumulation.as_ref().map(ResolvedField::F32)
+        }
+        ScalarDerived("basin_id") => world.derived.basin_id.as_ref().map(ResolvedField::U32),
+        Mask("river_mask") => world.derived.river_mask.as_ref().map(ResolvedField::Mask),
+        // Sprint 1A has no authoritative / baked scalar sources wired, and
+        // no vector overlays. Return None so the renderer silently skips them
+        // rather than panicking on an unrecognised key.
+        _ => None,
     }
 }
 
