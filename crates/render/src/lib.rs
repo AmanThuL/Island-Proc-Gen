@@ -4,6 +4,7 @@ pub mod camera;
 pub mod noise;
 pub mod overlay;
 pub mod palette;
+pub mod sky;
 pub mod terrain;
 
 pub use camera::{
@@ -14,6 +15,8 @@ pub use noise::{BlueNoiseTexture, NoiseLoadError, load_blue_noise_2d};
 pub use overlay::{OverlayDescriptor, OverlayRegistry, OverlaySource, ValueRange};
 pub use palette::{
     BASIN_ACCENT, DEEP_WATER, HIGHLAND, LOWLAND, MIDLAND, OVERLAY_NEUTRAL, PaletteId, RIVER,
-    SHALLOW_WATER, sample as palette_sample, sample_f32 as palette_sample_f32,
+    SHALLOW_WATER, SKY_HORIZON, SKY_ZENITH, sample as palette_sample,
+    sample_f32 as palette_sample_f32,
 };
+pub use sky::SkyRenderer;
 pub use terrain::{MeshData, TerrainRenderer, TerrainVertex, build_sea_quad, build_terrain_mesh};

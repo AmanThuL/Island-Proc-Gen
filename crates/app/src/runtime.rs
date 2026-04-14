@@ -20,7 +20,7 @@ use island_core::{
     seed::Seed,
     world::{Resolution, WorldState},
 };
-use render::{TerrainRenderer, overlay::OverlayRegistry};
+use render::{SkyRenderer, TerrainRenderer, overlay::OverlayRegistry};
 use sim::{
     AccumulationStage, BasinsStage, CoastMaskStage, DerivedGeomorphStage, FlowRoutingStage,
     PitFillStage, RiverExtractionStage, TopographyStage, ValidationStage,
@@ -58,6 +58,7 @@ pub struct Runtime {
     window: Arc<Window>,
     gpu: GpuContext,
     terrain: TerrainRenderer,
+    sky: SkyRenderer,
 
     // egui
     egui_ctx: egui::Context,
@@ -140,6 +141,9 @@ impl Runtime {
         // ── Terrain renderer (must follow pipeline so z_filled is populated) ─
         let terrain = TerrainRenderer::new(&gpu, &world, &preset);
 
+        // ── Sky renderer (depends only on gpu) ───────────────────────────────
+        let sky = SkyRenderer::new(&gpu);
+
         // Centre the camera on the island mesh ([0,1]×[0,1] on XZ, Y=height).
         camera.target = glam::Vec3::new(0.5, preset.sea_level, 0.5);
         camera.distance = INITIAL_CAMERA_DISTANCE;
@@ -150,6 +154,7 @@ impl Runtime {
             window,
             gpu,
             terrain,
+            sky,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -336,6 +341,7 @@ impl Runtime {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            self.sky.draw(&mut rpass);
             self.terrain.draw(&mut rpass);
         }
 

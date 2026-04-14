@@ -37,6 +37,17 @@ pub const RIVER: [f32; 4] = hex_rgba(0x80BADF);
 pub const BASIN_ACCENT: [f32; 4] = hex_rgba(0x596595);
 pub const OVERLAY_NEUTRAL: [f32; 4] = hex_rgba(0x88888A);
 
+// ─── §3.2 A3 Sky gradient helper constants (non-canonical) ─────────────────
+//
+// NOT part of the canonical 8 and NOT pixel-locked — `palette_reference.jpg`
+// has no sky panel. Hand-tuned to stay distinct from the water family.
+
+/// Bottom-of-screen horizon colour for the procedural sky gradient.
+pub const SKY_HORIZON: [f32; 4] = hex_rgba(0xB8C8D4);
+
+/// Top-of-screen zenith colour for the procedural sky gradient.
+pub const SKY_ZENITH: [f32; 4] = hex_rgba(0x1C2C44);
+
 // ─── PaletteId ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
