@@ -8,8 +8,8 @@ use glam::{Mat4, Vec3};
 /// The three Sprint 1A canonical capture angles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraPresetId {
-    /// 3/4 perspective, slightly above peak, ~1.6 × radius — the README/
-    /// gallery cover shot.
+    /// 3/4 perspective, eye above the volcano peak at ~5.0 × radius — the
+    /// README / gallery cover shot.
     Hero,
     /// Orthographic top-down, domain fully in frame — regression comparisons.
     TopDebug,
@@ -33,11 +33,17 @@ pub struct CameraPreset {
     pub orthographic: bool,
 }
 
+// Distance factors are sized so that `distance * sin(pitch)` clears the
+// normalized volcano peak (z_filled ≈ 0.8–1.0) with headroom — the Sprint 1A
+// `volcanic_single` preset produces a mesh whose y extent reaches ~1.0, and
+// the earlier pre-validation factors (1.6 / 1.4) put the camera embedded in
+// the terrain vertically. See Pass 3.1 rationale in PROGRESS.md.
 pub const PRESET_HERO: CameraPreset = CameraPreset {
     id: CameraPresetId::Hero,
     yaw: std::f32::consts::FRAC_PI_4,  // 45° — classic 3/4 angle
     pitch: std::f32::consts::FRAC_PI_6, // 30°
-    distance_factor: 1.6,
+    // 5.0 × 0.5 = 2.5 world units → eye.y = 1.25, ~0.25 above the peak.
+    distance_factor: 5.0,
     fov_y: 0.6109, // ~35°
     orthographic: false,
 };
@@ -46,7 +52,8 @@ pub const PRESET_TOP_DEBUG: CameraPreset = CameraPreset {
     id: CameraPresetId::TopDebug,
     yaw: 0.0,
     pitch: std::f32::consts::FRAC_PI_2 - 0.01, // ~89° (0.01 rad margin to avoid singular look_at_rh)
-    distance_factor: 1.4,
+    // 3.5 × 0.5 = 1.75 world units → eye.y ≈ 1.75, well above the peak.
+    distance_factor: 3.5,
     fov_y: 0.0, // ignored
     orthographic: true,
 };
