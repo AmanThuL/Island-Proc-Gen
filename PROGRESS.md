@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-13
+**Last Updated:** 2026-04-14
 
 ---
 
@@ -21,156 +21,140 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 1A — Task 1A.9 window integration shipped. `cargo run
--p app` now renders the real Sprint 1A terrain mesh + sea quad + §3.2 A3
-procedural sky gradient against the user-approved orbit camera default.
-Three more visual-polish passes queued (overlay render path, camera
-preset dropdown, blue noise dithering), then the 9-screenshot visual
-baseline captures. See [NEXT SESSION PLAN](#next-session-plan) below.
+**Primary:** Sprint 1A — all 4 §3.2 visual-polish passes shipped on
+`dev` plus one post-validation fix. `cargo run -p app` now renders
+terrain + sea + §3.2 A3 sky + §3.2 A5 GPU overlay render path +
+§3.2 A6 camera preset dropdown + §3.2 B3 blue noise dither, all
+against the user-approved orbit camera default. **188 tests passing**.
+16 of 16 validation screenshots captured to
+`docs/design/sprints/sprint_1a_visual_acceptance/`; audit verdict 12
+PASS / 2 CONCERN / 1 FAIL / 2 UNVERIFIABLE. The FAIL (shot 21
+TopDebug) and one CONCERN (shot 20 Hero) were resolved by a Pass 3.1
+fix bumping the preset distance factors (`PRESET_HERO` 1.6→5.0 and
+`PRESET_TOP_DEBUG` 1.4→3.5 — the pre-fix values put the orbit camera
+embedded inside the volcano's vertical extent). User needs to reshoot
+shots 20 / 21 to confirm the fix visually.
 
-All Sprint 1A code that can be unit-tested headlessly is in place:
-8 sim stages → 4 validation invariants → `sim::ValidationStage` at the
-pipeline tail → 3 golden-seed regression snapshots → canonical
-8-colour palette locked against `assets/visual/palette_reference.jpg` +
-non-canonical `SKY_HORIZON`/`SKY_ZENITH` → Viridis / Turbo / Categorical
-/ TerrainHeight / BinaryBlue LUTs → Hero / TopDebug / LowOblique camera
-presets (library only — dropdown still pending) → blue-noise loader +
-3 Calinou CC0 textures (loaded but not sampled in shader yet) →
-`build_terrain_mesh` / `build_sea_quad` mesh builders wired into
-`TerrainRenderer` with 3-uniform-buffer pipeline, depth attachment,
-sky-then-terrain draw order → `shaders/{terrain,sky}.wgsl` both naga-
-validated headlessly → 6 real `OverlayDescriptor`s pointing at the
-correct `derived.*` fields (registry only — render path still pending).
+Sprint 1A §3.2 Visual Package checklist status: A1 ✓ A2 ✓ A3 ✓ A4 ✓
+A5 ✓ A6 ✓ B3 ✓. See [RECENTLY SHIPPED](#recently-shipped) for the
+per-commit breakdown and [DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints)
+for the 2 visual-audit items that are punted rather than force-fit
+into 1A.
 
 **Remaining for Sprint 1A §6 full acceptance:**
-- **Pass 2 — Task 1A.10 overlay render path:** `render_overlay_to_gpu`
-  helper per visible descriptor, CPU-side RGBA8 bake via `palette::sample`,
-  upload to 2D texture, alpha-blend over terrain in the same pass.
-- **Pass 3 — Camera preset dropdown (§3.2 A6):** wire `render::camera::
-  {PRESET_HERO, PRESET_TOP_DEBUG, PRESET_LOW_OBLIQUE}` into `ParamsPanel`
-  (or `CameraPanel`) as a one-shot apply-to-orbit-camera control.
-- **Pass 4 — Blue noise dithering (§3.2 B3):** upload
-  `assets/noise/blue_noise_2d_64.png` as a 2D texture in `TerrainRenderer`,
-  add a sampler binding, modify `fs_terrain` to add ±1/255 dither from
-  the blue-noise sample.
-- **9 baseline screenshots:** 3 camera presets × 3 golden seeds in
-  `docs/design/sprints/sprint_1a_visual_acceptance/` as the Sprint 1B
-  regression baseline. Blocked on Pass 3 for the preset switching.
+- **Reshoot validation shots 20 (Hero) and 21 (TopDebug)** after Pass
+  3.1 to confirm the fix frames the island correctly.
+- **9 golden-baseline screenshots:** 3 camera presets × 3 golden seeds
+  in `docs/design/sprints/sprint_1a_visual_acceptance/` as the Sprint
+  1B regression baseline. Blocked on a seed-cycling runtime flag or UI
+  that Sprint 1A doesn't ship — carried forward to Sprint 1B.
 - **Paper pack (non-blocking per §6):** Chen 2014 / Génevaux 2013 deep
   reads; Lague 2014 target-deep; background papers can stay at
   `metadata_only`.
 
 ---
 
-## NEXT SESSION PLAN
+## RECENTLY SHIPPED
 
-Three visual-polish passes queued, to execute in order with
-**simplifier → superpowers code-reviewer → commit** cadence per pass
-(per auto-memory `feedback_commit_review_workflow.md`). Test baseline
-going into Pass 2 is **180 passed**; each pass should add 0–3 tests.
+Sprint 1A §3.2 visual-polish rollup shipped in sequence on `dev`,
+2026-04-14 session. All 4 passes used the simplifier → superpowers
+code-reviewer → commit cadence (per auto-memory
+`feedback_commit_review_workflow.md`) except Pass 3.1, which was a
+2-constant post-validation fix that skipped the cadence with user
+approval.
 
-### Pass 2 — Overlay render path (Task 1A.10)
+| Commit | Pass | Spec | Tests |
+|---|---|---|---|
+| `ac0368d` | Pass 2 — GPU overlay render path | Task 1A.10 / §3.2 A5 | 180 → 185 (+5) |
+| `442aabe` | Pass 3 — Camera preset dropdown | §3.2 A6 | 185 → 188 (+3) |
+| `4b230ed` | Pass 4 — Blue noise dither | §3.2 B3 | 188 (+0) |
+| `071c14a` | Pass 3.1 — preset `distance_factor` fix | §3.2 A6 post-validation | 188 (+0) |
 
-**Files to create / modify:**
-- `crates/render/src/overlay.rs` — add `resolve_scalar_source(world, source)
-  -> Option<ResolvedField>` (keeps string-key dispatch in this file per
-  CLAUDE.md invariant #8). Do NOT break existing tests.
-- `crates/render/src/overlay_render.rs` (new) — `render_overlay_to_gpu(desc,
-  world) -> Option<(Vec<u8>, u32, u32)>` pure bake function (testable), +
-  `OverlayRenderer` struct owning one pipeline + per-descriptor bind groups
-  (texture view + sampler + alpha uniform). Reuse terrain VBO/IBO and
-  share `TerrainRenderer`'s View uniform buffer via a new `pub fn view_buf
-  (&self) -> &wgpu::Buffer` getter.
-- `shaders/overlay.wgsl` (new) — vertex shader identical to `terrain.wgsl`
-  `vs_terrain` minus the normal+uv routing pieces it doesn't need, fragment
-  samples a 2D texture at uv + multiplies rgba by descriptor alpha uniform.
-  Must not contain RGB literals.
-- `crates/render/src/lib.rs` — `pub mod overlay_render;` + re-export.
-- `crates/render/src/terrain.rs` — expose `pub fn view_buf(&self) ->
-  &wgpu::Buffer` for the overlay pipeline to share.
-- `crates/app/src/runtime.rs` — construct `OverlayRenderer::new(&gpu,
-  &world, &overlay_registry, terrain.view_buf())` after terrain. In
-  `tick()` after `self.terrain.draw`, call
-  `self.overlay.draw(&mut rpass, &self.overlay_registry)` to iterate
-  visible descriptors and draw each as a second pass over terrain geometry.
+**Validation screenshot audit (16 shots captured to
+`docs/design/sprints/sprint_1a_visual_acceptance/`):** 4 parallel
+subagents inspected all 16 shots against the INDEX.md spec. Verdict:
+12 PASS, 2 CONCERN, 1 FAIL, 2 UNVERIFIABLE.
 
-**Design notes:**
-- Bake overlay RGBA8 CPU-side at `OverlayRenderer::new` time (Sprint 1A
-  pipeline runs once at boot; overlays are static). Use `palette::sample
-  (palette_id, t)` for the per-cell lookup.
-- `ValueRange` has `Auto / Fixed / LogCompressed`. Call `range.resolve
-  (field_min, field_max)` to get `(lo, hi)`, then `t = (v - lo) / (hi - lo)`
-  clamped to `[0, 1]`. For LogCompressed take `ln(1 + v.max(0.0))` before
-  normalising.
-- Tests: add `render_overlay_to_gpu_elevation_matches_palette` that feeds
-  a known z_filled field + TerrainHeight palette + Auto range and verifies
-  specific pixels match `palette::sample(TerrainHeight, t)` outputs.
-- Alpha-blend mode: `BlendState { color: src_alpha * src + (1 - src_alpha)
-  * dst, alpha: additive }` — standard over-blend.
+Pass 3.1 was triggered by shot `21_preset_top_debug.png` (FAIL, showed
+a mid-perspective "isometric cube" instead of near-overhead) and shot
+`20_preset_hero.png` (CONCERN, volcano peak pushed off the top of the
+frame). Root cause: the `volcanic_single` preset's normalized
+heightfield reaches y ≈ 0.8–1.0, but the pre-fix `distance_factor`
+values put the orbit camera's `eye.y` BELOW the peak:
 
-### Pass 3 — Camera preset dropdown (§3.2 A6)
+| Preset | old factor | d = f × r | eye.y = d · sin(pitch) | Verdict |
+|---|---|---|---|---|
+| Hero | 1.6 | 0.8 | 0.4 | embedded; peak off-frame |
+| TopDebug | 1.4 | 0.7 | ~0.699 | below peak; weird perspective |
+| LowOblique | 2.0 | 1.0 | 0.217 | PASSED validation (intentional low-angle) |
 
-**Files to modify:**
-- `crates/app/src/camera_panel.rs` — add an egui ComboBox above the existing
-  drag controls listing `PRESET_HERO / PRESET_TOP_DEBUG / PRESET_LOW_OBLIQUE`
-  from `render::ALL_PRESETS`. On selection, compute the corresponding orbit
-  camera state (`distance`, `yaw`, `pitch`) from the preset's `(eye_theta,
-  eye_phi, distance_scale)` using `preset.island_radius` and apply it to
-  the mutable `Camera` reference.
-- `crates/app/src/camera.rs` — no changes (unless a helper like `Camera::
-  apply_preset(preset, island_radius)` cleans up the panel code).
-- `crates/app/src/runtime.rs` — pass `preset.island_radius` to the panel
-  so the preset can compute distance.
+Fix bumps Hero to 5.0× and TopDebug to 3.5× so `eye.y` clears the
+peak with ~0.25 / ~0.75 headroom respectively. Framing verified
+analytically for both presets against the orbit camera's 45° FOV —
+peak stays within the 22.5° half-FOV with margin. LowOblique stays
+at 2.0× unchanged (validation PASSED). `cargo test --workspace`
+still reports 188 passed because the Pass 3 tests reference the
+constant by symbol, not by literal.
 
-**Design notes:**
-- The existing orbit controls stay fully functional after preset
-  selection; the preset is a one-shot state load, not a mode switch.
-- TopDebug preset is orthographic (`pitch = π/2 - 0.01`). The orbit
-  camera uses perspective — clamp pitch to the orbit range on apply.
-- Add a `camera_preset_apply_round_trip` test that creates a `Camera`,
-  applies each preset, and verifies distance/yaw/pitch are finite.
+**Still to do:** the user should reshoot shots 20 (Hero) and 21
+(TopDebug) after `071c14a` to confirm the framing is visually fixed.
+Shot 22 (LowOblique), shot 23 (hero-then-orbit), and shot 24 (reset
+view) do not need reshoots — 22 was PASS, 23 will automatically pick
+up the new Hero distance via `apply_preset`, and 24 returns to
+`INITIAL_CAMERA_*` in `runtime.rs` which is unaffected.
 
-### Pass 4 — Blue noise dithering (§3.2 B3)
+---
 
-**Files to modify:**
-- `shaders/terrain.wgsl` — add `@group(0) @binding(3) var blue_noise:
-  texture_2d<f32>; @group(0) @binding(4) var blue_noise_sampler: sampler;`.
-  In `fs_terrain`, replace the final `return vec4<f32>(lit_rgb, 1.0)` with:
-  `let dither = (textureSample(blue_noise, blue_noise_sampler,
-  input.uv * DITHER_TILE).r - 0.5) * (1.0 / 255.0);
-  return vec4<f32>(lit_rgb + vec3<f32>(dither), 1.0);`
-  Where `DITHER_TILE` is a constant like `8.0`. Must not add RGB literals
-  — the `0.5` and `1.0/255.0` are math constants, not colours.
-- `crates/render/src/terrain.rs` — upload
-  `render::noise::load_blue_noise_2d(64)` as an R8Unorm 2D texture inside
-  `TerrainRenderer::new`. Create a sampler with `AddressMode::Repeat` on
-  both axes. Extend the bind group layout and bind group to add the two
-  new entries (texture view at 3, sampler at 4). Update the existing
-  `terrain_wgsl_has_no_literal_colors` test if the new constants trip the
-  grep (they shouldn't — they're `0.5` and `1.0`, wrapped in math, not
-  colour constructors).
-- Tests: `terrain_wgsl_parses_successfully` must still pass after the
-  new bindings land (naga will validate the texture/sampler types).
+## DEFERRED TO LATER SPRINTS
 
-**Design notes:**
-- Blue-noise texture is 64×64 R8 (via `BlueNoiseTexture.data: Vec<u8>`).
-  Upload with `device.create_texture_with_data` (wgpu-util crate) or
-  `queue.write_texture` after `create_texture`.
-- Repeat address mode is what makes a 64×64 tile dither a 256×256 mesh.
-  `DITHER_TILE = 8.0` means the 64×64 noise tile repeats across each
-  ~1/8 of the terrain UV space.
-- Sample in the fragment shader, subtract 0.5 to centre around 0, scale
-  by `1.0/255.0` so the dither is ±½ LSB — enough to break banding but
-  invisible as noise at sRGB output.
+Two items from the Pass 4 / flow-accumulation validation audit are
+punted rather than force-fit into Sprint 1A.
+
+**Deferred to Sprint 2 — Geomorph credibility:**
+
+- **Shot 13 — Flow accumulation overlay log-compression audit.**
+  Subagent validation noted that secondary tributaries may be washed
+  out in the Turbo + LogCompressed bake — only the dominant channel
+  shows red. Could be correct for the `volcanic_single` preset (one
+  volcano → one drainage spine) or could indicate the log compression
+  constants are too aggressive. Sprint 2 (stream power erosion)
+  exercises the accumulation distribution in anger and is the
+  natural place to validate / tighten the bake.
+- **Shots 30, 31 — Blue noise dither A/B visual validation.**
+  ±½ LSB amplitude is below screenshot-inspection threshold. The
+  reliable test is a pixel-diff between dither-ON / dither-OFF
+  captures taken with the shader temporarily edited. Sprint 2 will
+  touch terrain shading for erosion / sediment visualisation, at
+  which point a shader feature-flag mechanism can ship and the A/B
+  test becomes cheap.
+
+**Deferred to Sprint 1B — Climate + Ecology (UI-dependent):**
+
+- **9-shot golden visual baseline.** Sprint 1A doc §6 calls for 3
+  camera presets × 3 golden seeds = 9 captures as the regression
+  baseline. Blocked on a seed-cycling runtime flag or UI that Sprint
+  1A doesn't ship (seed is a startup constant in `runtime.rs`).
+  Sprint 1B adds climate parameter tweaking; a `--seed N` flag can
+  land alongside, and the 9-shot set can be captured cheaply.
+- **Per-descriptor alpha slider for overlays.** Pass 2 hardcodes
+  `alpha = 0.6` across all 6 overlay bind groups. Sprint 1B's
+  climate UI can surface a per-overlay alpha + visibility panel at
+  near-zero cost (uniform update per frame).
+- **Blue noise runtime size toggle (64 / 128 / 256).** Pass 4 hardcodes
+  the 64×64 shipping default; the 128 / 256 PNGs are on disk
+  (`assets/noise/blue_noise_2d_{128,256}.png`) but unused. Sprint 1B
+  UI work can expose a 3-way size switcher via a texture swap.
 
 ---
 
 ## DEVELOPMENT
 
 ### Sprint 1A — Terrain + Water Skeleton
-**Status:** Sim pipeline and render-shell library pieces all shipped on
-`dev` as of 2026-04-15. Only the actual render-path integration + the
-9-screenshot visual baseline remain, both of which need a window session.
+**Status:** §3.2 Visual Package complete (A1–A6 + B3 all shipped on
+`dev` as of 2026-04-14). 16-shot validation captured + audited; Pass
+3.1 post-fix landed for preset framing. Only the 9-shot golden
+baseline remains for §6 full acceptance, and it's deferred to Sprint
+1B because seed-cycling UI isn't a Sprint 1A deliverable.
 **Doc:** [`docs/design/sprints/sprint_1a_terrain_water.md`](docs/design/sprints/sprint_1a_terrain_water.md)
 
 **Shipped this pass (sim pipeline, 2026-04-14):**
@@ -285,22 +269,60 @@ tests, 0 failed**. `cargo tree -p core` still clean of `wgpu` /
 clean. `cargo tree -p core` still clean of `wgpu` / `winit` / `egui*`
 / `png` / `image` / `tempfile` / `naga`.
 
+**Shipped this session (visual polish rollup, 2026-04-14, 4 commits
+on `dev`):**
+- **`ac0368d` feat(render,app) — Pass 2 / Task 1A.10 GPU overlay
+  render path (§3.2 A5):** new `crates/render/src/overlay_render.rs`
+  module with `OverlayRenderer` struct + pure CPU bake function
+  `render_overlay_to_gpu(desc, world)` that resolves the typed
+  `ResolvedField` borrow via `resolve_scalar_source` in `overlay.rs`,
+  normalises per `ValueRange`, and samples the palette per cell to
+  RGBA8. New `shaders/overlay.wgsl` samples the baked texture +
+  per-descriptor alpha uniform and alpha-blends over terrain in the
+  same render pass. The overlay pipeline shares `TerrainRenderer`'s
+  view uniform + VBO/IBO via cloned `wgpu::Buffer` handles
+  (Arc-refcounted in wgpu 29). Depth state is `LessEqual` +
+  `depth_write_enabled = false` so overlays paint on the terrain
+  surface without occluding each other. No defensive `_texture` /
+  `_sampler` fields — the simplifier verified `BindGroup` refcounts
+  its bound resources against wgpu-core 29.0.1 source. +5 tests
+  (180 → 185), invariant #8 (string-key dispatch confined to
+  `overlay.rs`) preserved.
+- **`442aabe` feat(app) — Pass 3 camera preset dropdown (§3.2 A6):**
+  new `Camera::apply_preset(preset, island_radius)` method + an egui
+  `ComboBox` in `camera_panel.rs` that lists Hero / TopDebug /
+  LowOblique and calls `apply_preset` on selection. Dropdown is
+  stateless (`selectable_label(false, ...)` + `Option<CameraPreset>`
+  local) — every click is a one-shot jump, orbit / pan / zoom stay
+  functional after. Extracted `PITCH_CLAMP: f32 = 1.553` const
+  replacing 4 pre-existing magic-number sites (two tests + `orbit` +
+  the new `apply_preset`). +3 tests (185 → 188), all targeted at
+  per-preset spherical coord correctness + the TopDebug clamp
+  behaviour + all-three-presets finiteness round-trip.
+- **`4b230ed` feat(render) — Pass 4 blue noise dither (§3.2 B3):**
+  `shaders/terrain.wgsl` gains `@group(0) @binding(3)` + `@binding(4)`
+  for the blue noise texture + sampler; `fs_terrain` adds
+  `(textureSample(...).r - 0.5) * (1.0 / 255.0)` to `lit_rgb` as a
+  ±½ LSB dither at `DITHER_TILE = 8.0`. `TerrainRenderer::new`
+  uploads `load_blue_noise_2d(64)` as an R8Unorm 2D texture with
+  `AddressMode::Repeat` u/v, Linear mag/min. `terrain_wgsl_has_no
+  _literal_colors` still green — `0.5`, `1.0/255.0`, and
+  `vec3<f32>(dither)` don't trip the grep. No test delta (shader-
+  only effect).
+- **`071c14a` fix(render) — Pass 3.1 preset distance factors:** post-
+  validation fix for shot 21 (TopDebug FAIL) and shot 20 (Hero
+  CONCERN). `PRESET_HERO.distance_factor` 1.6 → 5.0 and
+  `PRESET_TOP_DEBUG.distance_factor` 1.4 → 3.5 so the orbit camera
+  clears the volcano peak instead of embedding. LowOblique unchanged.
+  See `RECENTLY SHIPPED` for the analytical framing verification.
+  Tests still at 188 (symbol-reference, not literal).
+
 **Still to ship for Sprint 1A §6 full acceptance:**
-- **Pass 2 — Task 1A.10 overlay render path:** `render_overlay_to_gpu
-  (desc, world)` pure bake function + `OverlayRenderer` + new
-  `shaders/overlay.wgsl`. CPU-side RGBA8 bake via `palette::sample`,
-  alpha-blend over terrain in same pass. See `NEXT SESSION PLAN` for
-  the full breakdown.
-- **Pass 3 — Camera preset dropdown (§3.2 A6):** wire `render::camera
-  ::{PRESET_HERO, PRESET_TOP_DEBUG, PRESET_LOW_OBLIQUE}` into
-  `CameraPanel` as a one-shot "apply preset to orbit camera" control.
-- **Pass 4 — Blue noise dithering (§3.2 B3):** upload
-  `assets/noise/blue_noise_2d_64.png` as a 2D texture in
-  `TerrainRenderer::new`, add sampler binding to `shaders/terrain.wgsl`,
-  add `±1/255` dither in `fs_terrain` to break gradient banding.
-- **9-screenshot visual baseline** in
-  `docs/design/sprints/sprint_1a_visual_acceptance/` (3 camera presets
-  × 3 golden seeds) — blocked on Pass 3 for preset switching.
+- **Reshoot validation shots 20 / 21** after Pass 3.1 to confirm
+  framing is fixed.
+- **9-shot golden visual baseline** (3 presets × 3 golden seeds) —
+  deferred to Sprint 1B on seed-cycling UI (see
+  [DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints)).
 - **Paper pack §6:** Chen 2014 + Génevaux 2013 deep reads, Lague 2014
   target-deep.
 
