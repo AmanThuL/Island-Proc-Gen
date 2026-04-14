@@ -3,6 +3,9 @@
 // All colours come from the baked texture (per-cell RGBA8 uploaded from
 // Rust's palette::sample). NO RGB/hex literals appear in this file — the
 // overlay_wgsl_has_no_literal_colors test in overlay_render.rs enforces this.
+//
+// Pass 4.2: group 0 now carries a 64×64 R8 blue noise texture + sampler
+// (bindings 1–2) for ±½ LSB perceptual dither, matching terrain.wgsl.
 
 // ── View uniform (group 0, binding 0) — same layout as terrain.wgsl::View ──
 // Must stay in sync with TerrainRenderer's ViewUniform struct.
@@ -20,6 +23,9 @@ struct OverlayUniform {
 }
 
 @group(0) @binding(0) var<uniform> view:            View;
+// ── Blue noise (group 0, bindings 1–2) — §3.2 Pass 4.2 dither ───────────
+@group(0) @binding(1) var          blue_noise:         texture_2d<f32>;
+@group(0) @binding(2) var          blue_noise_sampler: sampler;
 @group(1) @binding(0) var<uniform> overlay_uniform: OverlayUniform;
 @group(1) @binding(1) var          overlay_tex:     texture_2d<f32>;
 @group(1) @binding(2) var          overlay_sampler: sampler;
@@ -56,5 +62,8 @@ fn vs_overlay(input: VsIn) -> VsOut {
 @fragment
 fn fs_overlay(input: VsOut) -> @location(0) vec4<f32> {
     let s = textureSample(overlay_tex, overlay_sampler, input.uv);
-    return vec4<f32>(s.rgb, s.a * overlay_uniform.alpha.x);
+    let dither_tile = 8.0;
+    let dither = (textureSample(blue_noise, blue_noise_sampler,
+                                input.uv * dither_tile).r - 0.5) * (1.0 / 255.0);
+    return vec4<f32>(s.rgb + vec3<f32>(dither), s.a * overlay_uniform.alpha.x);
 }

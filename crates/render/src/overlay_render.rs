@@ -99,32 +99,100 @@ impl OverlayRenderer {
             source: wgpu::ShaderSource::Wgsl(wgsl_src.into()),
         });
 
-        // ── Group 0 bind group layout — view uniform ──────────────────────────
-        let bgl0 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("overlay_bgl0"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+        // ── Blue noise texture (§3.2 B3 dither) ──────────────────────────────
+        // Sprint 1A Pass 4.2 — overlay shader samples the same 64×64 R8 blue
+        // noise as terrain.wgsl for ±½ LSB perceptual dither. Loaded locally
+        // instead of shared from TerrainRenderer: the asset is 4 KB and
+        // inter-renderer coupling isn't worth the save.
+        let noise = crate::noise::load_blue_noise_2d(64);
+        let blue_noise_tex = device.create_texture_with_data(
+            &gpu.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("overlay_blue_noise_tex"),
+                size: wgpu::Extent3d {
+                    width: noise.width,
+                    height: noise.height,
+                    depth_or_array_layers: 1,
                 },
-                count: None,
-            }],
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &noise.data,
+        );
+        let blue_noise_view = blue_noise_tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let blue_noise_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("overlay_blue_noise_sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            ..Default::default()
         });
 
-        // ── Group 0 bind group — shared view buffer ───────────────────────────
-        // `create_bind_group` refcounts the bound buffer internally, so the
-        // terrain-owned `view_buf` stays alive for as long as this bind group
-        // exists. No manual clone needed — same pattern as `sky.rs`.
+        // ── Group 0 bind group layout — view uniform + blue noise ─────────────
+        let bgl0 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("overlay_bgl0"),
+            entries: &[
+                // binding 0: view uniform
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // binding 1: blue noise texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // binding 2: blue noise sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        // ── Group 0 bind group — shared view buffer + blue noise ──────────────
+        // `create_bind_group` refcounts all bound resources internally.
+        // `blue_noise_tex` / `blue_noise_view` / `blue_noise_sampler` drop at
+        // the end of `new()` — the bind group keeps them alive via Arc, exactly
+        // as `bake_descriptor` drops its local texture/sampler locals.
         let group0_bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("overlay_bg0"),
             layout: &bgl0,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: view_buf.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: view_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&blue_noise_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&blue_noise_sampler),
+                },
+            ],
         });
 
         // ── Group 1 bind group layout — per-descriptor resources ──────────────
