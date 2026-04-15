@@ -110,6 +110,11 @@ pub struct BakedSnapshot {
     /// TemperatureStage (DD1): mean annual temperature in °C per cell.
     #[serde(skip)]
     pub temperature: Option<ScalarField2D<f32>>,
+
+    /// PrecipitationStage (DD2): normalized `[0, 1]` annual precipitation
+    /// proxy from an upwind raymarch. Not calibrated to mm/yr in v1.
+    #[serde(skip)]
+    pub precipitation: Option<ScalarField2D<f32>>,
 }
 
 /// Land / sea / coast classification produced by `CoastMaskStage`.

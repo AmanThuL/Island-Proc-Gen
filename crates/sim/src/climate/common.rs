@@ -3,7 +3,7 @@
 //! `FogLikelihoodStage`.
 
 use glam::Vec2;
-use island_core::field::ScalarField2D;
+use island_core::field::{MaskField2D, ScalarField2D};
 
 /// Signed orographic uplift rate at the current cell: `-wind · grad_z`.
 ///
@@ -67,6 +67,54 @@ pub fn grad_scalar_at(field: &ScalarField2D<f32>, x: u32, y: u32) -> Vec2 {
 /// workspace (`preset.prevailing_wind_dir`).
 pub fn wind_unit(wind_dir_rad: f32) -> Vec2 {
     Vec2::new(wind_dir_rad.cos(), wind_dir_rad.sin())
+}
+
+/// Manhattan (L1) distance from each cell to the nearest coast cell,
+/// measured in cell units via a multi-source Von4 BFS. Non-coast cells
+/// that can't reach a coast (e.g. a fully land-locked island with no
+/// coast cells at all) get `f32::MAX`.
+///
+/// Shared by `TemperatureStage` (coastal modifier), `PrecipitationStage`
+/// (marine moisture seeding), and any later stage that needs a cheap
+/// proxy for "how far inland are we". `O(sim_cells)` work, single
+/// sweep.
+pub fn compute_distance_to_coast(coast: &MaskField2D, w: u32, h: u32) -> ScalarField2D<f32> {
+    let mut dist = ScalarField2D::<f32>::new(w, h);
+    dist.data.fill(f32::MAX);
+
+    let mut frontier: Vec<(u32, u32)> = Vec::new();
+    for iy in 0..h {
+        for ix in 0..w {
+            if coast.get(ix, iy) == 1 {
+                dist.set(ix, iy, 0.0);
+                frontier.push((ix, iy));
+            }
+        }
+    }
+
+    let mut next: Vec<(u32, u32)> = Vec::new();
+    let mut step = 1.0_f32;
+    while !frontier.is_empty() {
+        for &(x, y) in &frontier {
+            for (dx, dy) in [(-1_i32, 0_i32), (1, 0), (0, -1), (0, 1)] {
+                let nx = x as i32 + dx;
+                let ny = y as i32 + dy;
+                if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                    continue;
+                }
+                let (nxu, nyu) = (nx as u32, ny as u32);
+                if dist.get(nxu, nyu) > step {
+                    dist.set(nxu, nyu, step);
+                    next.push((nxu, nyu));
+                }
+            }
+        }
+        frontier.clear();
+        std::mem::swap(&mut frontier, &mut next);
+        step += 1.0;
+    }
+
+    dist
 }
 
 #[cfg(test)]

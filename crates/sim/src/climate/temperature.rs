@@ -27,6 +27,8 @@ use island_core::pipeline::SimulationStage;
 use island_core::preset::MAX_RELIEF_REF_M;
 use island_core::world::WorldState;
 
+use crate::climate::common::compute_distance_to_coast;
+
 // ── physical + empirical constants (hardcoded v1; Sprint 3 promotes to config)
 
 /// Sea-level mean annual temperature in °C for a "tropical volcanic
@@ -101,54 +103,6 @@ impl SimulationStage for TemperatureStage {
         world.baked.temperature = Some(temperature);
         Ok(())
     }
-}
-
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-/// Manhattan (L1) distance from each cell to the nearest coast cell,
-/// measured in cell units via a multi-source Von4 BFS. Non-coast cells
-/// that can't reach a coast (none should, but guard it) get `f32::MAX`.
-fn compute_distance_to_coast(
-    coast: &island_core::field::MaskField2D,
-    w: u32,
-    h: u32,
-) -> ScalarField2D<f32> {
-    let mut dist = ScalarField2D::<f32>::new(w, h);
-    dist.data.fill(f32::MAX);
-
-    let mut frontier: Vec<(u32, u32)> = Vec::new();
-    for iy in 0..h {
-        for ix in 0..w {
-            if coast.get(ix, iy) == 1 {
-                dist.set(ix, iy, 0.0);
-                frontier.push((ix, iy));
-            }
-        }
-    }
-
-    let mut next: Vec<(u32, u32)> = Vec::new();
-    let mut step = 1.0_f32;
-    while !frontier.is_empty() {
-        for &(x, y) in &frontier {
-            for (dx, dy) in [(-1_i32, 0_i32), (1, 0), (0, -1), (0, 1)] {
-                let nx = x as i32 + dx;
-                let ny = y as i32 + dy;
-                if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
-                    continue;
-                }
-                let (nxu, nyu) = (nx as u32, ny as u32);
-                if dist.get(nxu, nyu) > step {
-                    dist.set(nxu, nyu, step);
-                    next.push((nxu, nyu));
-                }
-            }
-        }
-        frontier.clear();
-        std::mem::swap(&mut frontier, &mut next);
-        step += 1.0;
-    }
-
-    dist
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────

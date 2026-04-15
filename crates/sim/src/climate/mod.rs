@@ -6,6 +6,8 @@
 //! in one place.
 
 pub mod common;
+pub mod precipitation;
 pub mod temperature;
 
+pub use precipitation::PrecipitationStage;
 pub use temperature::TemperatureStage;
