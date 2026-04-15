@@ -1,19 +1,32 @@
 //! Pipeline-end validation wrapper.
 //!
-//! `ValidationStage` runs the four `core::validation` invariants as a
-//! [`SimulationStage`] so `SimulationPipeline::run` can assert correctness
-//! automatically at the end of every Sprint 1A run. Each invariant is still
-//! available standalone from `island_core::validation`.
+//! `ValidationStage` runs every `core::validation` invariant as a
+//! [`SimulationStage`] so `SimulationPipeline::run` can assert
+//! correctness automatically at the pipeline tail. Each invariant is
+//! still available standalone from `island_core::validation`.
+//!
+//! Sprint 1A ships 4 invariants that depend only on the routing /
+//! coast stages. Sprint 1B adds 4 more (`precipitation_nonneg`,
+//! `biome_weights_normalized`, `temperature_physical_range`,
+//! `hex_attrs_present`). To keep the stage working for pipelines
+//! that stop at 1A (e.g. validation unit tests that only need the
+//! routing stack), each 1B check is gated on its input field: if the
+//! field is still `None`, the invariant is skipped with a
+//! `MissingPrecondition` error, and we treat that specific error as
+//! "not applicable yet" rather than a failure. Every other error
+//! (actual invariant violations) propagates normally.
 
 use island_core::pipeline::SimulationStage;
 use island_core::validation::{
-    accumulation_monotone, basin_partition_dag, coastline_consistency, river_termination,
+    ValidationError, accumulation_monotone, basin_partition_dag, biome_weights_normalized,
+    coastline_consistency, hex_attrs_present, precipitation_nonneg, river_termination,
+    temperature_physical_range,
 };
 use island_core::world::WorldState;
 
-/// Runs the four Sprint 1A correctness invariants in order. Short-circuits
-/// on the first failure so the error message identifies the originating
-/// invariant.
+/// Run every core validation invariant in order, short-circuiting on
+/// the first real failure. 1B invariants whose preconditions are
+/// missing are silently skipped.
 pub struct ValidationStage;
 
 impl SimulationStage for ValidationStage {
@@ -22,11 +35,31 @@ impl SimulationStage for ValidationStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
+        // Sprint 1A: hard-required invariants — every Sprint 1A
+        // pipeline has these fields populated.
         coastline_consistency(world)?;
         basin_partition_dag(world)?;
         accumulation_monotone(world)?;
         river_termination(world)?;
+
+        // Sprint 1B: run if the upstream stage has populated the
+        // input field, otherwise skip silently.
+        skip_if_missing(precipitation_nonneg(world))?;
+        skip_if_missing(biome_weights_normalized(world))?;
+        skip_if_missing(temperature_physical_range(world))?;
+        skip_if_missing(hex_attrs_present(world))?;
         Ok(())
+    }
+}
+
+/// Collapse `MissingPrecondition` into `Ok(())`: a 1B invariant that
+/// can't run because its stage hasn't fired yet is "not applicable",
+/// not a failure. Every other `ValidationError` still propagates.
+fn skip_if_missing(result: Result<(), ValidationError>) -> anyhow::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(ValidationError::MissingPrecondition { .. }) => Ok(()),
+        Err(other) => Err(other.into()),
     }
 }
 

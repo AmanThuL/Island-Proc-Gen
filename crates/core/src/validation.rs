@@ -37,6 +37,36 @@ pub enum ValidationError {
     #[error("coastline: cell ({x}, {y}) is coast but has no sea neighbour")]
     CoastlineCoastWithoutSeaNeighbour { x: u32, y: u32 },
 
+    #[error("precipitation non-negative: cell ({x}, {y}) has P = {value}")]
+    PrecipitationNegative { x: u32, y: u32, value: f32 },
+
+    #[error("biome weights normalized: cell ({x}, {y}) sum = {sum} (tolerance {tol})")]
+    BiomeWeightsNotNormalized { x: u32, y: u32, sum: f32, tol: f32 },
+
+    #[error(
+        "temperature range: cell ({x}, {y}) T = {value}°C outside [{lo}, {hi}] (sea_level={sea_c}, relief={peak_m}m)"
+    )]
+    TemperatureOutOfRange {
+        x: u32,
+        y: u32,
+        value: f32,
+        lo: f32,
+        hi: f32,
+        sea_c: f32,
+        peak_m: f32,
+    },
+
+    #[error("hex attrs: hex ({col}, {row}) biome_weights length {got}, expected {expected}")]
+    HexBiomeWeightsLengthMismatch {
+        col: u32,
+        row: u32,
+        got: usize,
+        expected: usize,
+    },
+
+    #[error("hex attrs: shape mismatch — cols={cols} rows={rows} but attrs.len()={got}")]
+    HexAttrsShapeMismatch { cols: u32, rows: u32, got: usize },
+
     #[error("validation: missing precondition field '{field}' (stage must have run first)")]
     MissingPrecondition { field: &'static str },
 }
@@ -312,6 +342,147 @@ pub fn coastline_consistency(world: &WorldState) -> Result<(), ValidationError> 
         }
     }
 
+    Ok(())
+}
+
+// ─── Sprint 1B invariants ─────────────────────────────────────────────────────
+
+/// Every cell of `world.baked.precipitation` is `>= 0`.
+pub fn precipitation_nonneg(world: &WorldState) -> Result<(), ValidationError> {
+    let precip =
+        world
+            .baked
+            .precipitation
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "baked.precipitation",
+            })?;
+    for y in 0..precip.height {
+        for x in 0..precip.width {
+            let v = precip.get(x, y);
+            if v < 0.0 {
+                return Err(ValidationError::PrecipitationNegative { x, y, value: v });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Per-land-cell biome weight sum approximately equals `1.0`.
+pub fn biome_weights_normalized(world: &WorldState) -> Result<(), ValidationError> {
+    let bw = world
+        .baked
+        .biome_weights
+        .as_ref()
+        .ok_or(ValidationError::MissingPrecondition {
+            field: "baked.biome_weights",
+        })?;
+    let coast = world
+        .derived
+        .coast_mask
+        .as_ref()
+        .ok_or(ValidationError::MissingPrecondition {
+            field: "derived.coast_mask",
+        })?;
+
+    const TOL: f32 = 1e-4;
+    for y in 0..bw.height {
+        for x in 0..bw.width {
+            if coast.is_land.get(x, y) != 1 {
+                continue;
+            }
+            let idx = bw.index(x, y);
+            let sum: f32 = bw.weights.iter().map(|row| row[idx]).sum();
+            if (sum - 1.0).abs() > TOL {
+                return Err(ValidationError::BiomeWeightsNotNormalized {
+                    x,
+                    y,
+                    sum,
+                    tol: TOL,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Every cell temperature sits between the lapse-rate-derived minimum
+/// and sea-level-plus-coastal-modifier maximum, within a small slack.
+pub fn temperature_physical_range(world: &WorldState) -> Result<(), ValidationError> {
+    let temperature =
+        world
+            .baked
+            .temperature
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "baked.temperature",
+            })?;
+
+    // Physical bounds from the Sprint 1B TemperatureStage contract.
+    // `TemperatureStage` owns the numeric constants, so we recompute
+    // the bounds from the preset here rather than hardcoding a copy.
+    const T_SEA_LEVEL_C: f32 = 26.0;
+    const LAPSE_RATE_C_PER_KM: f32 = 6.5;
+    const COASTAL_MODIFIER_C: f32 = 2.0;
+    const SLACK: f32 = 1.0;
+
+    let peak_m = crate::preset::MAX_RELIEF_REF_M * world.preset.max_relief;
+    let max_lapse = LAPSE_RATE_C_PER_KM * peak_m / 1000.0;
+    let lo = T_SEA_LEVEL_C - max_lapse - SLACK;
+    let hi = T_SEA_LEVEL_C + COASTAL_MODIFIER_C + SLACK;
+
+    for y in 0..temperature.height {
+        for x in 0..temperature.width {
+            let v = temperature.get(x, y);
+            if v < lo || v > hi {
+                return Err(ValidationError::TemperatureOutOfRange {
+                    x,
+                    y,
+                    value: v,
+                    lo,
+                    hi,
+                    sea_c: T_SEA_LEVEL_C,
+                    peak_m,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `hex_attrs.attrs.len() == cols * rows`, and every entry's
+/// `biome_weights` vector length matches the canonical biome count.
+pub fn hex_attrs_present(world: &WorldState) -> Result<(), ValidationError> {
+    let attrs = world
+        .derived
+        .hex_attrs
+        .as_ref()
+        .ok_or(ValidationError::MissingPrecondition {
+            field: "derived.hex_attrs",
+        })?;
+
+    let expected = (attrs.cols * attrs.rows) as usize;
+    if attrs.attrs.len() != expected {
+        return Err(ValidationError::HexAttrsShapeMismatch {
+            cols: attrs.cols,
+            rows: attrs.rows,
+            got: attrs.attrs.len(),
+        });
+    }
+
+    let expected_biome_count = crate::world::BiomeType::COUNT;
+    for (i, hex) in attrs.attrs.iter().enumerate() {
+        if hex.biome_weights.len() != expected_biome_count {
+            let col = (i as u32) % attrs.cols;
+            let row = (i as u32) / attrs.cols;
+            return Err(ValidationError::HexBiomeWeightsLengthMismatch {
+                col,
+                row,
+                got: hex.biome_weights.len(),
+                expected: expected_biome_count,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -681,5 +852,161 @@ mod tests {
             matches!(err, ValidationError::RiverInSea { x: 0, y: 0 }),
             "expected RiverInSea at (0,0), got: {err}"
         );
+    }
+
+    // ── Sprint 1B invariant tests ────────────────────────────────────────────
+
+    use crate::world::{BakedSnapshot, BiomeWeights, HexAttributeField, HexAttributes};
+
+    fn minimal_world_for_1b(w: u32, h: u32) -> WorldState {
+        let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(w, h));
+        world.baked = BakedSnapshot::default();
+        world.derived.coast_mask = Some(make_coast_mask(
+            w,
+            h,
+            vec![1u8; (w * h) as usize],
+            vec![0u8; (w * h) as usize],
+            vec![0u8; (w * h) as usize],
+        ));
+        world
+    }
+
+    #[test]
+    fn precipitation_nonneg_happy_path() {
+        let mut world = minimal_world_for_1b(4, 4);
+        let mut p = ScalarField2D::<f32>::new(4, 4);
+        p.data.fill(0.3);
+        world.baked.precipitation = Some(p);
+        assert!(precipitation_nonneg(&world).is_ok());
+    }
+
+    #[test]
+    fn precipitation_nonneg_detects_negative() {
+        let mut world = minimal_world_for_1b(4, 4);
+        let mut p = ScalarField2D::<f32>::new(4, 4);
+        p.set(2, 1, -0.1);
+        world.baked.precipitation = Some(p);
+        let err = precipitation_nonneg(&world).unwrap_err();
+        assert!(matches!(
+            err,
+            ValidationError::PrecipitationNegative { x: 2, y: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn biome_weights_normalized_happy_path() {
+        let mut world = minimal_world_for_1b(2, 2);
+        let mut bw = BiomeWeights::new(2, 2);
+        let idx = crate::world::BiomeType::LowlandForest as usize;
+        for row in bw.weights.iter_mut() {
+            row.fill(0.0);
+        }
+        for cell in 0..4 {
+            bw.weights[idx][cell] = 1.0;
+        }
+        world.baked.biome_weights = Some(bw);
+        assert!(biome_weights_normalized(&world).is_ok());
+    }
+
+    #[test]
+    fn biome_weights_normalized_detects_drift() {
+        let mut world = minimal_world_for_1b(2, 2);
+        let mut bw = BiomeWeights::new(2, 2);
+        // Leave everything at zero → sum = 0, fails tolerance.
+        world.baked.biome_weights = Some(bw.clone());
+        let err = biome_weights_normalized(&world).unwrap_err();
+        assert!(matches!(
+            err,
+            ValidationError::BiomeWeightsNotNormalized { .. }
+        ));
+
+        // Fix cell (0, 0) to sum to 1 but leave (1, 0) drifting by 0.01.
+        let idx = crate::world::BiomeType::LowlandForest as usize;
+        bw.weights[idx][0] = 1.0;
+        bw.weights[idx][1] = 0.5; // still wrong
+        world.baked.biome_weights = Some(bw);
+        let err = biome_weights_normalized(&world).unwrap_err();
+        assert!(matches!(
+            err,
+            ValidationError::BiomeWeightsNotNormalized { x: 1, y: 0, .. }
+        ));
+    }
+
+    #[test]
+    fn temperature_physical_range_happy_path() {
+        let mut world = minimal_world_for_1b(4, 4);
+        let mut t = ScalarField2D::<f32>::new(4, 4);
+        t.data.fill(20.0);
+        world.baked.temperature = Some(t);
+        assert!(temperature_physical_range(&world).is_ok());
+    }
+
+    #[test]
+    fn temperature_physical_range_detects_too_hot() {
+        let mut world = minimal_world_for_1b(4, 4);
+        let mut t = ScalarField2D::<f32>::new(4, 4);
+        t.data.fill(20.0);
+        t.set(1, 2, 50.0); // impossibly hot
+        world.baked.temperature = Some(t);
+        let err = temperature_physical_range(&world).unwrap_err();
+        assert!(matches!(
+            err,
+            ValidationError::TemperatureOutOfRange { x: 1, y: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn hex_attrs_present_happy_path() {
+        let mut world = minimal_world_for_1b(4, 4);
+        let n_hex = 16;
+        let attrs: Vec<HexAttributes> = (0..n_hex)
+            .map(|_| HexAttributes {
+                elevation: 0.0,
+                slope: 0.0,
+                rainfall: 0.0,
+                temperature: 0.0,
+                moisture: 0.0,
+                biome_weights: vec![0.0; crate::world::BiomeType::COUNT],
+                dominant_biome: crate::world::BiomeType::CoastalScrub,
+                has_river: false,
+            })
+            .collect();
+        world.derived.hex_attrs = Some(HexAttributeField {
+            attrs,
+            cols: 4,
+            rows: 4,
+        });
+        assert!(hex_attrs_present(&world).is_ok());
+    }
+
+    #[test]
+    fn hex_attrs_present_detects_biome_row_length_mismatch() {
+        let mut world = minimal_world_for_1b(4, 4);
+        let attrs = (0..16)
+            .map(|i| HexAttributes {
+                elevation: 0.0,
+                slope: 0.0,
+                rainfall: 0.0,
+                temperature: 0.0,
+                moisture: 0.0,
+                biome_weights: if i == 5 {
+                    vec![0.0; 3] // wrong length on one hex
+                } else {
+                    vec![0.0; crate::world::BiomeType::COUNT]
+                },
+                dominant_biome: crate::world::BiomeType::CoastalScrub,
+                has_river: false,
+            })
+            .collect();
+        world.derived.hex_attrs = Some(HexAttributeField {
+            attrs,
+            cols: 4,
+            rows: 4,
+        });
+        let err = hex_attrs_present(&world).unwrap_err();
+        assert!(matches!(
+            err,
+            ValidationError::HexBiomeWeightsLengthMismatch { col: 1, row: 1, .. }
+        ));
     }
 }

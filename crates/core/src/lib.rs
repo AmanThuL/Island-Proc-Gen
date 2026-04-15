@@ -17,8 +17,9 @@ pub use preset::{IslandAge, IslandArchetypePreset, MAX_RELIEF_REF_M};
 pub use save::{LoadedWorld, SaveError, SaveMode};
 pub use seed::Seed;
 pub use validation::{
-    ValidationError, accumulation_monotone, basin_partition_dag, coastline_consistency,
-    river_termination,
+    ValidationError, accumulation_monotone, basin_partition_dag, biome_weights_normalized,
+    coastline_consistency, hex_attrs_present, precipitation_nonneg, river_termination,
+    temperature_physical_range,
 };
 pub use world::{
     AuthoritativeFields, BakedSnapshot, BiomeType, BiomeWeights, CoastMask, D8_OFFSETS,
