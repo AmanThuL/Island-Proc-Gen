@@ -1,11 +1,11 @@
-//! Golden-seed regression tests for the Sprint 1A pipeline.
+//! Golden-seed regression tests for the full Sprint 1A + 1B pipeline.
 //!
-//! Each test runs the full Sprint 1A sim pipeline against a fixed
+//! Each test runs the canonical linear pipeline against a fixed
 //! `(Seed, preset)` pair, computes a SummaryMetrics snapshot, and
 //! compares it against the committed RON file in
 //! `crates/data/golden/snapshots/`.
 //!
-//! Set SNAPSHOT_UPDATE=1 to overwrite the snapshot with the observed
+//! Set `SNAPSHOT_UPDATE=1` to overwrite the snapshot with the observed
 //! output (used to bootstrap the files or after a deliberate pipeline
 //! change).
 
@@ -14,10 +14,12 @@ use std::path::PathBuf;
 use data::golden::SummaryMetrics;
 use island_core::pipeline::SimulationPipeline;
 use island_core::seed::Seed;
-use island_core::world::{Resolution, WorldState};
+use island_core::world::{BiomeType, Resolution, WorldState};
 use sim::{
-    AccumulationStage, BasinsStage, CoastMaskStage, DerivedGeomorphStage, FlowRoutingStage,
-    PitFillStage, RiverExtractionStage, TopographyStage, ValidationStage,
+    AccumulationStage, BasinsStage, BiomeWeightsStage, CoastMaskStage, DerivedGeomorphStage,
+    FlowRoutingStage, FogLikelihoodStage, HexProjectionStage, PetStage, PitFillStage,
+    PrecipitationStage, RiverExtractionStage, SoilMoistureStage, TemperatureStage, TopographyStage,
+    ValidationStage, WaterBalanceStage,
 };
 
 const RESOLUTION: u32 = 128; // smaller than production 256 to keep tests fast
@@ -26,6 +28,7 @@ fn run_pipeline(seed: u64, preset_name: &str) -> WorldState {
     let preset = data::presets::load_preset(preset_name).expect("preset must exist");
     let mut world = WorldState::new(Seed(seed), preset, Resolution::new(RESOLUTION, RESOLUTION));
     let mut pipeline = SimulationPipeline::new();
+    // Sprint 1A
     pipeline.push(Box::new(TopographyStage));
     pipeline.push(Box::new(CoastMaskStage));
     pipeline.push(Box::new(PitFillStage));
@@ -34,6 +37,16 @@ fn run_pipeline(seed: u64, preset_name: &str) -> WorldState {
     pipeline.push(Box::new(AccumulationStage));
     pipeline.push(Box::new(BasinsStage));
     pipeline.push(Box::new(RiverExtractionStage));
+    // Sprint 1B
+    pipeline.push(Box::new(TemperatureStage));
+    pipeline.push(Box::new(PrecipitationStage));
+    pipeline.push(Box::new(FogLikelihoodStage));
+    pipeline.push(Box::new(PetStage));
+    pipeline.push(Box::new(WaterBalanceStage));
+    pipeline.push(Box::new(SoilMoistureStage));
+    pipeline.push(Box::new(BiomeWeightsStage));
+    pipeline.push(Box::new(HexProjectionStage));
+    // Tail
     pipeline.push(Box::new(ValidationStage));
     pipeline.run(&mut world).expect("pipeline must succeed");
     world
@@ -87,6 +100,90 @@ fn compute_metrics(world: &WorldState) -> SummaryMetrics {
     let basin_id_blake3 = blake3_field_u32(&basin_id.data);
     let river_mask_blake3 = blake3_field_u8(&river.data);
 
+    // ── Sprint 1B summaries ────────────────────────────────────────────────
+    let precipitation = world.baked.precipitation.as_ref().unwrap();
+    let temperature = world.baked.temperature.as_ref().unwrap();
+    let soil_moisture = world.baked.soil_moisture.as_ref().unwrap();
+    let biome_weights = world.baked.biome_weights.as_ref().unwrap();
+    let hex_attrs = world.derived.hex_attrs.as_ref().unwrap();
+
+    let mut land_n = 0_u32;
+    let mut precip_sum = 0.0_f64;
+    let mut temp_sum = 0.0_f64;
+    let mut moist_sum = 0.0_f64;
+    let mut biome_counts = [0_u32; 8];
+    let w = coast.is_land.width;
+    let h = coast.is_land.height;
+    for iy in 0..h {
+        for ix in 0..w {
+            if coast.is_land.get(ix, iy) != 1 {
+                continue;
+            }
+            land_n += 1;
+            precip_sum += precipitation.get(ix, iy) as f64;
+            temp_sum += temperature.get(ix, iy) as f64;
+            moist_sum += soil_moisture.get(ix, iy) as f64;
+            let dominant = biome_weights.dominant_biome_at(ix, iy) as usize;
+            biome_counts[dominant] += 1;
+        }
+    }
+    let land_n_f = land_n.max(1) as f64;
+    let mean_precipitation = (precip_sum / land_n_f) as f32;
+    let mean_temperature_c = (temp_sum / land_n_f) as f32;
+    let mean_soil_moisture = (moist_sum / land_n_f) as f32;
+
+    let mut biome_coverage_percent = [0.0_f32; 8];
+    for (i, c) in biome_counts.iter().enumerate() {
+        biome_coverage_percent[i] = (*c as f64 * 100.0 / land_n_f) as f32;
+    }
+
+    // Windward vs leeward: project each land cell onto `wind` (the
+    // direction wind comes FROM). Cells whose projection is above the
+    // median of all land cells are "upwind" (windward); below the
+    // median are "downwind" (leeward). Ratio > 1 means the windward
+    // side is wetter, which is the qualitative spec acceptance
+    // criterion for DD2.
+    let wind_dir = world.preset.prevailing_wind_dir;
+    let wind_x = wind_dir.cos();
+    let wind_y = wind_dir.sin();
+    let mut projections: Vec<(f32, f32)> = Vec::with_capacity(land_n as usize);
+    for iy in 0..h {
+        for ix in 0..w {
+            if coast.is_land.get(ix, iy) != 1 {
+                continue;
+            }
+            let proj = ix as f32 * wind_x + iy as f32 * wind_y;
+            projections.push((proj, precipitation.get(ix, iy)));
+        }
+    }
+    // Copy projection values only for the median computation.
+    let mut proj_vals: Vec<f32> = projections.iter().map(|(p, _)| *p).collect();
+    proj_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = proj_vals
+        .get(proj_vals.len() / 2)
+        .copied()
+        .unwrap_or_default();
+
+    let mut windward_sum = 0.0_f64;
+    let mut windward_n = 0_u32;
+    let mut leeward_sum = 0.0_f64;
+    let mut leeward_n = 0_u32;
+    for (proj, p) in &projections {
+        if *proj >= median {
+            windward_sum += *p as f64;
+            windward_n += 1;
+        } else {
+            leeward_sum += *p as f64;
+            leeward_n += 1;
+        }
+    }
+    let windward_mean = windward_sum / windward_n.max(1) as f64;
+    let leeward_mean = leeward_sum / leeward_n.max(1) as f64;
+    let windward_leeward_precip_ratio = (windward_mean / leeward_mean.max(1e-9)) as f32;
+
+    let hex_count = hex_attrs.cols * hex_attrs.rows;
+    debug_assert_eq!(biome_weights.types, BiomeType::ALL);
+
     SummaryMetrics {
         land_cell_count,
         coast_cell_count,
@@ -98,6 +195,12 @@ fn compute_metrics(world: &WorldState) -> SummaryMetrics {
         mean_slope,
         longest_river_length,
         total_drainage_area,
+        mean_precipitation,
+        windward_leeward_precip_ratio,
+        mean_temperature_c,
+        mean_soil_moisture,
+        biome_coverage_percent,
+        hex_count,
         height_blake3,
         z_filled_blake3,
         flow_dir_blake3,
@@ -217,6 +320,35 @@ fn compare_or_update(filename: &str, observed: &SummaryMetrics) {
         (observed.total_drainage_area - expected.total_drainage_area).abs() < ABS_TOL,
         "total_drainage_area"
     );
+
+    // Sprint 1B float summaries (same abs tolerance).
+    assert!(
+        (observed.mean_precipitation - expected.mean_precipitation).abs() < ABS_TOL,
+        "mean_precipitation: {} vs {}",
+        observed.mean_precipitation,
+        expected.mean_precipitation
+    );
+    assert!(
+        (observed.windward_leeward_precip_ratio - expected.windward_leeward_precip_ratio).abs()
+            < ABS_TOL,
+        "windward_leeward_precip_ratio"
+    );
+    assert!(
+        (observed.mean_temperature_c - expected.mean_temperature_c).abs() < ABS_TOL,
+        "mean_temperature_c"
+    );
+    assert!(
+        (observed.mean_soil_moisture - expected.mean_soil_moisture).abs() < ABS_TOL,
+        "mean_soil_moisture"
+    );
+    for i in 0..8 {
+        assert!(
+            (observed.biome_coverage_percent[i] - expected.biome_coverage_percent[i]).abs()
+                < ABS_TOL,
+            "biome_coverage_percent[{i}]"
+        );
+    }
+    assert_eq!(observed.hex_count, expected.hex_count, "hex_count");
 
     // Field hashes: bit-exact on same host.
     assert_eq!(
