@@ -21,6 +21,7 @@ use island_core::{
     world::{Resolution, WorldState},
 };
 use render::{OverlayRenderer, SkyRenderer, TerrainRenderer, overlay::OverlayRegistry};
+use sim::StageId;
 use sim::{
     AccumulationStage, BasinsStage, BiomeWeightsStage, CoastMaskStage, DerivedGeomorphStage,
     FlowRoutingStage, FogLikelihoodStage, HexProjectionStage, PetStage, PitFillStage,
@@ -87,10 +88,12 @@ pub struct Runtime {
     seed: Seed,
     resolution: Resolution,
 
-    // Sprint 1A: the simulated world the pipeline produced at startup.
-    // Sprint 1A runs the pipeline once at boot; Sprint 2+ will re-run it
-    // when preset params change interactively.
+    // Sprint 1B: the simulated world + the canonical linear pipeline.
+    // The pipeline runs once at boot to fully populate `world`, and then
+    // slider changes in `ParamsPanel` call `pipeline.run_from(world, X)`
+    // to re-run just the affected stages.
     world: WorldState,
+    pipeline: SimulationPipeline,
 }
 
 impl Runtime {
@@ -140,9 +143,22 @@ impl Runtime {
         let seed = Seed(42);
         let resolution = Resolution::new(256, 256);
 
-        // ── Sprint 1B pipeline (runs once at boot) ───────────────────────────
-        let world = run_sprint_1b_pipeline(seed, preset.clone(), resolution)
-            .context("run_sprint_1b_pipeline")?;
+        // ── Sprint 1B pipeline (built once, reused for slider re-runs) ───────
+        let pipeline = build_sprint_1b_pipeline();
+        let mut world = WorldState::new(seed, preset.clone(), resolution);
+        pipeline
+            .run(&mut world)
+            .context("initial Sprint 1B pipeline run")?;
+        let land_cells = world
+            .derived
+            .coast_mask
+            .as_ref()
+            .map(|c| c.land_cell_count)
+            .unwrap_or(0);
+        info!(
+            stages = pipeline.len(),
+            land_cells, "Sprint 1B pipeline completed (all 8 invariants passed)"
+        );
 
         // ── Terrain renderer (must follow pipeline so z_filled is populated) ─
         let terrain = TerrainRenderer::new(&gpu, &world, &preset);
@@ -186,6 +202,7 @@ impl Runtime {
             seed,
             resolution,
             world,
+            pipeline,
         })
     }
 
@@ -369,10 +386,11 @@ impl Runtime {
         let fps = self.fps;
         let resolution = self.resolution;
         let seed = self.seed;
-        let preset = &self.preset;
+        let island_radius = self.preset.island_radius;
         let registry = &mut self.overlay_registry;
         let camera = &mut self.camera;
         let vertical_scale = &mut self.vertical_scale;
+        let preset = &mut self.preset;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
 
@@ -385,9 +403,9 @@ impl Runtime {
             &self.egui_ctx,
             camera,
             vertical_scale,
-            preset.island_radius,
+            island_radius,
         );
-        ui::ParamsPanel::show(&self.egui_ctx, preset);
+        let params_result = ui::ParamsPanel::show(&self.egui_ctx, preset);
         ui::StatsPanel::show(
             &self.egui_ctx,
             &ui::StatsPanelData {
@@ -398,6 +416,24 @@ impl Runtime {
         );
 
         let full_output = self.egui_ctx.end_pass();
+
+        // Slider re-run: when a Sprint 1B climate slider is touched,
+        // update the world's preset copy and re-run the affected stage
+        // plus its downstream neighbours via `run_from`, then re-bake
+        // the overlay textures so visible overlays reflect the new
+        // fields on the very next draw.
+        if params_result.wind_dir_changed {
+            self.world.preset = self.preset.clone();
+            if let Err(err) = self
+                .pipeline
+                .run_from(&mut self.world, StageId::Precipitation as usize)
+            {
+                warn!("slider re-run failed: {err}");
+            } else {
+                self.overlay
+                    .refresh(&self.gpu, &self.world, &self.overlay_registry);
+            }
+        }
 
         // Handle egui platform output (cursor changes, clipboard, etc.)
         self.egui_state
@@ -462,22 +498,15 @@ impl Runtime {
     }
 }
 
-// ── Sprint 1B pipeline runner ─────────────────────────────────────────────────
+// ── Sprint 1B pipeline builder ────────────────────────────────────────────────
 
-/// Construct the full Sprint 1A + Sprint 1B `SimulationPipeline` and run it
-/// once against a fresh [`WorldState`]. Returns the populated world.
-fn run_sprint_1b_pipeline(
-    seed: Seed,
-    preset: IslandArchetypePreset,
-    resolution: Resolution,
-) -> anyhow::Result<WorldState> {
-    let mut world = WorldState::new(seed, preset, resolution);
-
-    // Push order MUST match `sim::StageId` ordinals so slider re-run via
-    // `SimulationPipeline::run_from(world, StageId::X as usize)` targets
-    // the correct stage. `StageId` is the single source of truth for
-    // stage indices — any reordering here must update the enum in
-    // lockstep.
+/// Build the canonical Sprint 1A + Sprint 1B `SimulationPipeline`.
+///
+/// Push order MUST match `sim::StageId` ordinals so slider re-run via
+/// `SimulationPipeline::run_from(world, StageId::X as usize)` targets
+/// the correct stage. `StageId` is the single source of truth for stage
+/// indices — any reordering here must update the enum in lockstep.
+fn build_sprint_1b_pipeline() -> SimulationPipeline {
     let mut pipeline = SimulationPipeline::new();
     // Sprint 1A (indices 0..=7)
     pipeline.push(Box::new(TopographyStage));
@@ -499,21 +528,7 @@ fn run_sprint_1b_pipeline(
     pipeline.push(Box::new(HexProjectionStage));
     // Tail hook — runs all 8 invariants.
     pipeline.push(Box::new(ValidationStage));
-
-    pipeline.run(&mut world).context("pipeline.run")?;
-
-    let land_cells = world
-        .derived
-        .coast_mask
-        .as_ref()
-        .map(|c| c.land_cell_count)
-        .unwrap_or(0);
-    info!(
-        stages = 17,
-        land_cells, "Sprint 1B pipeline completed (all 8 invariants passed)"
-    );
-
-    Ok(world)
+    pipeline
 }
 
 // ── Preset loading helper ─────────────────────────────────────────────────────

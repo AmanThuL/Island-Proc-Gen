@@ -57,12 +57,17 @@ struct OverlayBake {
 /// Sprint 1A overlay render pass.
 ///
 /// One texture + bind group per registered descriptor. Visible overlays are
-/// drawn in index order over the terrain surface in `draw`.
+/// drawn in index order over the terrain surface in `draw`. Sprint 1B
+/// slider re-runs call [`OverlayRenderer::refresh`] to re-bake all
+/// descriptors against an updated `WorldState`.
 pub struct OverlayRenderer {
     pipeline: wgpu::RenderPipeline,
 
     /// Group 0 bind group — binds the terrain-owned view uniform buffer.
     group0_bg: wgpu::BindGroup,
+
+    /// Group 1 bind group layout — kept for `refresh` re-baking.
+    bgl1: wgpu::BindGroupLayout,
 
     /// Per-descriptor bake (None if the field was not populated at boot).
     entries: Vec<Option<OverlayBake>>,
@@ -304,12 +309,35 @@ impl OverlayRenderer {
         Self {
             pipeline,
             group0_bg,
+            bgl1,
             entries,
             // `Buffer::clone` is an `Arc` incref — no GPU copy.
             terrain_vbo: terrain_vbo.clone(),
             terrain_ibo: terrain_ibo.clone(),
             terrain_index_count,
         }
+    }
+
+    /// Re-bake every descriptor against the current `world`. Slider
+    /// re-runs call this after `SimulationPipeline::run_from` finishes
+    /// to pick up the new field values. Previous per-descriptor bakes
+    /// drop with the replaced `entries` vec — their internal `Arc`
+    /// refcounts release the old textures / samplers / uniform buffers.
+    ///
+    /// Cost is one `bake_descriptor` per entry (one CPU texture bake +
+    /// one GPU upload per overlay). For 12 overlays on a 256² field
+    /// that's ~3MB of transient CPU allocation and 12 texture uploads
+    /// per slider tick — plenty fast on a modern GPU. Sprint 2 can
+    /// refine if profiling disagrees.
+    pub fn refresh(&mut self, gpu: &GpuContext, world: &WorldState, registry: &OverlayRegistry) {
+        let device = &gpu.device;
+        let queue = &gpu.queue;
+        self.entries = registry
+            .all()
+            .iter()
+            .enumerate()
+            .map(|(idx, desc)| bake_descriptor(device, queue, &self.bgl1, desc, world, idx))
+            .collect();
     }
 
     /// Draw all visible overlays into `rpass`.
