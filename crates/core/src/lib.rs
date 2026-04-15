@@ -13,7 +13,7 @@ pub use neighborhood::{
     neighbour_offsets,
 };
 pub use pipeline::{NoopStage, PipelineError, SimulationPipeline, SimulationStage};
-pub use preset::{IslandAge, IslandArchetypePreset};
+pub use preset::{IslandAge, IslandArchetypePreset, MAX_RELIEF_REF_M};
 pub use save::{LoadedWorld, SaveError, SaveMode};
 pub use seed::Seed;
 pub use validation::{

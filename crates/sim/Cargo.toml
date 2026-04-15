@@ -13,3 +13,4 @@ thiserror   = { workspace = true }
 tracing     = { workspace = true }
 rand        = { workspace = true }
 rand_pcg    = { workspace = true }
+glam        = { workspace = true }

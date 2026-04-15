@@ -6,10 +6,12 @@
 //! [`island_core::SimulationPipeline::run_from`] callers (slider rerun,
 //! load-time rebuild) never hardcode raw indices.
 
+pub mod climate;
 pub mod geomorph;
 pub mod hydro;
 pub mod validation_stage;
 
+pub use climate::TemperatureStage;
 pub use geomorph::CoastMaskStage;
 pub use geomorph::DerivedGeomorphStage;
 pub use geomorph::PitFillStage;

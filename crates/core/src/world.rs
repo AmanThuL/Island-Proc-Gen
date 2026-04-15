@@ -101,10 +101,16 @@ pub struct AuthoritativeFields {
 /// Roadmap §数据层分离 §Baked snapshot state — cacheable derived-but-stable
 /// fields (temperature, precipitation, soil moisture, biome weights, …).
 ///
-/// Sprint 0 leaves this empty on purpose: Sprint 1B onward will append
-/// fields without breaking `#[derive(Default)]`.
+/// Each field payload is `#[serde(skip)]`: the canonical save path for
+/// these large float fields is `ScalarField2D::to_bytes` in the save
+/// codec, not serde — exactly the pattern `AuthoritativeFields` uses
+/// for `height` / `sediment`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct BakedSnapshot {}
+pub struct BakedSnapshot {
+    /// TemperatureStage (DD1): mean annual temperature in °C per cell.
+    #[serde(skip)]
+    pub temperature: Option<ScalarField2D<f32>>,
+}
 
 /// Land / sea / coast classification produced by `CoastMaskStage`.
 ///

@@ -5,6 +5,19 @@
 //! files and loading logic live in `crates/data/src/presets.rs`; this module
 //! only provides the types so that `core` has no dependency on `data`.
 
+// ─── physical scale constants ────────────────────────────────────────────────
+
+/// Reference peak elevation in metres used to map `z_norm ∈ [0, 1]` to a
+/// physical height, via `peak_m = MAX_RELIEF_REF_M * preset.max_relief`.
+///
+/// `2500 m` is the Réunion / Haleakalā order of magnitude (both roughly
+/// 3 km peaks, but the proxy undershoots intentionally to keep the
+/// lapse-driven temperature gradients conservative). The only v1 place
+/// where a dimensional length unit appears — callers that need "peak
+/// in metres" derive it from here rather than hardcoding local copies.
+/// Sprint 3's physical calibration sprint will re-examine this value.
+pub const MAX_RELIEF_REF_M: f32 = 2500.0;
+
 // ─── types ────────────────────────────────────────────────────────────────────
 
 /// Age of the island (affects erosion, relief, and geomorphology).
