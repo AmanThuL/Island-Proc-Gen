@@ -22,8 +22,10 @@ use island_core::{
 };
 use render::{OverlayRenderer, SkyRenderer, TerrainRenderer, overlay::OverlayRegistry};
 use sim::{
-    AccumulationStage, BasinsStage, CoastMaskStage, DerivedGeomorphStage, FlowRoutingStage,
-    PitFillStage, RiverExtractionStage, TopographyStage, ValidationStage,
+    AccumulationStage, BasinsStage, BiomeWeightsStage, CoastMaskStage, DerivedGeomorphStage,
+    FlowRoutingStage, FogLikelihoodStage, HexProjectionStage, PetStage, PitFillStage,
+    PrecipitationStage, RiverExtractionStage, SoilMoistureStage, TemperatureStage, TopographyStage,
+    ValidationStage, WaterBalanceStage,
 };
 
 use crate::camera::{Camera, InputState};
@@ -138,9 +140,9 @@ impl Runtime {
         let seed = Seed(42);
         let resolution = Resolution::new(256, 256);
 
-        // ── Sprint 1A pipeline (runs once at boot) ───────────────────────────
-        let world = run_sprint_1a_pipeline(seed, preset.clone(), resolution)
-            .context("run_sprint_1a_pipeline")?;
+        // ── Sprint 1B pipeline (runs once at boot) ───────────────────────────
+        let world = run_sprint_1b_pipeline(seed, preset.clone(), resolution)
+            .context("run_sprint_1b_pipeline")?;
 
         // ── Terrain renderer (must follow pipeline so z_filled is populated) ─
         let terrain = TerrainRenderer::new(&gpu, &world, &preset);
@@ -460,11 +462,11 @@ impl Runtime {
     }
 }
 
-// ── Sprint 1A pipeline runner ─────────────────────────────────────────────────
+// ── Sprint 1B pipeline runner ─────────────────────────────────────────────────
 
-/// Construct the Sprint 1A `SimulationPipeline` and run it once against a
-/// fresh [`WorldState`]. Returns the populated world.
-fn run_sprint_1a_pipeline(
+/// Construct the full Sprint 1A + Sprint 1B `SimulationPipeline` and run it
+/// once against a fresh [`WorldState`]. Returns the populated world.
+fn run_sprint_1b_pipeline(
     seed: Seed,
     preset: IslandArchetypePreset,
     resolution: Resolution,
@@ -472,10 +474,12 @@ fn run_sprint_1a_pipeline(
     let mut world = WorldState::new(seed, preset, resolution);
 
     // Push order MUST match `sim::StageId` ordinals so slider re-run via
-    // `SimulationPipeline::run_from(world, StageId::X as usize)` targets the
-    // correct stage. `StageId` is the single source of truth for stage
-    // indices — any reordering here must update the enum in lockstep.
+    // `SimulationPipeline::run_from(world, StageId::X as usize)` targets
+    // the correct stage. `StageId` is the single source of truth for
+    // stage indices — any reordering here must update the enum in
+    // lockstep.
     let mut pipeline = SimulationPipeline::new();
+    // Sprint 1A (indices 0..=7)
     pipeline.push(Box::new(TopographyStage));
     pipeline.push(Box::new(CoastMaskStage));
     pipeline.push(Box::new(PitFillStage));
@@ -484,6 +488,16 @@ fn run_sprint_1a_pipeline(
     pipeline.push(Box::new(AccumulationStage));
     pipeline.push(Box::new(BasinsStage));
     pipeline.push(Box::new(RiverExtractionStage));
+    // Sprint 1B (indices 8..=15)
+    pipeline.push(Box::new(TemperatureStage));
+    pipeline.push(Box::new(PrecipitationStage));
+    pipeline.push(Box::new(FogLikelihoodStage));
+    pipeline.push(Box::new(PetStage));
+    pipeline.push(Box::new(WaterBalanceStage));
+    pipeline.push(Box::new(SoilMoistureStage));
+    pipeline.push(Box::new(BiomeWeightsStage));
+    pipeline.push(Box::new(HexProjectionStage));
+    // Tail hook — runs all 8 invariants.
     pipeline.push(Box::new(ValidationStage));
 
     pipeline.run(&mut world).context("pipeline.run")?;
@@ -495,8 +509,8 @@ fn run_sprint_1a_pipeline(
         .map(|c| c.land_cell_count)
         .unwrap_or(0);
     info!(
-        stages = 9,
-        land_cells, "Sprint 1A pipeline completed (all invariants passed)"
+        stages = 17,
+        land_cells, "Sprint 1B pipeline completed (all 8 invariants passed)"
     );
 
     Ok(world)

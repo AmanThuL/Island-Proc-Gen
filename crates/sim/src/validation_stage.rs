@@ -108,6 +108,56 @@ mod tests {
             .expect("full Sprint 1A pipeline must pass all four invariants");
     }
 
+    /// End-to-end Sprint 1B integration test: run all 16 stages + tail
+    /// validation on the synthetic volcanic preset, and assert every
+    /// Sprint 1B field is populated. If any climate/ecology/hex stage
+    /// errors out on a real `TopographyStage` output, this test fires
+    /// immediately at the pipeline boundary.
+    #[test]
+    fn full_sprint_1b_pipeline_passes_all_invariants() {
+        use crate::{
+            BiomeWeightsStage, FogLikelihoodStage, HexProjectionStage, PetStage,
+            PrecipitationStage, SoilMoistureStage, TemperatureStage, WaterBalanceStage,
+        };
+        let mut world = WorldState::new(Seed(42), volcanic_preset(), Resolution::new(64, 64));
+
+        let mut pipeline = SimulationPipeline::new();
+        pipeline.push(Box::new(TopographyStage));
+        pipeline.push(Box::new(CoastMaskStage));
+        pipeline.push(Box::new(PitFillStage));
+        pipeline.push(Box::new(DerivedGeomorphStage));
+        pipeline.push(Box::new(FlowRoutingStage));
+        pipeline.push(Box::new(AccumulationStage));
+        pipeline.push(Box::new(BasinsStage));
+        pipeline.push(Box::new(RiverExtractionStage));
+        pipeline.push(Box::new(TemperatureStage));
+        pipeline.push(Box::new(PrecipitationStage));
+        pipeline.push(Box::new(FogLikelihoodStage));
+        pipeline.push(Box::new(PetStage));
+        pipeline.push(Box::new(WaterBalanceStage));
+        pipeline.push(Box::new(SoilMoistureStage));
+        pipeline.push(Box::new(BiomeWeightsStage));
+        pipeline.push(Box::new(HexProjectionStage));
+        pipeline.push(Box::new(ValidationStage));
+
+        pipeline
+            .run(&mut world)
+            .expect("full Sprint 1B pipeline must pass all eight invariants");
+
+        // Every Sprint 1B output field is populated.
+        assert!(world.derived.curvature.is_some());
+        assert!(world.baked.temperature.is_some());
+        assert!(world.baked.precipitation.is_some());
+        assert!(world.derived.fog_likelihood.is_some());
+        assert!(world.derived.pet.is_some());
+        assert!(world.derived.et.is_some());
+        assert!(world.derived.runoff.is_some());
+        assert!(world.baked.soil_moisture.is_some());
+        assert!(world.baked.biome_weights.is_some());
+        assert!(world.derived.hex_grid.is_some());
+        assert!(world.derived.hex_attrs.is_some());
+    }
+
     #[test]
     fn validation_stage_errors_on_empty_world() {
         let mut world = WorldState::new(Seed(0), volcanic_preset(), Resolution::new(16, 16));
