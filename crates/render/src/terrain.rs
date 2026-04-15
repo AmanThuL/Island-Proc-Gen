@@ -251,7 +251,7 @@ impl TerrainRenderer {
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("terrain_bgl"),
             entries: &[
-                uniform_entry(0, wgpu::ShaderStages::VERTEX), // View
+                uniform_entry(0, wgpu::ShaderStages::VERTEX),   // View
                 uniform_entry(1, wgpu::ShaderStages::FRAGMENT), // Palette
                 uniform_entry(2, wgpu::ShaderStages::FRAGMENT), // LightRig (+ sea_level)
                 wgpu::BindGroupLayoutEntry {
@@ -526,7 +526,11 @@ pub fn build_terrain_mesh(z_filled: &island_core::field::ScalarField2D<f32>) -> 
             let normal = [nx / len, ny / len, nz / len];
 
             vertices.push(TerrainVertex {
-                position: [x as f32 * inv_w, z_filled.get(x as u32, y as u32), y as f32 * inv_h],
+                position: [
+                    x as f32 * inv_w,
+                    z_filled.get(x as u32, y as u32),
+                    y as f32 * inv_h,
+                ],
                 normal,
                 uv: [x as f32 * inv_w, y as f32 * inv_h],
             });
@@ -635,7 +639,10 @@ mod tests {
         for v in &mesh.vertices {
             let [nx, ny, nz] = v.normal;
             let len = (nx * nx + ny * ny + nz * nz).sqrt();
-            assert!((len - 1.0).abs() < 1e-5, "normal not unit-length: len={len}");
+            assert!(
+                (len - 1.0).abs() < 1e-5,
+                "normal not unit-length: len={len}"
+            );
             assert!(ny > 0.99, "normal does not point up: ny={ny}");
         }
     }
@@ -652,8 +659,14 @@ mod tests {
                 let v = &mesh.vertices[y * w + x];
                 let [nx, ny, nz] = v.normal;
                 let len = (nx * nx + ny * ny + nz * nz).sqrt();
-                assert!((len - 1.0).abs() < 1e-5, "normal not unit-length at ({x},{y})");
-                assert!(nx < 0.0, "interior normal should tilt toward -x (downhill opposite), got nx={nx} at ({x},{y})");
+                assert!(
+                    (len - 1.0).abs() < 1e-5,
+                    "normal not unit-length at ({x},{y})"
+                );
+                assert!(
+                    nx < 0.0,
+                    "interior normal should tilt toward -x (downhill opposite), got nx={nx} at ({x},{y})"
+                );
             }
         }
     }
@@ -667,7 +680,11 @@ mod tests {
 
         // vertex (0, 0) → uv [0, 0]
         let uv_00 = mesh.vertices[0].uv;
-        assert!((uv_00[0]).abs() < eps && (uv_00[1]).abs() < eps, "uv(0,0) wrong: {:?}", uv_00);
+        assert!(
+            (uv_00[0]).abs() < eps && (uv_00[1]).abs() < eps,
+            "uv(0,0) wrong: {:?}",
+            uv_00
+        );
 
         // vertex (3, 3) → uv [1, 1]
         let uv_33 = mesh.vertices[3 * w + 3].uv;
@@ -693,7 +710,10 @@ mod tests {
         let mesh = build_terrain_mesh(&field);
         let vcount = mesh.vertices.len();
         for &idx in &mesh.indices {
-            assert!((idx as usize) < vcount, "index {idx} out of range (vcount={vcount})");
+            assert!(
+                (idx as usize) < vcount,
+                "index {idx} out of range (vcount={vcount})"
+            );
         }
     }
 
@@ -703,7 +723,11 @@ mod tests {
         assert_eq!(mesh.vertex_count(), 4);
         assert_eq!(mesh.triangle_count(), 2);
         for v in &mesh.vertices {
-            assert!((v.position[1] - 0.3).abs() < 1e-6, "y != 0.3: {}", v.position[1]);
+            assert!(
+                (v.position[1] - 0.3).abs() < 1e-6,
+                "y != 0.3: {}",
+                v.position[1]
+            );
         }
     }
 

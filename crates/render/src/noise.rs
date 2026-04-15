@@ -30,7 +30,9 @@ pub enum NoiseLoadError {
         expected: u32,
     },
 
-    #[error("blue noise PNG at {path} is not 8-bit (color_type={color_type:?}, bit_depth={bit_depth:?})")]
+    #[error(
+        "blue noise PNG at {path} is not 8-bit (color_type={color_type:?}, bit_depth={bit_depth:?})"
+    )]
     WrongFormat {
         path: PathBuf,
         color_type: png::ColorType,
@@ -79,10 +81,12 @@ pub(crate) fn try_load_png(path: &Path, size: u32) -> Result<BlueNoiseTexture, N
         source: png::DecodingError::IoError(e),
     })?;
     let decoder = png::Decoder::new(file);
-    let mut reader = decoder.read_info().map_err(|e| NoiseLoadError::DecodeFailed {
-        path: path.to_path_buf(),
-        source: e,
-    })?;
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| NoiseLoadError::DecodeFailed {
+            path: path.to_path_buf(),
+            source: e,
+        })?;
 
     // Accept 8-bit Grayscale / Rgb / Rgba — the Calinou LDR_LLL1_* textures
     // are encoded as RGBA but replicate L across R=G=B, so taking the R
@@ -258,18 +262,22 @@ mod tests {
         write_grayscale_png(tmp.path(), 32, 32, &data);
         let err = try_load_png(tmp.path(), 64).unwrap_err();
         assert!(
-            matches!(err, NoiseLoadError::WrongSize { got: (32, 32), expected: 64, .. }),
+            matches!(
+                err,
+                NoiseLoadError::WrongSize {
+                    got: (32, 32),
+                    expected: 64,
+                    ..
+                }
+            ),
             "unexpected error variant: {err}"
         );
     }
 
     #[test]
     fn missing_file_returns_decode_failed() {
-        let err = try_load_png(
-            Path::new("/tmp/definitely_not_a_blue_noise_file.png"),
-            64,
-        )
-        .unwrap_err();
+        let err =
+            try_load_png(Path::new("/tmp/definitely_not_a_blue_noise_file.png"), 64).unwrap_err();
         assert!(
             matches!(err, NoiseLoadError::DecodeFailed { .. }),
             "expected DecodeFailed, got: {err}"

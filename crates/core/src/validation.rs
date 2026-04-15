@@ -5,14 +5,16 @@
 //! None of these functions panic — a missing precondition field returns
 //! `Err(MissingPrecondition)` instead.
 
-use crate::neighborhood::{neighbour_offsets, Neighborhood};
+use crate::neighborhood::{Neighborhood, neighbour_offsets};
 use crate::world::{D8_OFFSETS, FLOW_DIR_SINK, WorldState};
 
 // ─── error type ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, thiserror::Error)]
 pub enum ValidationError {
-    #[error("river termination: cell ({x}, {y}) in river_mask cannot reach a coast cell along flow_dir")]
+    #[error(
+        "river termination: cell ({x}, {y}) in river_mask cannot reach a coast cell along flow_dir"
+    )]
     RiverDoesNotTerminate { x: u32, y: u32 },
 
     #[error("river termination: river_mask contains cell ({x}, {y}) that is sea")]
@@ -25,7 +27,12 @@ pub enum ValidationError {
     AccumulationNotMonotone { x: u32, y: u32, a_p: f32, a_q: f32 },
 
     #[error("coastline: cell ({x}, {y}) with z={z} below sea_level={sea_level} is not marked sea")]
-    CoastlineBelowSeaLevelNotSea { x: u32, y: u32, z: f32, sea_level: f32 },
+    CoastlineBelowSeaLevelNotSea {
+        x: u32,
+        y: u32,
+        z: f32,
+        sea_level: f32,
+    },
 
     #[error("coastline: cell ({x}, {y}) is coast but has no sea neighbour")]
     CoastlineCoastWithoutSeaNeighbour { x: u32, y: u32 },
@@ -38,23 +45,31 @@ pub enum ValidationError {
 
 /// Every river cell must be able to reach a coast or sea cell along `flow_dir`.
 pub fn river_termination(world: &WorldState) -> Result<(), ValidationError> {
-    let river_mask = world
-        .derived
-        .river_mask
-        .as_ref()
-        .ok_or(ValidationError::MissingPrecondition { field: "derived.river_mask" })?;
+    let river_mask =
+        world
+            .derived
+            .river_mask
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "derived.river_mask",
+            })?;
 
-    let coast_mask = world
-        .derived
-        .coast_mask
-        .as_ref()
-        .ok_or(ValidationError::MissingPrecondition { field: "derived.coast_mask" })?;
+    let coast_mask =
+        world
+            .derived
+            .coast_mask
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "derived.coast_mask",
+            })?;
 
     let flow_dir = world
         .derived
         .flow_dir
         .as_ref()
-        .ok_or(ValidationError::MissingPrecondition { field: "derived.flow_dir" })?;
+        .ok_or(ValidationError::MissingPrecondition {
+            field: "derived.flow_dir",
+        })?;
 
     let w = river_mask.width as usize;
     let h = river_mask.height as usize;
@@ -80,9 +95,7 @@ pub fn river_termination(world: &WorldState) -> Result<(), ValidationError> {
             for _ in 0..=max_steps {
                 let (cxu, cyu) = (cx as u32, cy as u32);
 
-                if coast_mask.is_coast.get(cxu, cyu) == 1
-                    || coast_mask.is_sea.get(cxu, cyu) == 1
-                {
+                if coast_mask.is_coast.get(cxu, cyu) == 1 || coast_mask.is_sea.get(cxu, cyu) == 1 {
                     ok = true;
                     break;
                 }
@@ -120,7 +133,9 @@ pub fn basin_partition_dag(world: &WorldState) -> Result<(), ValidationError> {
         .derived
         .flow_dir
         .as_ref()
-        .ok_or(ValidationError::MissingPrecondition { field: "derived.flow_dir" })?;
+        .ok_or(ValidationError::MissingPrecondition {
+            field: "derived.flow_dir",
+        })?;
 
     let w = flow_dir.width as usize;
     let h = flow_dir.height as usize;
@@ -186,17 +201,22 @@ pub fn basin_partition_dag(world: &WorldState) -> Result<(), ValidationError> {
 
 /// `A[down(p)] >= A[p]` for every non-sink cell p.
 pub fn accumulation_monotone(world: &WorldState) -> Result<(), ValidationError> {
-    let accumulation = world
-        .derived
-        .accumulation
-        .as_ref()
-        .ok_or(ValidationError::MissingPrecondition { field: "derived.accumulation" })?;
+    let accumulation =
+        world
+            .derived
+            .accumulation
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "derived.accumulation",
+            })?;
 
     let flow_dir = world
         .derived
         .flow_dir
         .as_ref()
-        .ok_or(ValidationError::MissingPrecondition { field: "derived.flow_dir" })?;
+        .ok_or(ValidationError::MissingPrecondition {
+            field: "derived.flow_dir",
+        })?;
 
     let w = flow_dir.width as usize;
     let h = flow_dir.height as usize;
@@ -232,17 +252,23 @@ pub fn accumulation_monotone(world: &WorldState) -> Result<(), ValidationError> 
 
 /// Two sub-checks: z < sea_level → is_sea; is_coast → has at least one Von4 sea neighbour.
 pub fn coastline_consistency(world: &WorldState) -> Result<(), ValidationError> {
-    let height = world
-        .authoritative
-        .height
-        .as_ref()
-        .ok_or(ValidationError::MissingPrecondition { field: "authoritative.height" })?;
+    let height =
+        world
+            .authoritative
+            .height
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "authoritative.height",
+            })?;
 
-    let coast_mask = world
-        .derived
-        .coast_mask
-        .as_ref()
-        .ok_or(ValidationError::MissingPrecondition { field: "derived.coast_mask" })?;
+    let coast_mask =
+        world
+            .derived
+            .coast_mask
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "derived.coast_mask",
+            })?;
 
     let sea_level = world.preset.sea_level;
     let w = height.width as usize;
@@ -265,15 +291,17 @@ pub fn coastline_consistency(world: &WorldState) -> Result<(), ValidationError> 
 
             // Sub-check 2: coast cell must have at least one Von4 sea neighbour.
             if coast_mask.is_coast.get(xu, yu) == 1 {
-                let has_sea_nbr = neighbour_offsets(Neighborhood::Von4).iter().any(|&(dx, dy)| {
-                    let nx = x as i32 + dx;
-                    let ny = y as i32 + dy;
-                    nx >= 0
-                        && nx < w as i32
-                        && ny >= 0
-                        && ny < h as i32
-                        && coast_mask.is_sea.get(nx as u32, ny as u32) == 1
-                });
+                let has_sea_nbr = neighbour_offsets(Neighborhood::Von4)
+                    .iter()
+                    .any(|&(dx, dy)| {
+                        let nx = x as i32 + dx;
+                        let ny = y as i32 + dy;
+                        nx >= 0
+                            && nx < w as i32
+                            && ny >= 0
+                            && ny < h as i32
+                            && coast_mask.is_sea.get(nx as u32, ny as u32) == 1
+                    });
                 if !has_sea_nbr {
                     return Err(ValidationError::CoastlineCoastWithoutSeaNeighbour {
                         x: xu,
@@ -326,7 +354,13 @@ mod tests {
         sea.data = is_sea;
         let mut coast = MaskField2D::new(w, h);
         coast.data = is_coast;
-        CoastMask { is_land: land, is_sea: sea, is_coast: coast, land_cell_count, river_mouth_mask: None }
+        CoastMask {
+            is_land: land,
+            is_sea: sea,
+            is_coast: coast,
+            land_cell_count,
+            river_mouth_mask: None,
+        }
     }
 
     // ── 1: river_termination happy path ──────────────────────────────────────
@@ -354,9 +388,12 @@ mod tests {
         let mut is_sea = vec![0u8; n];
         let mut is_coast = vec![0u8; n];
 
-        is_land[idx(2, 0)] = 0; is_sea[idx(2, 0)] = 1;
-        is_land[idx(2, 2)] = 0; is_sea[idx(2, 2)] = 1;
-        is_land[idx(2, 1)] = 1; is_coast[idx(2, 1)] = 1;
+        is_land[idx(2, 0)] = 0;
+        is_sea[idx(2, 0)] = 1;
+        is_land[idx(2, 2)] = 0;
+        is_sea[idx(2, 2)] = 1;
+        is_land[idx(2, 1)] = 1;
+        is_coast[idx(2, 1)] = 1;
 
         let mut flow_dir = ScalarField2D::<u8>::new(w, h);
         for y in 0..h {
@@ -518,7 +555,8 @@ mod tests {
         let mut is_sea = vec![0u8; n];
         let mut is_coast = vec![0u8; n];
         is_sea[0] = 1;
-        is_land[1] = 1; is_coast[1] = 1;
+        is_land[1] = 1;
+        is_coast[1] = 1;
         is_land[2] = 1;
 
         let mut height = ScalarField2D::<f32>::new(w, h);
@@ -585,7 +623,10 @@ mod tests {
 
         let err = coastline_consistency(&world).unwrap_err();
         assert!(
-            matches!(err, ValidationError::CoastlineCoastWithoutSeaNeighbour { x: 1, y: 0 }),
+            matches!(
+                err,
+                ValidationError::CoastlineCoastWithoutSeaNeighbour { x: 1, y: 0 }
+            ),
             "expected CoastlineCoastWithoutSeaNeighbour at (1,0), got: {err}"
         );
     }

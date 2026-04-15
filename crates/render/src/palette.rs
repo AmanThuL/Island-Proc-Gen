@@ -271,8 +271,14 @@ mod tests {
     #[test]
     fn canonical_constants_have_opaque_alpha() {
         let colors = [
-            DEEP_WATER, SHALLOW_WATER, LOWLAND, MIDLAND,
-            HIGHLAND, RIVER, BASIN_ACCENT, OVERLAY_NEUTRAL,
+            DEEP_WATER,
+            SHALLOW_WATER,
+            LOWLAND,
+            MIDLAND,
+            HIGHLAND,
+            RIVER,
+            BASIN_ACCENT,
+            OVERLAY_NEUTRAL,
         ];
         for c in &colors {
             assert_eq!(c[3], 1.0, "expected alpha == 1.0, got {:?}", c);
@@ -282,8 +288,14 @@ mod tests {
     #[test]
     fn canonical_constants_in_unit_range() {
         let colors = [
-            DEEP_WATER, SHALLOW_WATER, LOWLAND, MIDLAND,
-            HIGHLAND, RIVER, BASIN_ACCENT, OVERLAY_NEUTRAL,
+            DEEP_WATER,
+            SHALLOW_WATER,
+            LOWLAND,
+            MIDLAND,
+            HIGHLAND,
+            RIVER,
+            BASIN_ACCENT,
+            OVERLAY_NEUTRAL,
         ];
         for c in &colors {
             for &ch in c {
@@ -308,13 +320,13 @@ mod tests {
     #[test]
     fn canonical_constants_match_palette_reference() {
         let checks: [(&str, [f32; 4], [u8; 3]); 8] = [
-            ("DEEP_WATER",      DEEP_WATER,      [0x1C, 0x41, 0x6B]),
-            ("SHALLOW_WATER",   SHALLOW_WATER,   [0x59, 0x93, 0x94]),
-            ("LOWLAND",         LOWLAND,         [0x2E, 0x5A, 0x37]),
-            ("MIDLAND",         MIDLAND,         [0x6C, 0x75, 0x4A]),
-            ("HIGHLAND",        HIGHLAND,        [0x9E, 0x9C, 0x8F]),
-            ("RIVER",           RIVER,           [0x80, 0xBA, 0xDF]),
-            ("BASIN_ACCENT",    BASIN_ACCENT,    [0x59, 0x65, 0x95]),
+            ("DEEP_WATER", DEEP_WATER, [0x1C, 0x41, 0x6B]),
+            ("SHALLOW_WATER", SHALLOW_WATER, [0x59, 0x93, 0x94]),
+            ("LOWLAND", LOWLAND, [0x2E, 0x5A, 0x37]),
+            ("MIDLAND", MIDLAND, [0x6C, 0x75, 0x4A]),
+            ("HIGHLAND", HIGHLAND, [0x9E, 0x9C, 0x8F]),
+            ("RIVER", RIVER, [0x80, 0xBA, 0xDF]),
+            ("BASIN_ACCENT", BASIN_ACCENT, [0x59, 0x65, 0x95]),
             ("OVERLAY_NEUTRAL", OVERLAY_NEUTRAL, [0x88, 0x88, 0x8A]),
         ];
         for (name, rgba, expected) in checks {
@@ -387,9 +399,24 @@ mod tests {
         let eps = 1e-3_f32;
         // t=0 → LOWLAND, t=0.5 → MIDLAND, t=1 → HIGHLAND (exact endpoints)
         for i in 0..4 {
-            assert!((lo[i] - LOWLAND[i]).abs() < eps, "lo[{i}]: {} vs {}", lo[i], LOWLAND[i]);
-            assert!((mid[i] - MIDLAND[i]).abs() < eps, "mid[{i}]: {} vs {}", mid[i], MIDLAND[i]);
-            assert!((hi[i] - HIGHLAND[i]).abs() < eps, "hi[{i}]: {} vs {}", hi[i], HIGHLAND[i]);
+            assert!(
+                (lo[i] - LOWLAND[i]).abs() < eps,
+                "lo[{i}]: {} vs {}",
+                lo[i],
+                LOWLAND[i]
+            );
+            assert!(
+                (mid[i] - MIDLAND[i]).abs() < eps,
+                "mid[{i}]: {} vs {}",
+                mid[i],
+                MIDLAND[i]
+            );
+            assert!(
+                (hi[i] - HIGHLAND[i]).abs() < eps,
+                "hi[{i}]: {} vs {}",
+                hi[i],
+                HIGHLAND[i]
+            );
         }
     }
 
@@ -414,7 +441,10 @@ mod tests {
         // And b is strictly closer to HIGHLAND than a is.
         let da: f32 = (0..3).map(|i| (a[i] - HIGHLAND[i]).abs()).sum();
         let db: f32 = (0..3).map(|i| (b[i] - HIGHLAND[i]).abs()).sum();
-        assert!(db < da, "t=0.9 must be closer to HIGHLAND than t=0.7 ({db} < {da})");
+        assert!(
+            db < da,
+            "t=0.9 must be closer to HIGHLAND than t=0.7 ({db} < {da})"
+        );
     }
 
     // ── BinaryBlue ────────────────────────────────────────────────────────────

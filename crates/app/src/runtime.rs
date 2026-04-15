@@ -98,7 +98,10 @@ impl Runtime {
         // ── Window ────────────────────────────────────────────────────────────
         let attrs = WindowAttributes::default()
             .with_title("Island Proc-Gen — Sprint 1A")
-            .with_inner_size(LogicalSize::new(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT));
+            .with_inner_size(LogicalSize::new(
+                INITIAL_WINDOW_WIDTH,
+                INITIAL_WINDOW_HEIGHT,
+            ));
         let window = Arc::new(event_loop.create_window(attrs).context("create_window")?);
 
         // ── GPU ───────────────────────────────────────────────────────────────
@@ -489,8 +492,7 @@ fn run_sprint_1a_pipeline(
         .unwrap_or(0);
     info!(
         stages = 9,
-        land_cells,
-        "Sprint 1A pipeline completed (all invariants passed)"
+        land_cells, "Sprint 1A pipeline completed (all invariants passed)"
     );
 
     Ok(world)

@@ -24,11 +24,11 @@ impl SimulationStage for CoastMaskStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
-        let height = world
-            .authoritative
-            .height
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("CoastMaskStage: authoritative.height is None (TopographyStage must run first)"))?;
+        let height = world.authoritative.height.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "CoastMaskStage: authoritative.height is None (TopographyStage must run first)"
+            )
+        })?;
 
         let w = height.width;
         let h = height.height;
@@ -64,7 +64,10 @@ impl SimulationStage for CoastMaskStage {
                     let nx = ix as i32 + dx;
                     let ny = iy as i32 + dy;
                     // out-of-bounds → not sea → no coast contribution
-                    if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32
+                    if nx >= 0
+                        && nx < w as i32
+                        && ny >= 0
+                        && ny < h as i32
                         && is_sea.get(nx as u32, ny as u32) == 1
                     {
                         has_sea_neighbour = true;
@@ -179,7 +182,9 @@ mod tests {
     #[test]
     fn land_sea_split_on_synthetic_heightfield() {
         let mut world = world_with_height(make_4x4_field(), 0.5);
-        CoastMaskStage.run(&mut world).expect("CoastMaskStage failed");
+        CoastMaskStage
+            .run(&mut world)
+            .expect("CoastMaskStage failed");
 
         let cm = world.derived.coast_mask.as_ref().unwrap();
 
@@ -213,13 +218,18 @@ mod tests {
     #[test]
     fn land_cell_count_matches_popcount() {
         let mut world = world_with_height(make_4x4_field(), 0.5);
-        CoastMaskStage.run(&mut world).expect("CoastMaskStage failed");
+        CoastMaskStage
+            .run(&mut world)
+            .expect("CoastMaskStage failed");
 
         let cm = world.derived.coast_mask.as_ref().unwrap();
         assert_eq!(cm.land_cell_count, 4, "expected 4 land cells");
 
         let popcount = cm.is_land.data.iter().filter(|&&v| v == 1).count() as u32;
-        assert_eq!(cm.land_cell_count, popcount, "land_cell_count must equal popcount");
+        assert_eq!(
+            cm.land_cell_count, popcount,
+            "land_cell_count must equal popcount"
+        );
     }
 
     // 3. Coast ring is one cell thick: interior cell (2,2) is NOT coast in a 5×5
@@ -236,7 +246,9 @@ mod tests {
         }
 
         let mut world = world_with_height(f, 0.5);
-        CoastMaskStage.run(&mut world).expect("CoastMaskStage failed");
+        CoastMaskStage
+            .run(&mut world)
+            .expect("CoastMaskStage failed");
 
         let cm = world.derived.coast_mask.as_ref().unwrap();
 
@@ -269,7 +281,9 @@ mod tests {
         }
 
         let mut world = world_with_height(f, 0.4);
-        CoastMaskStage.run(&mut world).expect("CoastMaskStage failed");
+        CoastMaskStage
+            .run(&mut world)
+            .expect("CoastMaskStage failed");
 
         let cm = world.derived.coast_mask.as_ref().unwrap();
         let sn = world.derived.shoreline_normal.as_ref().unwrap();
@@ -310,7 +324,9 @@ mod tests {
         }
 
         let mut world = world_with_height(f, 0.4);
-        CoastMaskStage.run(&mut world).expect("CoastMaskStage failed");
+        CoastMaskStage
+            .run(&mut world)
+            .expect("CoastMaskStage failed");
 
         let cm = world.derived.coast_mask.as_ref().unwrap();
         let sn = world.derived.shoreline_normal.as_ref().unwrap();
@@ -401,8 +417,7 @@ mod tests {
     // 7. Stage returns Err when authoritative.height is None.
     #[test]
     fn stage_errors_when_height_missing() {
-        let mut world =
-            WorldState::new(Seed(0), base_preset(0.5), Resolution::new(16, 16));
+        let mut world = WorldState::new(Seed(0), base_preset(0.5), Resolution::new(16, 16));
         // height is None by default
         let result = CoastMaskStage.run(&mut world);
         assert!(result.is_err(), "expected Err when height is None");

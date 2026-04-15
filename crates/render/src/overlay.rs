@@ -225,9 +225,11 @@ pub(crate) fn resolve_scalar_source<'w>(
 ) -> Option<ResolvedField<'w>> {
     use OverlaySource::*;
     match source {
-        ScalarDerived("initial_uplift") => {
-            world.derived.initial_uplift.as_ref().map(ResolvedField::F32)
-        }
+        ScalarDerived("initial_uplift") => world
+            .derived
+            .initial_uplift
+            .as_ref()
+            .map(ResolvedField::F32),
         ScalarDerived("z_filled") => world.derived.z_filled.as_ref().map(ResolvedField::F32),
         ScalarDerived("slope") => world.derived.slope.as_ref().map(ResolvedField::F32),
         ScalarDerived("accumulation") => {

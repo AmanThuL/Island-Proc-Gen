@@ -30,11 +30,11 @@ impl SimulationStage for AccumulationStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
-        let flow_dir = world
-            .derived
-            .flow_dir
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("AccumulationStage: derived.flow_dir is None (FlowRoutingStage must run first)"))?;
+        let flow_dir = world.derived.flow_dir.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "AccumulationStage: derived.flow_dir is None (FlowRoutingStage must run first)"
+            )
+        })?;
 
         let w = flow_dir.width as usize;
         let h = flow_dir.height as usize;
@@ -65,8 +65,7 @@ impl SimulationStage for AccumulationStage {
             let y = p as usize / w;
             let dir = flow_dir.get(x as u32, y as u32);
 
-            let Some((qx, qy)) =
-                downstream_cell(x as i32, y as i32, dir, w as i32, h as i32)
+            let Some((qx, qy)) = downstream_cell(x as i32, y as i32, dir, w as i32, h as i32)
             else {
                 // Sink — no downstream to propagate to.
                 continue;
@@ -124,7 +123,7 @@ mod tests {
 
     use super::AccumulationStage;
     use crate::geomorph::{CoastMaskStage, PitFillStage, TopographyStage};
-    use crate::hydro::{FlowRoutingStage, FLOW_DIR_SINK};
+    use crate::hydro::{FLOW_DIR_SINK, FlowRoutingStage};
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
@@ -148,7 +147,9 @@ mod tests {
         CoastMaskStage.run(&mut world).expect("CoastMaskStage");
         PitFillStage.run(&mut world).expect("PitFillStage");
         FlowRoutingStage.run(&mut world).expect("FlowRoutingStage");
-        AccumulationStage.run(&mut world).expect("AccumulationStage");
+        AccumulationStage
+            .run(&mut world)
+            .expect("AccumulationStage");
         world
     }
 
@@ -184,8 +185,8 @@ mod tests {
 
         // Build flow_dir manually with explicit direction codes.
         let dirs: [[u8; 3]; 3] = [
-            [7, 6, 6],       // y=0: SE, S, S
-            [7, 7, 6],       // y=1: SE, SE, S
+            [7, 6, 6],             // y=0: SE, S, S
+            [7, 7, 6],             // y=1: SE, SE, S
             [0, 0, FLOW_DIR_SINK], // y=2: E, E, SINK
         ];
         let mut flow_dir = ScalarField2D::<u8>::new(w, h);
@@ -198,7 +199,9 @@ mod tests {
         let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(w, h));
         world.derived.flow_dir = Some(flow_dir);
 
-        AccumulationStage.run(&mut world).expect("AccumulationStage failed");
+        AccumulationStage
+            .run(&mut world)
+            .expect("AccumulationStage failed");
 
         let acc = world.derived.accumulation.as_ref().unwrap();
 

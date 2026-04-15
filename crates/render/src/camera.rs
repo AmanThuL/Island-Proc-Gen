@@ -40,7 +40,7 @@ pub struct CameraPreset {
 // the terrain vertically. See Pass 3.1 rationale in PROGRESS.md.
 pub const PRESET_HERO: CameraPreset = CameraPreset {
     id: CameraPresetId::Hero,
-    yaw: std::f32::consts::FRAC_PI_4,  // 45° — classic 3/4 angle
+    yaw: std::f32::consts::FRAC_PI_4,   // 45° — classic 3/4 angle
     pitch: std::f32::consts::FRAC_PI_6, // 30°
     // 5.0 × 0.5 = 2.5 world units → eye.y = 1.25, ~0.25 above the peak.
     distance_factor: 5.0,
@@ -164,7 +164,10 @@ mod tests {
         let small_cols = mat_small.to_cols_array();
         let large_cols = mat_large.to_cols_array();
         assert!(
-            small_cols.iter().zip(large_cols.iter()).any(|(a, b)| a != b),
+            small_cols
+                .iter()
+                .zip(large_cols.iter())
+                .any(|(a, b)| a != b),
             "matrices for different island radii must differ"
         );
     }

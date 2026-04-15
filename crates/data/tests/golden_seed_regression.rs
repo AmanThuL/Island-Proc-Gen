@@ -24,11 +24,7 @@ const RESOLUTION: u32 = 128; // smaller than production 256 to keep tests fast
 
 fn run_pipeline(seed: u64, preset_name: &str) -> WorldState {
     let preset = data::presets::load_preset(preset_name).expect("preset must exist");
-    let mut world = WorldState::new(
-        Seed(seed),
-        preset,
-        Resolution::new(RESOLUTION, RESOLUTION),
-    );
+    let mut world = WorldState::new(Seed(seed), preset, Resolution::new(RESOLUTION, RESOLUTION));
     let mut pipeline = SimulationPipeline::new();
     pipeline.push(Box::new(TopographyStage));
     pipeline.push(Box::new(CoastMaskStage));
@@ -63,7 +59,11 @@ fn compute_metrics(world: &WorldState) -> SummaryMetrics {
         .map(|m| m.data.iter().filter(|&&v| v == 1).count() as u32)
         .unwrap_or(0);
 
-    let max_elevation = height.data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let max_elevation = height
+        .data
+        .iter()
+        .cloned()
+        .fold(f32::NEG_INFINITY, f32::max);
     let max_elevation_filled = z_filled
         .data
         .iter()

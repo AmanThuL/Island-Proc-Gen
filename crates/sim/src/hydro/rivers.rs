@@ -6,7 +6,7 @@
 use std::collections::VecDeque;
 
 use island_core::field::ScalarField2D;
-use island_core::neighborhood::{RIVER_COAST_CONTACT, RIVER_CC_NEIGHBORHOOD};
+use island_core::neighborhood::{RIVER_CC_NEIGHBORHOOD, RIVER_COAST_CONTACT};
 use island_core::pipeline::SimulationStage;
 use island_core::world::WorldState;
 
@@ -35,7 +35,10 @@ fn has_coast_neighbour(
     for &(dx, dy) in offsets {
         let nx = x as i32 + dx;
         let ny = y as i32 + dy;
-        if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32
+        if nx >= 0
+            && nx < w as i32
+            && ny >= 0
+            && ny < h as i32
             && is_coast.get(nx as u32, ny as u32) == 1
         {
             return true;
@@ -194,12 +197,7 @@ impl SimulationStage for RiverExtractionStage {
         }
 
         world.derived.river_mask = Some(river_mask);
-        world
-            .derived
-            .coast_mask
-            .as_mut()
-            .unwrap()
-            .river_mouth_mask = Some(river_mouth_mask);
+        world.derived.coast_mask.as_mut().unwrap().river_mouth_mask = Some(river_mouth_mask);
 
         Ok(())
     }
@@ -240,9 +238,13 @@ mod tests {
         CoastMaskStage.run(&mut world).expect("CoastMaskStage");
         PitFillStage.run(&mut world).expect("PitFillStage");
         FlowRoutingStage.run(&mut world).expect("FlowRoutingStage");
-        AccumulationStage.run(&mut world).expect("AccumulationStage");
+        AccumulationStage
+            .run(&mut world)
+            .expect("AccumulationStage");
         BasinsStage.run(&mut world).expect("BasinsStage");
-        RiverExtractionStage.run(&mut world).expect("RiverExtractionStage");
+        RiverExtractionStage
+            .run(&mut world)
+            .expect("RiverExtractionStage");
         world
     }
 
@@ -294,7 +296,8 @@ mod tests {
 
         let land_cell_count = is_land_data.iter().map(|&v| v as u32).sum::<u32>();
         let coast_mask = make_coast_mask(
-            w, h,
+            w,
+            h,
             is_land_data,
             is_sea_data,
             is_coast_data,
@@ -400,7 +403,8 @@ mod tests {
         accum.set(3, 3, 1.0);
 
         let coast_mask = make_coast_mask(
-            w, h,
+            w,
+            h,
             is_land_data,
             is_sea_data,
             is_coast_data,
@@ -463,7 +467,8 @@ mod tests {
         accum.set(2, 1, 1.0);
 
         let coast_mask = make_coast_mask(
-            w, h,
+            w,
+            h,
             is_land_data,
             is_sea_data,
             is_coast_data,
@@ -552,7 +557,8 @@ mod tests {
 
         let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(w, h));
         world.derived.coast_mask = Some(make_coast_mask(
-            w, h,
+            w,
+            h,
             vec![1u8; n],
             vec![0u8; n],
             vec![0u8; n],

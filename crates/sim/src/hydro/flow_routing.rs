@@ -37,17 +37,17 @@ impl SimulationStage for FlowRoutingStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
-        let z_filled = world
-            .derived
-            .z_filled
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("FlowRoutingStage: derived.z_filled is None (PitFillStage must run first)"))?;
+        let z_filled = world.derived.z_filled.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "FlowRoutingStage: derived.z_filled is None (PitFillStage must run first)"
+            )
+        })?;
 
-        let coast_mask = world
-            .derived
-            .coast_mask
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("FlowRoutingStage: derived.coast_mask is None (CoastMaskStage must run first)"))?;
+        let coast_mask = world.derived.coast_mask.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "FlowRoutingStage: derived.coast_mask is None (CoastMaskStage must run first)"
+            )
+        })?;
 
         let w = z_filled.width as usize;
         let h = z_filled.height as usize;
@@ -69,9 +69,7 @@ impl SimulationStage for FlowRoutingStage {
                 let yu = y as u32;
 
                 // Coast and sea are outlets — they drain flow, not route it.
-                if coast_mask.is_coast.get(xu, yu) == 1
-                    || coast_mask.is_sea.get(xu, yu) == 1
-                {
+                if coast_mask.is_coast.get(xu, yu) == 1 || coast_mask.is_sea.get(xu, yu) == 1 {
                     flow_dir.set(xu, yu, FLOW_DIR_SINK);
                     continue;
                 }
@@ -203,7 +201,9 @@ mod tests {
         world.derived.z_filled = Some(z_filled);
         world.derived.coast_mask = Some(coast_mask);
 
-        FlowRoutingStage.run(&mut world).expect("FlowRoutingStage failed");
+        FlowRoutingStage
+            .run(&mut world)
+            .expect("FlowRoutingStage failed");
 
         let fd = world.derived.flow_dir.as_ref().unwrap();
 

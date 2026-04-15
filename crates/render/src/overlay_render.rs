@@ -349,8 +349,16 @@ pub fn render_overlay_to_gpu(
     // Collect per-cell values as f32 plus width/height.
     let (width, height, values) = match resolve_scalar_source(world, desc.source)? {
         ResolvedField::F32(f) => (f.width, f.height, f.data.to_vec()),
-        ResolvedField::U32(f) => (f.width, f.height, f.data.iter().map(|&v| v as f32).collect()),
-        ResolvedField::Mask(m) => (m.width, m.height, m.data.iter().map(|&v| v as f32).collect()),
+        ResolvedField::U32(f) => (
+            f.width,
+            f.height,
+            f.data.iter().map(|&v| v as f32).collect(),
+        ),
+        ResolvedField::Mask(m) => (
+            m.width,
+            m.height,
+            m.data.iter().map(|&v| v as f32).collect(),
+        ),
     };
 
     // Per-value transform: LogCompressed works in ln(1 + max(v, 0)) space;
@@ -571,8 +579,8 @@ mod tests {
             visible: true,
         };
 
-        let (rgba, width, height) = render_overlay_to_gpu(&desc, &world)
-            .expect("river_mask is populated");
+        let (rgba, width, height) =
+            render_overlay_to_gpu(&desc, &world).expect("river_mask is populated");
 
         assert_eq!(width, 2);
         assert_eq!(height, 1);
@@ -583,7 +591,11 @@ mod tests {
 
         // Pixel 1 (value=1 → t=1.0 >= 0.5): BinaryBlue gives RIVER colour opaque.
         let river_px = palette::sample(PaletteId::BinaryBlue, 1.0);
-        assert_eq!(&rgba[4..8], &river_px, "mask=1 pixel should be RIVER colour");
+        assert_eq!(
+            &rgba[4..8],
+            &river_px,
+            "mask=1 pixel should be RIVER colour"
+        );
         assert_eq!(rgba[7], 255, "mask=1 pixel must be opaque");
     }
 

@@ -30,12 +30,7 @@ const fn max_iters(w: u32, h: u32) -> usize {
 ///
 /// Returns `z_filled` as a flat `Vec<f32>` (row-major, same layout as
 /// `ScalarField2D::data`).
-fn run_planchon_darboux(
-    w: u32,
-    h: u32,
-    z_raw: &[f32],
-    is_sea: &[u8],
-) -> anyhow::Result<Vec<f32>> {
+fn run_planchon_darboux(w: u32, h: u32, z_raw: &[f32], is_sea: &[u8]) -> anyhow::Result<Vec<f32>> {
     let w = w as usize;
     let h = h as usize;
     let n = w * h;
@@ -49,7 +44,11 @@ fn run_planchon_darboux(
 
     let mut cur: Vec<f32> = (0..n)
         .map(|i| {
-            if is_outlet(i % w, i / w, i) { z_raw[i] } else { f32::INFINITY }
+            if is_outlet(i % w, i / w, i) {
+                z_raw[i]
+            } else {
+                f32::INFINITY
+            }
         })
         .collect();
 
@@ -155,23 +154,20 @@ impl SimulationStage for PitFillStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
-        let height = world
-            .authoritative
-            .height
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("PitFillStage: authoritative.height is None (TopographyStage must run first)"))?;
+        let height = world.authoritative.height.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "PitFillStage: authoritative.height is None (TopographyStage must run first)"
+            )
+        })?;
 
-        let coast_mask = world
-            .derived
-            .coast_mask
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("PitFillStage: coast_mask is None (CoastMaskStage must run first)"))?;
+        let coast_mask = world.derived.coast_mask.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("PitFillStage: coast_mask is None (CoastMaskStage must run first)")
+        })?;
 
         let w = height.width;
         let h = height.height;
 
-        let filled_data =
-            run_planchon_darboux(w, h, &height.data, &coast_mask.is_sea.data)?;
+        let filled_data = run_planchon_darboux(w, h, &height.data, &coast_mask.is_sea.data)?;
 
         let mut z_filled = ScalarField2D::<f32>::new(w, h);
         z_filled.data = filled_data;
@@ -193,7 +189,7 @@ mod tests {
     use island_core::world::{Resolution, WorldState};
 
     use super::PitFillStage;
-    use crate::geomorph::{neighbour_offsets, CoastMaskStage};
+    use crate::geomorph::{CoastMaskStage, neighbour_offsets};
 
     // ── test helpers ─────────────────────────────────────────────────────────
 
@@ -213,17 +209,10 @@ mod tests {
     /// Stand up a `WorldState` with a hand-crafted height field, run
     /// `CoastMaskStage` (so `coast_mask` is populated), then return it ready
     /// for `PitFillStage`.
-    fn world_with_synthetic_height(
-        height: ScalarField2D<f32>,
-        sea_level: f32,
-    ) -> WorldState {
+    fn world_with_synthetic_height(height: ScalarField2D<f32>, sea_level: f32) -> WorldState {
         let w = height.width;
         let h = height.height;
-        let mut world = WorldState::new(
-            Seed(0),
-            pit_fill_preset(sea_level),
-            Resolution::new(w, h),
-        );
+        let mut world = WorldState::new(Seed(0), pit_fill_preset(sea_level), Resolution::new(w, h));
         world.authoritative.height = Some(height);
         CoastMaskStage
             .run(&mut world)
@@ -409,7 +398,9 @@ mod tests {
 
         let mut world1 = WorldState::new(Seed(99999), preset, Resolution::new(w, h));
         world1.authoritative.height = Some(height);
-        CoastMaskStage.run(&mut world1).expect("coast mask seed 99999");
+        CoastMaskStage
+            .run(&mut world1)
+            .expect("coast mask seed 99999");
         PitFillStage.run(&mut world1).expect("pit fill seed 99999");
 
         let d0 = &world0.derived.z_filled.as_ref().unwrap().data;
@@ -420,18 +411,11 @@ mod tests {
     // 7. Returns Err when coast_mask is None.
     #[test]
     fn errors_when_coast_mask_missing() {
-        let mut world = WorldState::new(
-            Seed(0),
-            pit_fill_preset(0.05),
-            Resolution::new(8, 8),
-        );
+        let mut world = WorldState::new(Seed(0), pit_fill_preset(0.05), Resolution::new(8, 8));
         world.authoritative.height = Some(make_basin_8x8());
         // coast_mask deliberately left None
         let result = PitFillStage.run(&mut world);
-        assert!(
-            result.is_err(),
-            "expected Err when coast_mask is None"
-        );
+        assert!(result.is_err(), "expected Err when coast_mask is None");
     }
 
     // 8. Returns Err when authoritative.height is None.
@@ -462,9 +446,6 @@ mod tests {
         });
         // height is None
         let result = PitFillStage.run(&mut world);
-        assert!(
-            result.is_err(),
-            "expected Err when height is None"
-        );
+        assert!(result.is_err(), "expected Err when height is None");
     }
 }

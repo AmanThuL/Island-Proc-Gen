@@ -20,17 +20,15 @@ impl SimulationStage for DerivedGeomorphStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
-        let z = world
-            .derived
-            .z_filled
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("DerivedGeomorphStage: z_filled is None (PitFillStage must run first)"))?;
+        let z = world.derived.z_filled.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("DerivedGeomorphStage: z_filled is None (PitFillStage must run first)")
+        })?;
 
-        let coast = world
-            .derived
-            .coast_mask
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("DerivedGeomorphStage: coast_mask is None (CoastMaskStage must run first)"))?;
+        let coast = world.derived.coast_mask.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "DerivedGeomorphStage: coast_mask is None (CoastMaskStage must run first)"
+            )
+        })?;
 
         let w = z.width;
         let h = z.height;

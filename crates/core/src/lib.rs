@@ -9,8 +9,8 @@ pub mod world;
 
 pub use field::{FieldDecodeError, FieldStats, MaskField2D, ScalarField2D, VectorField2D};
 pub use neighborhood::{
-    neighbour_offsets, Neighborhood, COAST_DETECT_NEIGHBORHOOD, RIVER_CC_NEIGHBORHOOD,
-    RIVER_COAST_CONTACT,
+    COAST_DETECT_NEIGHBORHOOD, Neighborhood, RIVER_CC_NEIGHBORHOOD, RIVER_COAST_CONTACT,
+    neighbour_offsets,
 };
 pub use pipeline::{NoopStage, SimulationPipeline, SimulationStage};
 pub use preset::{IslandAge, IslandArchetypePreset};

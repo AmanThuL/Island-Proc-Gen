@@ -53,7 +53,10 @@ struct VolcanoParams {
     radius: f32,
 }
 
-fn place_volcanoes(preset: &island_core::preset::IslandArchetypePreset, seed: &island_core::seed::Seed) -> Vec<VolcanoParams> {
+fn place_volcanoes(
+    preset: &island_core::preset::IslandArchetypePreset,
+    seed: &island_core::seed::Seed,
+) -> Vec<VolcanoParams> {
     let n = preset.volcanic_center_count as usize;
     let r = preset.island_radius;
     let mut rng = seed.fork(TOPOGRAPHY_VOLCANO_STREAM).to_rng();
@@ -83,7 +86,10 @@ fn place_volcanoes(preset: &island_core::preset::IslandArchetypePreset, seed: &i
                     let angle = (i as f32) * std::f32::consts::TAU / (n as f32);
                     let jx: f32 = rng.random_range(-0.02 * r..=0.02 * r);
                     let jy: f32 = rng.random_range(-0.02 * r..=0.02 * r);
-                    (0.5 + ring_r * angle.cos() + jx, 0.5 + ring_r * angle.sin() + jy)
+                    (
+                        0.5 + ring_r * angle.cos() + jx,
+                        0.5 + ring_r * angle.sin() + jy,
+                    )
                 })
                 .collect()
         }
@@ -96,7 +102,12 @@ fn place_volcanoes(preset: &island_core::preset::IslandArchetypePreset, seed: &i
         .map(|(cx, cy)| {
             let h: f32 = rng.random_range(0.85_f32..=1.0_f32) * preset.max_relief;
             let vr: f32 = rng.random_range(0.55_f32..=0.85_f32) * r;
-            VolcanoParams { cx, cy, height: h, radius: vr }
+            VolcanoParams {
+                cx,
+                cy,
+                height: h,
+                radius: vr,
+            }
         })
         .collect()
 }
@@ -178,7 +189,12 @@ fn build_ridge_field(
             let angle = base_angle + jitter;
             let bx = v.cx + arm_length * angle.cos();
             let by = v.cy + arm_length * angle.sin();
-            arms.push(ArmSegment { ax: v.cx, ay: v.cy, bx, by });
+            arms.push(ArmSegment {
+                ax: v.cx,
+                ay: v.cy,
+                bx,
+                by,
+            });
         }
     }
 
@@ -256,13 +272,23 @@ impl SimulationStage for TopographyStage {
         let volcanic_base = build_volcanic_base(w, h, &volcanoes, is_caldera);
 
         // §D4 Ridge mask (v0: straight segments)
-        let ridge_field = build_ridge_field(w, h, &volcanoes, preset.island_radius, preset.max_relief, seed);
+        let ridge_field = build_ridge_field(
+            w,
+            h,
+            &volcanoes,
+            preset.island_radius,
+            preset.max_relief,
+            seed,
+        );
 
         // §D5 Coastal falloff — centroid of volcano centres
         let n = volcanoes.len() as f32;
-        let centroid = volcanoes.iter().fold((0.0_f32, 0.0_f32), |(sx, sy), v| (sx + v.cx, sy + v.cy));
+        let centroid = volcanoes
+            .iter()
+            .fold((0.0_f32, 0.0_f32), |(sx, sy), v| (sx + v.cx, sy + v.cy));
         let centroid = (centroid.0 / n, centroid.1 / n);
-        let coastal_falloff = build_coastal_falloff(w, h, preset.island_radius, preset.max_relief, centroid);
+        let coastal_falloff =
+            build_coastal_falloff(w, h, preset.island_radius, preset.max_relief, centroid);
 
         let n_cells = (w as usize) * (h as usize);
         let mut initial_uplift = ScalarField2D::<f32>::new(w, h);
@@ -322,7 +348,9 @@ mod tests {
 
     fn run_stage(seed: u64, preset: IslandArchetypePreset, res: u32) -> WorldState {
         let mut world = WorldState::new(Seed(seed), preset, Resolution::new(res, res));
-        TopographyStage.run(&mut world).expect("TopographyStage failed");
+        TopographyStage
+            .run(&mut world)
+            .expect("TopographyStage failed");
         world
     }
 
@@ -385,7 +413,13 @@ mod tests {
     #[test]
     fn height_stays_in_unit_range() {
         let world = run_stage(7, preset_single(), 64);
-        let stats = world.authoritative.height.as_ref().unwrap().stats().unwrap();
+        let stats = world
+            .authoritative
+            .height
+            .as_ref()
+            .unwrap()
+            .stats()
+            .unwrap();
         assert!(stats.min >= 0.0, "min z_raw={} < 0.0", stats.min);
         assert!(stats.max <= 1.0, "max z_raw={} > 1.0", stats.max);
     }
@@ -394,7 +428,11 @@ mod tests {
     #[test]
     fn sediment_is_zero_field_after_run() {
         let world = run_stage(1, preset_single(), 32);
-        let sed = world.authoritative.sediment.as_ref().expect("sediment must be Some");
+        let sed = world
+            .authoritative
+            .sediment
+            .as_ref()
+            .expect("sediment must be Some");
         let stats = sed.stats().unwrap();
         assert_eq!(stats.min, 0.0, "sediment min={}", stats.min);
         assert_eq!(stats.max, 0.0, "sediment max={}", stats.max);
@@ -406,7 +444,11 @@ mod tests {
     #[test]
     fn initial_uplift_is_cached() {
         let world = run_stage(5, preset_single(), 32);
-        let uplift = world.derived.initial_uplift.as_ref().expect("initial_uplift must be Some");
+        let uplift = world
+            .derived
+            .initial_uplift
+            .as_ref()
+            .expect("initial_uplift must be Some");
         let height = world.authoritative.height.as_ref().unwrap();
         for (i, (&u, &z)) in uplift.data.iter().zip(height.data.iter()).enumerate() {
             assert!(
@@ -422,8 +464,9 @@ mod tests {
         let world = run_stage(42, preset_single(), 32);
 
         let mut buf = Vec::new();
-        write_world(&world, SaveMode::Minimal, &mut buf)
-            .expect("write_world should not return MissingAuthoritativeField after TopographyStage");
+        write_world(&world, SaveMode::Minimal, &mut buf).expect(
+            "write_world should not return MissingAuthoritativeField after TopographyStage",
+        );
 
         let mut cursor = Cursor::new(buf);
         let loaded = read_world(&mut cursor).expect("read_world failed");
@@ -449,7 +492,13 @@ mod tests {
     #[test]
     fn caldera_preset_completes() {
         let world = run_stage(11, preset_caldera(), 32);
-        let stats = world.authoritative.height.as_ref().unwrap().stats().unwrap();
+        let stats = world
+            .authoritative
+            .height
+            .as_ref()
+            .unwrap()
+            .stats()
+            .unwrap();
         assert!(stats.min >= 0.0);
         assert!(stats.max <= 1.0);
     }

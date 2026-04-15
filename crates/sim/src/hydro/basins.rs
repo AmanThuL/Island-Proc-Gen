@@ -28,17 +28,17 @@ impl SimulationStage for BasinsStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
-        let flow_dir = world
-            .derived
-            .flow_dir
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("BasinsStage: derived.flow_dir is None (FlowRoutingStage must run first)"))?;
+        let flow_dir = world.derived.flow_dir.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "BasinsStage: derived.flow_dir is None (FlowRoutingStage must run first)"
+            )
+        })?;
 
-        let coast_mask = world
-            .derived
-            .coast_mask
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("BasinsStage: derived.coast_mask is None (CoastMaskStage must run first)"))?;
+        let coast_mask = world.derived.coast_mask.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "BasinsStage: derived.coast_mask is None (CoastMaskStage must run first)"
+            )
+        })?;
 
         let w = flow_dir.width as usize;
         let h = flow_dir.height as usize;
@@ -155,7 +155,7 @@ mod tests {
 
     use super::BasinsStage;
     use crate::geomorph::{CoastMaskStage, PitFillStage, TopographyStage};
-    use crate::hydro::{FlowRoutingStage, FLOW_DIR_SINK};
+    use crate::hydro::{FLOW_DIR_SINK, FlowRoutingStage};
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
