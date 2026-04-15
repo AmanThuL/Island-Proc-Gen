@@ -122,6 +122,106 @@ pub struct BakedSnapshot {
     /// Drives DD6 biome suitability.
     #[serde(skip)]
     pub soil_moisture: Option<ScalarField2D<f32>>,
+
+    /// BiomeWeightsStage (DD6): per-cell normalised suitability
+    /// vectors for every functional biome type.
+    #[serde(skip)]
+    pub biome_weights: Option<BiomeWeights>,
+}
+
+/// Functional biome types used by `BiomeWeightsStage` (DD6).
+///
+/// Fixed ordering is load-bearing: the per-cell weight vector in
+/// [`BiomeWeights::weights`] is indexed by this enum's variant ordinals
+/// via [`BiomeType::ALL`], and the dominant-biome overlay relies on a
+/// stable mapping from index → type. Adding a new variant is a
+/// breaking change for the golden-seed regression snapshots.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum BiomeType {
+    CoastalScrub = 0,
+    LowlandForest = 1,
+    MontaneWetForest = 2,
+    CloudForest = 3,
+    DryShrub = 4,
+    Grassland = 5,
+    BareRockLava = 6,
+    RiparianVegetation = 7,
+}
+
+impl BiomeType {
+    /// Canonical ordering used for per-cell weight vectors.
+    pub const ALL: [BiomeType; 8] = [
+        BiomeType::CoastalScrub,
+        BiomeType::LowlandForest,
+        BiomeType::MontaneWetForest,
+        BiomeType::CloudForest,
+        BiomeType::DryShrub,
+        BiomeType::Grassland,
+        BiomeType::BareRockLava,
+        BiomeType::RiparianVegetation,
+    ];
+
+    /// Number of biome types — keeps `BiomeWeights::weights` row count
+    /// aligned with the enum without hand-maintained constants.
+    pub const COUNT: usize = Self::ALL.len();
+}
+
+/// Per-cell normalised suitability vectors for every biome.
+///
+/// Layout is `[biome_index][cell_row_major_index]`. On every land cell
+/// the sum across all biome indices is approximately `1.0` after the
+/// DD6 basin-smoothing pass; sea cells stay at `0.0`. Produced by
+/// `BiomeWeightsStage` and consumed by `HexProjectionStage`,
+/// `BiomeWeightsStage::dominant_biome_at`, and overlay #10.
+#[derive(Debug, Clone)]
+pub struct BiomeWeights {
+    pub types: [BiomeType; BiomeType::COUNT],
+    pub weights: Vec<Vec<f32>>,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl BiomeWeights {
+    /// Create an all-zero weight grid of the requested size.
+    pub fn new(width: u32, height: u32) -> Self {
+        let cells = (width * height) as usize;
+        Self {
+            types: BiomeType::ALL,
+            weights: vec![vec![0.0; cells]; BiomeType::COUNT],
+            width,
+            height,
+        }
+    }
+
+    /// Row-major cell index.
+    #[inline]
+    pub fn index(&self, x: u32, y: u32) -> usize {
+        (y * self.width + x) as usize
+    }
+
+    /// Argmax biome at `(x, y)`. Returns the first biome in canonical
+    /// order on ties (deterministic).
+    ///
+    /// **Sea cell caveat**: `BiomeWeightsStage` leaves sea cells at
+    /// all-zero weights (the stage is defined on land only). On such
+    /// cells every entry ties at `0.0`, so this function returns
+    /// `BiomeType::ALL[0]` (currently `CoastalScrub`). Overlays and
+    /// hex aggregators must gate dominant-biome lookups on the land
+    /// mask rather than assume this value is meaningful over water.
+    pub fn dominant_biome_at(&self, x: u32, y: u32) -> BiomeType {
+        let idx = self.index(x, y);
+        let mut best_weight = f32::NEG_INFINITY;
+        let mut best_biome = BiomeType::ALL[0];
+        for (i, biome) in BiomeType::ALL.iter().enumerate() {
+            let w = self.weights[i][idx];
+            if w > best_weight {
+                best_weight = w;
+                best_biome = *biome;
+            }
+        }
+        best_biome
+    }
 }
 
 /// Land / sea / coast classification produced by `CoastMaskStage`.

@@ -7,6 +7,7 @@
 //! load-time rebuild) never hardcode raw indices.
 
 pub mod climate;
+pub mod ecology;
 pub mod geomorph;
 pub mod hydro;
 pub mod validation_stage;
@@ -14,6 +15,7 @@ pub mod validation_stage;
 pub use climate::FogLikelihoodStage;
 pub use climate::PrecipitationStage;
 pub use climate::TemperatureStage;
+pub use ecology::BiomeWeightsStage;
 pub use geomorph::CoastMaskStage;
 pub use geomorph::DerivedGeomorphStage;
 pub use geomorph::PitFillStage;

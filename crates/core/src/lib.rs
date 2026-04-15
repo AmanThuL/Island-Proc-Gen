@@ -21,6 +21,6 @@ pub use validation::{
     river_termination,
 };
 pub use world::{
-    AuthoritativeFields, BakedSnapshot, CoastMask, D8_OFFSETS, DerivedCaches, FLOW_DIR_SINK,
-    Resolution, WorldState,
+    AuthoritativeFields, BakedSnapshot, BiomeType, BiomeWeights, CoastMask, D8_OFFSETS,
+    DerivedCaches, FLOW_DIR_SINK, Resolution, WorldState,
 };
