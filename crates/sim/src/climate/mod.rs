@@ -6,8 +6,10 @@
 //! in one place.
 
 pub mod common;
+pub mod fog;
 pub mod precipitation;
 pub mod temperature;
 
+pub use fog::FogLikelihoodStage;
 pub use precipitation::PrecipitationStage;
 pub use temperature::TemperatureStage;

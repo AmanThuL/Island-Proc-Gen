@@ -155,6 +155,11 @@ pub struct DerivedCaches {
     /// Sprint 2 hillslope diffusion. Sea cells are forced to `0.0`.
     pub curvature: Option<ScalarField2D<f32>>,
 
+    /// FogLikelihoodStage (DD7): `[0, 1]` proxy combining an elevation
+    /// band (cloud base ↔ cloud top) with orographic uplift. Consumed
+    /// by DD6 CloudForest biome suitability.
+    pub fog_likelihood: Option<ScalarField2D<f32>>,
+
     /// Sprint 1A CoastMaskStage: land / sea / coast masks + cached counts.
     pub coast_mask: Option<CoastMask>,
 

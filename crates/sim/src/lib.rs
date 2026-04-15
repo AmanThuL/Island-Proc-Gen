@@ -11,6 +11,7 @@ pub mod geomorph;
 pub mod hydro;
 pub mod validation_stage;
 
+pub use climate::FogLikelihoodStage;
 pub use climate::PrecipitationStage;
 pub use climate::TemperatureStage;
 pub use geomorph::CoastMaskStage;

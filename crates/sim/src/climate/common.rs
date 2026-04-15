@@ -69,6 +69,17 @@ pub fn wind_unit(wind_dir_rad: f32) -> Vec2 {
     Vec2::new(wind_dir_rad.cos(), wind_dir_rad.sin())
 }
 
+/// Hermite smoothstep: `0` below `edge0`, `1` above `edge1`, smooth
+/// cubic `3t² - 2t³` in between. Matches the GLSL / HLSL convention
+/// used throughout the climate + ecology suitability functions.
+pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    if edge0 == edge1 {
+        return if x < edge0 { 0.0 } else { 1.0 };
+    }
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// Manhattan (L1) distance from each cell to the nearest coast cell,
 /// measured in cell units via a multi-source Von4 BFS. Non-coast cells
 /// that can't reach a coast (e.g. a fully land-locked island with no
@@ -146,6 +157,27 @@ mod tests {
         assert!((east - Vec2::new(1.0, 0.0)).length() < 1e-6);
         let north = wind_unit(FRAC_PI_2);
         assert!((north - Vec2::new(0.0, 1.0)).length() < 1e-6);
+    }
+
+    #[test]
+    fn smoothstep_edge_cases() {
+        assert_eq!(smoothstep(0.0, 1.0, -0.5), 0.0);
+        assert_eq!(smoothstep(0.0, 1.0, 1.5), 1.0);
+        assert!((smoothstep(0.0, 1.0, 0.5) - 0.5).abs() < 1e-6);
+        // Degenerate edges → step function.
+        assert_eq!(smoothstep(0.5, 0.5, 0.4), 0.0);
+        assert_eq!(smoothstep(0.5, 0.5, 0.6), 1.0);
+    }
+
+    #[test]
+    fn smoothstep_monotonic() {
+        let mut prev = -1.0_f32;
+        for i in 0..=20 {
+            let x = i as f32 * 0.05;
+            let y = smoothstep(0.0, 1.0, x);
+            assert!(y >= prev);
+            prev = y;
+        }
     }
 
     #[test]
