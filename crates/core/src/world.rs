@@ -160,6 +160,18 @@ pub struct DerivedCaches {
     /// by DD6 CloudForest biome suitability.
     pub fog_likelihood: Option<ScalarField2D<f32>>,
 
+    /// PetStage (DD3): Hamon-style potential evapotranspiration proxy
+    /// from temperature. Drives Budyko ET/P split in DD4.
+    pub pet: Option<ScalarField2D<f32>>,
+
+    /// WaterBalanceStage (DD4): Budyko Fu-equation actual
+    /// evapotranspiration. `ET + R = P` by construction.
+    pub et: Option<ScalarField2D<f32>>,
+
+    /// WaterBalanceStage (DD4): long-term-average runoff `P - ET`.
+    /// Drives DD5 soil moisture and Sprint 2 stream-power erosion.
+    pub runoff: Option<ScalarField2D<f32>>,
+
     /// Sprint 1A CoastMaskStage: land / sea / coast masks + cached counts.
     pub coast_mask: Option<CoastMask>,
 
