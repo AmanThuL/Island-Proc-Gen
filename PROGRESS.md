@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-14
+**Last Updated:** 2026-04-15
 
 ---
 
@@ -21,138 +21,221 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 1A — all 4 §3.2 visual-polish passes shipped on
-`dev` plus one post-validation fix. `cargo run -p app` now renders
-terrain + sea + §3.2 A3 sky + §3.2 A5 GPU overlay render path +
-§3.2 A6 camera preset dropdown + §3.2 B3 blue noise dither, all
-against the user-approved orbit camera default. **188 tests passing**.
-16 of 16 validation screenshots captured to
-`docs/design/sprints/sprint_1a_visual_acceptance/`; final audit
-verdict **16 / 16 PASS** after the Pass 3.1 preset distance-factor
-fix (`PRESET_HERO` 1.6→5.0 and `PRESET_TOP_DEBUG` 1.4→3.5 — the
-pre-fix values put the orbit camera embedded inside the volcano's
-vertical extent) and a manual re-audit of shot 21 (the "diamond-
-faceted pyramid" a subagent flagged is the `ridge_field` output
-viewed from above — correct geometry, not a regression).
+**Primary:** Sprint 1B — climate + ecology closed loop. Library path
+**fully shipped on `dev`** in 14 atomic commits across 2026-04-15.
+All 1B-core tasks from the sprint doc §0 required-for-close-out list
+are landed: run_from infra, always-on curvature, 8 new sim stages
+(TemperatureStage → HexProjectionStage), 6 new overlays, 4 new
+validation invariants, golden-seed metrics regen, and the first
+interactive wind-direction slider with end-to-end pipeline re-run
+via `run_from` + `OverlayRenderer::refresh`.
 
-Sprint 1A §3.2 Visual Package checklist status: A1 ✓ A2 ✓ A3 ✓ A4 ✓
-A5 ✓ A6 ✓ B3 ✓. See [RECENTLY SHIPPED](#recently-shipped) for the
-per-commit breakdown and [DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints)
-for the 2 visual-audit items that are punted rather than force-fit
-into 1A.
+**269 tests passing** across 8 crates (core 55, sim 123, data 10,
+render 65, hex 7, app 9, ui 0, gpu 0). Regression: +81 new tests
+since Sprint 1A's 188 baseline. `cargo fmt --check &&
+cargo clippy --workspace -- -D warnings && cargo test --workspace`
+is the hard CI gate, all green.
 
-**Remaining for Sprint 1A §7 full acceptance:**
-- **9 golden-baseline screenshots:** 3 camera presets × 3 golden seeds
-  in `docs/design/sprints/sprint_1a_visual_acceptance/` as the Sprint
-  1B regression baseline. Blocked on a seed-cycling runtime flag or UI
-  that Sprint 1A doesn't ship — carried forward to Sprint 1B.
-- **Paper pack (non-blocking per §7):** Chen 2014 / Génevaux 2013 deep
-  reads; Lague 2014 target-deep; background papers can stay at
-  `metadata_only`.
+**Sprint 1B §10 acceptance checklist status:**
+
+Compile + test:
+- ✓ `cargo test --workspace` green (269 / 269)
+- ✓ Every new stage has unit tests + invariant coverage
+- ✓ Golden seed regression passes on regenerated snapshots for all 3 presets
+
+Functional:
+- ✓ Temperature / precipitation / soil moisture / biome / hex fields
+  all `is_some()` after pipeline run (asserted by the new
+  `full_sprint_1b_pipeline_passes_all_invariants` integration test)
+- ✓ Wind direction slider re-runs the pipeline via `run_from` and
+  refreshes overlay textures in `tick()` — library path is complete;
+  the live `cargo run -p app` window session for visual verification
+  is the last open item (needs user approval per CLAUDE.md)
+- ✓ Dominant biome overlay: the 16-cell varied-domain integration
+  test asserts at least 3 distinct dominant biomes appear; golden
+  seed metrics confirm 3 biomes (Grassland 68%, BareRockLava 28%,
+  RiparianVegetation 4%) for `volcanic_single` at 128²
+- ✓ 12 overlays all toggle cleanly via `OverlayPanel` and resolve
+  through the `resolve_scalar_source` typed-borrow path
+
+Architectural invariants:
+- ✓ `core` still headless — `cargo tree -p core` free of wgpu /
+  winit / egui / png / image / tempfile / naga
+- ✓ `hex` crate only depends on `core` (see new `hex/Cargo.toml`)
+- ✓ `run_from(stage_index)` works on the wind slider path
+- ✓ 12 overlays toggle + stack (alpha hardcoded from Sprint 1A, not
+  a Sprint 1B blocker)
+
+Paper:
+- Deferred — spec §7 Core Pack reads + Bruijnzeel notes flagged for
+  the next low-energy window; non-blocking per §7.
+
+**Next session priorities** (see [QUICK REFERENCE](#quick-reference)):
+1. User-approved `cargo run -p app` window session to drag the wind
+   slider and visually verify the precipitation / biome overlays
+   refresh in real time.
+2. §7 Paper pack deep reads (Chen 2023 / Bruijnzeel 2005 / 2011).
+3. Sprint 1B-tail (alpha slider per overlay, seed-cycling, 9-shot
+   baseline, blue noise size toggle) — optional, parked under
+   [DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints).
 
 ---
 
 ## RECENTLY SHIPPED
 
-Sprint 1A §3.2 visual-polish rollup shipped in sequence on `dev`,
-2026-04-14 session. All 4 passes used the simplifier → superpowers
-code-reviewer → commit cadence (per auto-memory
-`feedback_commit_review_workflow.md`) except Pass 3.1, which was a
-2-constant post-validation fix that skipped the cadence with user
-approval.
+Sprint 1B core, 14 commits on `dev`, 2026-04-15 session. Every
+commit used the simplify → superpowers code-reviewer → commit
+cadence except the two structural/mechanical commits
+(golden-seed regen, app::Runtime wiring) where the combined review
+pass confirmed no outstanding issues.
 
-| Commit | Pass | Spec | Tests |
+| Commit | Task | Spec | Tests delta |
 |---|---|---|---|
-| `ac0368d` | Pass 2 — GPU overlay render path | Task 1A.10 / §3.2 A5 | 180 → 185 (+5) |
-| `442aabe` | Pass 3 — Camera preset dropdown | §3.2 A6 | 185 → 188 (+3) |
-| `4b230ed` | Pass 4 — Blue noise dither | §3.2 B3 | 188 (+0) |
-| `071c14a` | Pass 3.1 — preset `distance_factor` fix | §3.2 A6 post-validation | 188 (+0) |
+| `96036c6` | 1B.0a — `run_from` infra + `StageId` enum (16 stages) | §4.0 / §2 DD9 | 188 → 193 |
+| `e2d2bd9` | 1B.0b — always-on curvature in `DerivedGeomorphStage` | §4.0 DD9 | 193 → 197 |
+| `26e6434` | 1B.1 — `TemperatureStage` + `climate::common` helpers | §2 DD1 | 197 → 205 |
+| `d4321a2` | 1B.2 — `PrecipitationStage` upwind raymarch | §2 DD2 | 205 → 210 |
+| `37616ce` | 1B.3 — `FogLikelihoodStage` + `smoothstep` helper | §2 DD7 | 210 → 219 |
+| `513a941` | 1B.4 — `PetStage` + `WaterBalanceStage` (Budyko Fu) | §2 DD3 + DD4 | 219 → 227 |
+| `66681d7` | 1B.5 — `SoilMoistureStage` (consumes `flow_dir`) | §2 DD5 | 227 → 234 |
+| `0ca94a7` | 1B.6 — `BiomeWeightsStage` + 8 biome types | §2 DD6 | 234 → 246 |
+| `d464936` | 1B.7 — `HexGrid` + `HexProjectionStage` | §2 DD8 | 246 → 259 |
+| `de27147` | 1B.11 — 4 new validation invariants | §8 | 259 → 267 |
+| `afc20f0` | Wire Sprint 1B pipeline into `app::Runtime` | §4 integration | 267 → 268 |
+| `0e454db` | 1B.8 — 6 new overlays (12 total) | §6 | 268 → 269 |
+| `75909ea` | 1B.10 — `SummaryMetrics` + golden regen | §9 | 269 (same) |
+| `0ee8b82` | 1B.9 — Wind direction slider + `run_from` re-run | §5 | 269 (same) |
 
-**Validation screenshot audit (16 shots captured to
-`docs/design/sprints/sprint_1a_visual_acceptance/`):** 4 parallel
-subagents inspected all 16 shots against the INDEX.md spec. Verdict:
-12 PASS, 2 CONCERN, 1 FAIL, 2 UNVERIFIABLE.
+**StageId enum is the single source of truth** for pipeline indices.
+The 16-variant enum (`Topography = 0` … `HexProjection = 15`) is
+locked by `stage_id_indices_are_dense_and_canonical` in
+`crates/sim/src/lib.rs`, and every `run_from` caller (
+`app::Runtime`, slider handler, golden regen) passes `StageId::X as usize`
+rather than hardcoding a literal index. `ValidationStage` is
+intentionally excluded from the enum — it's a tail hook, not a
+slider target.
 
-Pass 3.1 was triggered by shot `21_preset_top_debug.png` (FAIL, showed
-a mid-perspective "isometric cube" instead of near-overhead) and shot
-`20_preset_hero.png` (CONCERN, volcano peak pushed off the top of the
-frame). Root cause: the `volcanic_single` preset's normalized
-heightfield reaches y ≈ 0.8–1.0, but the pre-fix `distance_factor`
-values put the orbit camera's `eye.y` BELOW the peak:
+**Climate + ecology decisions** (sprint doc §2 DD1–DD9):
+- **DD1 Temperature:** lapse rate `6.5 °C/km` + coastal modifier
+  `2 °C * exp(-d/0.05)`. Sea cells forced to `T_SEA_LEVEL_C = 26`
+  to avoid phantom shoreline gradients downstream.
+- **DD2 Precipitation:** 32-step upwind raymarch with `k_c = 1.5`
+  condensation and `k_shadow = 2.0` rain-shadow attenuation.
+  Ascent / descent branches are mechanically exclusive via the
+  shared `signed_uplift` helper so the v1.0 dead-branch regression
+  is impossible. Unit test asserts windward > leeward by 30 % on a
+  synthetic tent ridge.
+- **DD3 / DD4 Water balance:** Hamon PET (`k = 0.04`) plus
+  Budyko-Fu ET/R split with `ω = 2.2` and `PET/P` clamped to
+  `[0.01, 10]`. `R = max(0, P - ET)` preserves the mass balance
+  exactly.
+- **DD5 Soil moisture:** convex combination `0.5 * (ET/PET) +
+  0.3 * log(A+1)/log(A_max+1) + 0.2 * river_proximity`, followed
+  by a single downstream smoothing pass along `flow_dir` (the real
+  first consumer of the Sprint 1A hand-off contract that built the
+  routing graph for 1B to use).
+- **DD6 Biomes:** 8 functional types with bell × smoothstep
+  suitability, normalized to a per-cell partition of unity, then a
+  per-basin mean blend with `α = 0.3` keyed on `basin_id` (the
+  second real 1A handoff consumer). `BTreeMap<u32, ...>`
+  accumulators lock determinism structurally.
+- **DD7 Fog:** `smoothstep(CLOUD_BASE_Z=0.4, CLOUD_TOP_Z=0.75,
+  z)` × `smoothstep(0, 0.3, max(0, signed_uplift))`. Single-pass
+  over land cells, sea cells → 0.
+- **DD8 Hex projection:** `64 × 64` flat-top axis-aligned box
+  tessellation (v1 simplification; Sprint 5 can refit to true
+  hexagonal Voronoi). f64 accumulators for aggregation precision,
+  sea cells excluded from per-hex means.
 
-| Preset | old factor | d = f × r | eye.y = d · sin(pitch) | Verdict |
-|---|---|---|---|---|
-| Hero | 1.6 | 0.8 | 0.4 | embedded; peak off-frame |
-| TopDebug | 1.4 | 0.7 | ~0.699 | below peak; weird perspective |
-| LowOblique | 2.0 | 1.0 | 0.217 | PASSED validation (intentional low-angle) |
+**Integration test** `full_sprint_1b_pipeline_passes_all_invariants`
+in `sim::validation_stage::tests` builds the complete 17-stage
+pipeline (16 real + tail ValidationStage) on a `volcanic_preset` at
+64² and asserts every Sprint 1B output field (`curvature`,
+`temperature`, `precipitation`, `fog_likelihood`, `pet`, `et`,
+`runoff`, `soil_moisture`, `biome_weights`, `hex_grid`, `hex_attrs`)
+is populated and every invariant fires clean. This is the
+end-to-end guarantee that the whole 1B data flow works on non-
+synthetic inputs.
 
-Fix bumps Hero to 5.0× and TopDebug to 3.5× so `eye.y` clears the
-peak with ~0.25 / ~0.75 headroom respectively. Framing verified
-analytically for both presets against the orbit camera's 45° FOV —
-peak stays within the 22.5° half-FOV with margin. LowOblique stays
-at 2.0× unchanged (validation PASSED). `cargo test --workspace`
-still reports 188 passed because the Pass 3 tests reference the
-constant by symbol, not by literal.
-
-**Resolved:** shots 20 (Hero) and 21 (TopDebug) were reshot after
-`071c14a` and the framing is confirmed fixed — final 16-shot verdict
-is **16 / 16 PASS**. Shot 22 (LowOblique), shot 23 (hero-then-orbit),
-and shot 24 (reset view) did not need reshoots — 22 was PASS, 23
-automatically picks up the new Hero distance via `apply_preset`, and
-24 returns to `INITIAL_CAMERA_*` in `runtime.rs` which is unaffected.
+**Golden seed regression regenerated** via `SNAPSHOT_UPDATE=1
+cargo test -p data --test golden_seed_regression`. Sprint 1A field
+hashes are bit-exact unchanged (proving no 1B stage wrote back into
+a 1A field), and the new 1B summary fields (`mean_precipitation`,
+`windward_leeward_precip_ratio`, `mean_temperature_c`,
+`mean_soil_moisture`, `biome_coverage_percent`, `hex_count`) are
+committed for the three presets. `volcanic_single @ seed 42 / 128²`:
+windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
 
 ---
 
 ## DEFERRED TO LATER SPRINTS
 
-Two items from the Pass 4 / flow-accumulation validation audit are
-punted rather than force-fit into Sprint 1A.
+**From Sprint 1A (still pending, unchanged):**
 
-**Deferred to Sprint 2 — Geomorph credibility:**
+- **Sprint 2 — flow accumulation overlay log-compression audit**
+  (Shot 13 washout). Sprint 2's stream-power erosion work is the
+  right place to exercise the accumulation distribution and validate
+  the LogCompressed bake parameters.
+- **Sprint 2 — Blue noise dither A/B visual validation** (Shots 30,
+  31). Sub-LSB amplitude is below screenshot-inspection threshold;
+  Sprint 2 will touch terrain shading and can ship a shader
+  feature-flag for cheap A/B diff.
 
-- **Shot 13 — Flow accumulation overlay log-compression audit.**
-  Subagent validation noted that secondary tributaries may be washed
-  out in the Turbo + LogCompressed bake — only the dominant channel
-  shows red. Could be correct for the `volcanic_single` preset (one
-  volcano → one drainage spine) or could indicate the log compression
-  constants are too aggressive. Sprint 2 (stream power erosion)
-  exercises the accumulation distribution in anger and is the
-  natural place to validate / tighten the bake.
-- **Shots 30, 31 — Blue noise dither A/B visual validation.**
-  ±½ LSB amplitude is below screenshot-inspection threshold. The
-  reliable test is a pixel-diff between dither-ON / dither-OFF
-  captures taken with the shader temporarily edited. Sprint 2 will
-  touch terrain shading for erosion / sediment visualisation, at
-  which point a shader feature-flag mechanism can ship and the A/B
-  test becomes cheap.
+**From Sprint 1B close-out (new):**
 
-**Deferred to Sprint 1B — Climate + Ecology (UI-dependent):**
-
-- **9-shot golden visual baseline.** Sprint 1A doc §7 calls for 3
-  camera presets × 3 golden seeds = 9 captures as the regression
-  baseline. Blocked on a seed-cycling runtime flag or UI that Sprint
-  1A doesn't ship (seed is a startup constant in `runtime.rs`).
-  Sprint 1B adds climate parameter tweaking; a `--seed N` flag can
-  land alongside, and the 9-shot set can be captured cheaply.
-- **Per-descriptor alpha slider for overlays.** Pass 2 hardcodes
-  `alpha = 0.6` across all 6 overlay bind groups. Sprint 1B's
-  climate UI can surface a per-overlay alpha + visibility panel at
-  near-zero cost (uniform update per frame).
-- **Blue noise runtime size toggle (64 / 128 / 256).** Pass 4 hardcodes
-  the 64×64 shipping default; the 128 / 256 PNGs are on disk
-  (`assets/noise/blue_noise_2d_{128,256}.png`) but unused. Sprint 1B
-  UI work can expose a 3-way size switcher via a texture swap.
+- **User-approved `cargo run -p app` visual verification** of the
+  wind-direction slider. Library path is complete; the live window
+  session to drag the slider and watch the precipitation / biome
+  overlays refresh needs explicit user approval per CLAUDE.md.
+- **Sprint 1B-tail T1/T2/T3** from sprint doc §11 — the "nice to
+  have" UI/tooling polish items that depend on Sprint 1B's
+  ParamsPanel / OverlayPanel but are explicitly **not** part of the
+  §10 close-out checklist:
+  - **T1 — 9-shot golden visual baseline** (3 camera presets × 3
+    seeds) inherited from Sprint 1A. Needs a seed-cycling slider
+    which isn't in 1B-core.
+  - **T2 — Per-descriptor alpha slider** for the 12 overlays. Alpha
+    stays at the Sprint 1A hardcoded `0.6` for now.
+  - **T3 — Blue noise runtime size toggle** (64 / 128 / 256). The
+    other two PNGs sit in `assets/noise/` but nothing loads them.
+- **Sprint 2 — BareRockLava / DryShrub / CoastalScrub / LowlandForest
+  parameter tuning.** The current v1 suitability parameters collapse
+  the `volcanic_single` preset onto Grassland + BareRockLava +
+  RiparianVegetation (3 biomes, passes §10 acceptance but leaves 5
+  biomes at 0 % coverage). The spec explicitly parks this under
+  Task 1B.9's slider UI which lands as a scaffold in this sprint but
+  doesn't expose per-biome tunables yet.
+- **Sprint 1B paper pack** — `docs/papers/sprint_packs/sprint_1b.md`
+  Bruijnzeel 2005 / 2011 notes, Chen 2023 Budyko writeup, and Core
+  Pack #2/#3/#5/#6/#8 "Sprint 1B 落地点" sections. Non-blocking per
+  §7; tackle in a low-energy session.
+- **`cargo run -p app` slider cadence tuning.** Re-run cost is 8
+  stages at 256² ≈ 100 ms theoretical, well under the 200 ms target.
+  First live session will confirm.
 
 ---
 
 ## DEVELOPMENT
 
+### Sprint 1B — Climate + Ecology closed loop
+**Status:** Library path complete on `dev` as of 2026-04-15. 14
+atomic commits covering every §10 core close-out item. **269 tests**
+across 8 crates (+81 from Sprint 1A's 188 baseline). Wind-direction
+slider wired end-to-end (`ParamsPanel → run_from →
+OverlayRenderer::refresh`) but the live `cargo run -p app` visual
+verification window pass is deferred to the next session per
+CLAUDE.md rule 2.
+**Doc:** [`docs/design/sprints/sprint_1b_climate_ecology.md`](docs/design/sprints/sprint_1b_climate_ecology.md)
+See [CURRENT FOCUS](#current-focus) and [RECENTLY SHIPPED](#recently-shipped)
+for the per-task + per-commit breakdown.
+
 ### Sprint 1A — Terrain + Water Skeleton
 **Status:** §3.2 Visual Package complete (A1–A6 + B3 all shipped on
 `dev` as of 2026-04-14). 16-shot validation captured + audited; Pass
-3.1 post-fix landed for preset framing. Only the 9-shot golden
-baseline remains for §7 full acceptance, and it's deferred to Sprint
-1B because seed-cycling UI isn't a Sprint 1A deliverable.
+3.1 post-fix landed for preset framing. The 9-shot golden baseline
+inherited to Sprint 1B is now parked under the 1B-tail list in
+[DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints) rather than
+blocking 1B close-out (per sprint 1B doc §0).
 **Doc:** [`docs/design/sprints/sprint_1a_terrain_water.md`](docs/design/sprints/sprint_1a_terrain_water.md)
 
 **Shipped this pass (sim pipeline, 2026-04-14):**
@@ -549,24 +632,31 @@ Nothing paused.
 
 ## QUICK REFERENCE
 
-**High energy?** → Close Task 1A.9: wire `derived.z_filled` into a real
-triangle mesh in `crates/render/src/terrain.rs`, land the §3.2 canonical
-palette in `crates/render/src/palette.rs`, and a first cut of
-`shaders/terrain.wgsl` combining A1–A4. Requires a confirmed
-`cargo run -p app` window pass with me before shipping.
-**Medium energy?** → Close Task 1A.10: repoint the 6 `OverlayDescriptor`
-`source` fields at the real `derived.*` field names. No draw closures
-(§CLAUDE.md invariant #7). Test that each overlay toggles cleanly.
-**Low energy?** → Fill the `关键方程` and `对本项目的落地点` sections in
-`docs/papers/core_pack/chen_2014_lem_review.md` and
-`genevaux_2013_hydrology_terrain.md` — both are mandatory deep reads per
-sprint doc §6, currently only frontmatter. Also Kwang & Parker's
-`m/n = 0.5` warning still needs to land in
-`sprint_2_geomorph_credibility.md` open questions.
-**Quick win?** → Download the four remaining `metadata_only` PDFs
-(`chen_2014_lem_review`, `smith_barstad_2004_linear_orographic`,
-`fisher_2018_vegetation_demographics_esm`, `hergarten_robl_2022_lfpm`) when
-institutional access is available.
+**High energy?** → Start Sprint 2 — geomorph credibility. The
+Sprint 1B pipeline's `precipitation`, `accumulation`, `slope`, and
+`z_filled` are exactly the four fields Sprint 2's stream-power
+incision stage reads, so the first task is a new
+`sim::geomorph::StreamPowerIncisionStage` that mutates
+`authoritative.height` via an explicit Euler step. Touches
+`crates/sim/src/geomorph/` and adds a 9th `StageId` ordinal after
+`RiverExtraction`. Sprint 2 doc: `docs/design/sprints/sprint_2_geomorph_credibility.md`.
+**Medium energy?** → Ship the `cargo run -p app` visual verification
+of the Sprint 1B wind slider. Check with user first, then drag the
+slider and inspect the precipitation / biome overlays for live
+refresh. If the slider looks laggy, measure `run_from` wall-clock in
+`Runtime::tick` and compare to the 200 ms §10 target.
+**Low energy?** → Sprint 1B paper pack. Create
+`docs/papers/sprint_packs/sprint_1b.md` per sprint doc §7: Bruijnzeel
+2005 / 2011 TMCF notes, Chen 2023 Budyko readthrough, and Core Pack
+#2/#3/#5/#6/#8 "Sprint 1B 落地点" sections pointing back at DD2 / DD4
+/ DD6 anchor points. Also fill the Sprint 1A Chen 2014 / Génevaux
+2013 deep reads still outstanding at `docs/papers/core_pack/`.
+**Quick win?** → Tune `suitability.rs` parameters so more than 3
+biomes appear in `volcanic_single`. Current output collapses onto
+Grassland / BareRockLava / Riparian. Widen the σ on LowlandForest
+and MontaneWetForest bells, or lower the `soil_moisture` thresholds
+— Task 1B.9 adds the slider hooks, so this can be explored
+interactively once the live window session happens.
 
 ---
 
