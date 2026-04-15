@@ -27,13 +27,13 @@ terrain + sea + §3.2 A3 sky + §3.2 A5 GPU overlay render path +
 §3.2 A6 camera preset dropdown + §3.2 B3 blue noise dither, all
 against the user-approved orbit camera default. **188 tests passing**.
 16 of 16 validation screenshots captured to
-`docs/design/sprints/sprint_1a_visual_acceptance/`; audit verdict 12
-PASS / 2 CONCERN / 1 FAIL / 2 UNVERIFIABLE. The FAIL (shot 21
-TopDebug) and one CONCERN (shot 20 Hero) were resolved by a Pass 3.1
-fix bumping the preset distance factors (`PRESET_HERO` 1.6→5.0 and
-`PRESET_TOP_DEBUG` 1.4→3.5 — the pre-fix values put the orbit camera
-embedded inside the volcano's vertical extent). User needs to reshoot
-shots 20 / 21 to confirm the fix visually.
+`docs/design/sprints/sprint_1a_visual_acceptance/`; final audit
+verdict **16 / 16 PASS** after the Pass 3.1 preset distance-factor
+fix (`PRESET_HERO` 1.6→5.0 and `PRESET_TOP_DEBUG` 1.4→3.5 — the
+pre-fix values put the orbit camera embedded inside the volcano's
+vertical extent) and a manual re-audit of shot 21 (the "diamond-
+faceted pyramid" a subagent flagged is the `ridge_field` output
+viewed from above — correct geometry, not a regression).
 
 Sprint 1A §3.2 Visual Package checklist status: A1 ✓ A2 ✓ A3 ✓ A4 ✓
 A5 ✓ A6 ✓ B3 ✓. See [RECENTLY SHIPPED](#recently-shipped) for the
@@ -41,14 +41,12 @@ per-commit breakdown and [DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints)
 for the 2 visual-audit items that are punted rather than force-fit
 into 1A.
 
-**Remaining for Sprint 1A §6 full acceptance:**
-- **Reshoot validation shots 20 (Hero) and 21 (TopDebug)** after Pass
-  3.1 to confirm the fix frames the island correctly.
+**Remaining for Sprint 1A §7 full acceptance:**
 - **9 golden-baseline screenshots:** 3 camera presets × 3 golden seeds
   in `docs/design/sprints/sprint_1a_visual_acceptance/` as the Sprint
   1B regression baseline. Blocked on a seed-cycling runtime flag or UI
   that Sprint 1A doesn't ship — carried forward to Sprint 1B.
-- **Paper pack (non-blocking per §6):** Chen 2014 / Génevaux 2013 deep
+- **Paper pack (non-blocking per §7):** Chen 2014 / Génevaux 2013 deep
   reads; Lague 2014 target-deep; background papers can stay at
   `metadata_only`.
 
@@ -96,12 +94,12 @@ at 2.0× unchanged (validation PASSED). `cargo test --workspace`
 still reports 188 passed because the Pass 3 tests reference the
 constant by symbol, not by literal.
 
-**Still to do:** the user should reshoot shots 20 (Hero) and 21
-(TopDebug) after `071c14a` to confirm the framing is visually fixed.
-Shot 22 (LowOblique), shot 23 (hero-then-orbit), and shot 24 (reset
-view) do not need reshoots — 22 was PASS, 23 will automatically pick
-up the new Hero distance via `apply_preset`, and 24 returns to
-`INITIAL_CAMERA_*` in `runtime.rs` which is unaffected.
+**Resolved:** shots 20 (Hero) and 21 (TopDebug) were reshot after
+`071c14a` and the framing is confirmed fixed — final 16-shot verdict
+is **16 / 16 PASS**. Shot 22 (LowOblique), shot 23 (hero-then-orbit),
+and shot 24 (reset view) did not need reshoots — 22 was PASS, 23
+automatically picks up the new Hero distance via `apply_preset`, and
+24 returns to `INITIAL_CAMERA_*` in `runtime.rs` which is unaffected.
 
 ---
 
@@ -130,7 +128,7 @@ punted rather than force-fit into Sprint 1A.
 
 **Deferred to Sprint 1B — Climate + Ecology (UI-dependent):**
 
-- **9-shot golden visual baseline.** Sprint 1A doc §6 calls for 3
+- **9-shot golden visual baseline.** Sprint 1A doc §7 calls for 3
   camera presets × 3 golden seeds = 9 captures as the regression
   baseline. Blocked on a seed-cycling runtime flag or UI that Sprint
   1A doesn't ship (seed is a startup constant in `runtime.rs`).
@@ -153,7 +151,7 @@ punted rather than force-fit into Sprint 1A.
 **Status:** §3.2 Visual Package complete (A1–A6 + B3 all shipped on
 `dev` as of 2026-04-14). 16-shot validation captured + audited; Pass
 3.1 post-fix landed for preset framing. Only the 9-shot golden
-baseline remains for §6 full acceptance, and it's deferred to Sprint
+baseline remains for §7 full acceptance, and it's deferred to Sprint
 1B because seed-cycling UI isn't a Sprint 1A deliverable.
 **Doc:** [`docs/design/sprints/sprint_1a_terrain_water.md`](docs/design/sprints/sprint_1a_terrain_water.md)
 
@@ -317,9 +315,7 @@ on `dev`):**
   See `RECENTLY SHIPPED` for the analytical framing verification.
   Tests still at 188 (symbol-reference, not literal).
 
-**Still to ship for Sprint 1A §6 full acceptance:**
-- **Reshoot validation shots 20 / 21** after Pass 3.1 to confirm
-  framing is fixed.
+**Still to ship for Sprint 1A §7 full acceptance:**
 - **9-shot golden visual baseline** (3 presets × 3 golden seeds) —
   deferred to Sprint 1B on seed-cycling UI (see
   [DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints)).
@@ -389,7 +385,7 @@ distribution, no wasm build, no binary releases.
 
 Delivered (everything that compiles and tests headlessly; window-session
 wiring to `TerrainRenderer` + the 9 baseline screenshots are the only
-Sprint 1A §6 items still open):
+Sprint 1A §7 items still open):
 
 - **`render::palette` rebuild** — 8 canonical `[f32; 4]` constants
   locked against `assets/visual/palette_reference.jpg` via pixel-sampling,
