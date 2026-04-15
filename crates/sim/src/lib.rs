@@ -23,6 +23,7 @@ pub use hydro::BasinsStage;
 pub use hydro::FlowRoutingStage;
 pub use hydro::PetStage;
 pub use hydro::RiverExtractionStage;
+pub use hydro::SoilMoistureStage;
 pub use hydro::WaterBalanceStage;
 pub use validation_stage::ValidationStage;
 

@@ -24,7 +24,7 @@ use island_core::field::ScalarField2D;
 use island_core::pipeline::SimulationStage;
 use island_core::world::WorldState;
 
-use crate::climate::common::{compute_distance_to_coast, grad_scalar_at, signed_uplift, wind_unit};
+use crate::climate::common::{compute_distance_to_mask, grad_scalar_at, signed_uplift, wind_unit};
 
 // ── tunable constants (v1 hardcoded; promoted to runtime config in Task 1B.9)
 
@@ -72,7 +72,7 @@ impl SimulationStage for PrecipitationStage {
         let wind = wind_unit(world.preset.prevailing_wind_dir);
         let marine_moisture = world.preset.marine_moisture_strength;
 
-        let dist_to_coast = compute_distance_to_coast(&coast.is_coast, w, h);
+        let dist_to_coast = compute_distance_to_mask(&coast.is_coast, w, h);
         // Normalising by the smaller dimension couples the effective
         // decay length to domain aspect ratio. v1 ships this as-is;
         // Task 1B.9 tuning may switch to `(w + h) / 2` for shape

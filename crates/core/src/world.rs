@@ -115,6 +115,13 @@ pub struct BakedSnapshot {
     /// proxy from an upwind raymarch. Not calibrated to mm/yr in v1.
     #[serde(skip)]
     pub precipitation: Option<ScalarField2D<f32>>,
+
+    /// SoilMoistureStage (DD5): normalized `[0, 1]` soil-moisture proxy
+    /// combining ET/PET, log-compressed accumulation, and river
+    /// proximity, with a 1-pass downstream smoothing along `flow_dir`.
+    /// Drives DD6 biome suitability.
+    #[serde(skip)]
+    pub soil_moisture: Option<ScalarField2D<f32>>,
 }
 
 /// Land / sea / coast classification produced by `CoastMaskStage`.

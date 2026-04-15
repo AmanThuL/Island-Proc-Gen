@@ -80,23 +80,20 @@ pub fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Manhattan (L1) distance from each cell to the nearest coast cell,
-/// measured in cell units via a multi-source Von4 BFS. Non-coast cells
-/// that can't reach a coast (e.g. a fully land-locked island with no
-/// coast cells at all) get `f32::MAX`.
+/// Manhattan (L1) distance from each cell to the nearest cell whose
+/// mask value is `1`, via a multi-source Von4 BFS. Cells unreachable
+/// from any source get `f32::MAX`.
 ///
-/// Shared by `TemperatureStage` (coastal modifier), `PrecipitationStage`
-/// (marine moisture seeding), and any later stage that needs a cheap
-/// proxy for "how far inland are we". `O(sim_cells)` work, single
-/// sweep.
-pub fn compute_distance_to_coast(coast: &MaskField2D, w: u32, h: u32) -> ScalarField2D<f32> {
+/// `O(sim_cells)` work per call. Shared by every stage that needs a
+/// cheap "how far am I from X" proxy over a binary mask.
+pub fn compute_distance_to_mask(mask: &MaskField2D, w: u32, h: u32) -> ScalarField2D<f32> {
     let mut dist = ScalarField2D::<f32>::new(w, h);
     dist.data.fill(f32::MAX);
 
     let mut frontier: Vec<(u32, u32)> = Vec::new();
     for iy in 0..h {
         for ix in 0..w {
-            if coast.get(ix, iy) == 1 {
+            if mask.get(ix, iy) == 1 {
                 dist.set(ix, iy, 0.0);
                 frontier.push((ix, iy));
             }

@@ -27,7 +27,7 @@ use island_core::pipeline::SimulationStage;
 use island_core::preset::MAX_RELIEF_REF_M;
 use island_core::world::WorldState;
 
-use crate::climate::common::compute_distance_to_coast;
+use crate::climate::common::compute_distance_to_mask;
 
 // ── physical + empirical constants (hardcoded v1; Sprint 3 promotes to config)
 
@@ -77,7 +77,7 @@ impl SimulationStage for TemperatureStage {
         // coastal modifier's order-of-magnitude role. Normalise by the
         // smaller dimension so square / rectangular domains share the
         // same falloff scale.
-        let dist_field = compute_distance_to_coast(&coast.is_coast, w, h);
+        let dist_field = compute_distance_to_mask(&coast.is_coast, w, h);
         let norm = w.min(h) as f32;
         let peak_m = MAX_RELIEF_REF_M * world.preset.max_relief;
 
