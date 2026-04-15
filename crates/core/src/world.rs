@@ -139,6 +139,11 @@ pub struct DerivedCaches {
     /// Consumed by slope overlay, Sprint 1B biome suitability, Sprint 2 SPIM.
     pub slope: Option<ScalarField2D<f32>>,
 
+    /// DerivedGeomorphStage: `laplacian(z_filled)` via 5-point stencil.
+    /// Used by the curvature overlay, Sprint 1B biome suitability, and
+    /// Sprint 2 hillslope diffusion. Sea cells are forced to `0.0`.
+    pub curvature: Option<ScalarField2D<f32>>,
+
     /// Sprint 1A CoastMaskStage: land / sea / coast masks + cached counts.
     pub coast_mask: Option<CoastMask>,
 
