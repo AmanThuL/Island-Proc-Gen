@@ -12,7 +12,7 @@ pub use neighborhood::{
     COAST_DETECT_NEIGHBORHOOD, Neighborhood, RIVER_CC_NEIGHBORHOOD, RIVER_COAST_CONTACT,
     neighbour_offsets,
 };
-pub use pipeline::{NoopStage, SimulationPipeline, SimulationStage};
+pub use pipeline::{NoopStage, PipelineError, SimulationPipeline, SimulationStage};
 pub use preset::{IslandAge, IslandArchetypePreset};
 pub use save::{LoadedWorld, SaveError, SaveMode};
 pub use seed::Seed;

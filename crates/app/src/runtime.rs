@@ -471,6 +471,10 @@ fn run_sprint_1a_pipeline(
 ) -> anyhow::Result<WorldState> {
     let mut world = WorldState::new(seed, preset, resolution);
 
+    // Push order MUST match `sim::StageId` ordinals so slider re-run via
+    // `SimulationPipeline::run_from(world, StageId::X as usize)` targets the
+    // correct stage. `StageId` is the single source of truth for stage
+    // indices — any reordering here must update the enum in lockstep.
     let mut pipeline = SimulationPipeline::new();
     pipeline.push(Box::new(TopographyStage));
     pipeline.push(Box::new(CoastMaskStage));

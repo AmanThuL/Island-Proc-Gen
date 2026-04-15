@@ -1,12 +1,15 @@
 //! Simulation pipeline: an ordered sequence of [`SimulationStage`]s.
 //!
-//! The pipeline is intentionally trivial in Sprint 0 — its only job is to
-//! exist as a CPU-only, graphics-free scaffold so Sprint 1A+ can drop stages
-//! in without any coupling to `wgpu` / `winit` / `egui`. The hard invariant
-//! is the [`tests::pipeline_runs_without_graphics`] test below: if a future
-//! dependency leak creeps into `core`, that test will still build and run,
-//! but `cargo tree -p core` will start flagging graphics crates — catch it
-//! in CI.
+//! The pipeline is CPU-only and graphics-free by construction. The headline
+//! invariant is the [`tests::pipeline_runs_without_graphics`] test: if a
+//! future dependency leak creeps into `core`, that test will still build
+//! and run, but `cargo tree -p core` will start flagging graphics crates —
+//! catch it in CI.
+//!
+//! [`SimulationPipeline::run_from`] supports incremental re-runs driven by
+//! slider interactions and load-time rebuilds. The linear-chain semantics
+//! make the call trivial: "run stages `[start..]` on a `WorldState` whose
+//! `[0..start)` prefix is already populated".
 
 use crate::world::WorldState;
 
@@ -22,6 +25,20 @@ pub trait SimulationStage {
     /// Advance `world` by this stage's contribution. Errors bubble up and
     /// short-circuit the pipeline.
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()>;
+}
+
+// ─── PipelineError ───────────────────────────────────────────────────────────
+
+/// Errors that can short-circuit [`SimulationPipeline::run_from`] before any
+/// stage runs.
+///
+/// Stages themselves still return `anyhow::Error` — this enum only covers
+/// the pre-flight checks that `run_from` owns.
+#[derive(Debug, thiserror::Error)]
+pub enum PipelineError {
+    /// `run_from(start)` was called with `start > len()`.
+    #[error("pipeline: start_index {start} exceeds pipeline length {len}")]
+    StartIndexOutOfBounds { start: usize, len: usize },
 }
 
 // ─── NoopStage ───────────────────────────────────────────────────────────────
@@ -76,7 +93,50 @@ impl SimulationPipeline {
 
     /// Run every stage in push order. Short-circuits on the first error.
     pub fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
-        for s in &self.stages {
+        self.run_from(world, 0)
+    }
+
+    /// Run stages `[start_index..len()]` in push order on a `WorldState`
+    /// whose `[0..start_index)` prefix has already been populated by a
+    /// previous `run` / `run_from(0)`.
+    ///
+    /// # Preconditions
+    ///
+    /// * `start_index <= len()`. A value equal to `len()` is a no-op
+    ///   (nothing to run).
+    /// * Fields produced by the stages in `[0..start_index)` must already
+    ///   be populated on `world`. The pipeline cannot introspect stage
+    ///   output names, so the caller is responsible for this contract;
+    ///   each stage is expected to short-circuit with its own
+    ///   "missing-precondition" `Err` if a required input is `None`.
+    ///
+    /// # Errors
+    ///
+    /// * [`PipelineError::StartIndexOutOfBounds`] if `start_index > len()`.
+    /// * Any stage error from the `[start_index..]` slice short-circuits
+    ///   the remainder of the call, exactly like [`run`].
+    ///
+    /// # Typical callers
+    ///
+    /// * `start_index == 0` — a fresh world or a `SaveMode::Minimal` load.
+    /// * Slider re-run — `ParamsPanel` maps each slider to a stage via
+    ///   `StageId` and calls `run_from(world, stage as usize)` so only the
+    ///   touched stage and its downstream neighbours re-run.
+    /// * `SaveMode::Full` load — `run_from(StageId::Coastal as usize)`
+    ///   rebuilds every `derived` field from the saved
+    ///   `authoritative.height` without re-running `TopographyStage`.
+    ///
+    /// [`run`]: SimulationPipeline::run
+    pub fn run_from(&self, world: &mut WorldState, start_index: usize) -> anyhow::Result<()> {
+        if start_index > self.stages.len() {
+            return Err(PipelineError::StartIndexOutOfBounds {
+                start: start_index,
+                len: self.stages.len(),
+            }
+            .into());
+        }
+
+        for s in &self.stages[start_index..] {
             tracing::info!(stage = s.name(), "running");
             s.run(world)?;
         }
@@ -169,11 +229,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn pipeline_runs_all_stages_in_order() {
-        let mut world = WorldState::new(Seed(1), test_preset(), Resolution::new(8, 8));
-        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
-
+    fn make_abc_pipeline(log: Rc<RefCell<Vec<&'static str>>>) -> SimulationPipeline {
         let mut pipeline = SimulationPipeline::new();
         pipeline.push(Box::new(CountingStage {
             label: "a",
@@ -183,10 +239,16 @@ mod tests {
             label: "b",
             log: log.clone(),
         }));
-        pipeline.push(Box::new(CountingStage {
-            label: "c",
-            log: log.clone(),
-        }));
+        pipeline.push(Box::new(CountingStage { label: "c", log }));
+        pipeline
+    }
+
+    #[test]
+    fn pipeline_runs_all_stages_in_order() {
+        let mut world = WorldState::new(Seed(1), test_preset(), Resolution::new(8, 8));
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let pipeline = make_abc_pipeline(log.clone());
         assert_eq!(pipeline.len(), 3);
         assert!(!pipeline.is_empty());
 
@@ -194,5 +256,81 @@ mod tests {
             .run(&mut world)
             .expect("counting stages should succeed");
         assert_eq!(*log.borrow(), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn run_from_zero_is_equivalent_to_run() {
+        let mut world_run = WorldState::new(Seed(9), test_preset(), Resolution::new(4, 4));
+        let log_run: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        make_abc_pipeline(log_run.clone())
+            .run(&mut world_run)
+            .expect("run should succeed");
+
+        let mut world_run_from = WorldState::new(Seed(9), test_preset(), Resolution::new(4, 4));
+        let log_run_from: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        make_abc_pipeline(log_run_from.clone())
+            .run_from(&mut world_run_from, 0)
+            .expect("run_from(0) should succeed");
+
+        assert_eq!(*log_run.borrow(), *log_run_from.borrow());
+        assert_eq!(*log_run_from.borrow(), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn run_from_n_skips_prefix_stages() {
+        let mut world = WorldState::new(Seed(3), test_preset(), Resolution::new(4, 4));
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        let pipeline = make_abc_pipeline(log.clone());
+
+        pipeline
+            .run(&mut world)
+            .expect("initial run should succeed");
+        assert_eq!(*log.borrow(), vec!["a", "b", "c"]);
+        log.borrow_mut().clear();
+
+        pipeline
+            .run_from(&mut world, 2)
+            .expect("run_from(2) should succeed");
+        assert_eq!(
+            *log.borrow(),
+            vec!["c"],
+            "only the final stage should have re-run"
+        );
+    }
+
+    #[test]
+    fn run_from_len_is_no_op() {
+        let mut world = WorldState::new(Seed(4), test_preset(), Resolution::new(4, 4));
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        let pipeline = make_abc_pipeline(log.clone());
+        pipeline
+            .run_from(&mut world, pipeline.len())
+            .expect("run_from(len()) should succeed");
+        assert!(
+            log.borrow().is_empty(),
+            "no stages should have run: {:?}",
+            log.borrow()
+        );
+    }
+
+    #[test]
+    fn run_from_out_of_bounds_errors() {
+        let mut world = WorldState::new(Seed(5), test_preset(), Resolution::new(4, 4));
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        let pipeline = make_abc_pipeline(log.clone());
+
+        let err = pipeline
+            .run_from(&mut world, pipeline.len() + 1)
+            .expect_err("run_from(len + 1) should error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("exceeds pipeline length"),
+            "expected StartIndexOutOfBounds, got: {msg}"
+        );
+        assert!(
+            log.borrow().is_empty(),
+            "no stages should have run on error: {:?}",
+            log.borrow()
+        );
     }
 }
