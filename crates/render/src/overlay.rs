@@ -107,13 +107,20 @@ pub struct OverlayRegistry {
 }
 
 impl OverlayRegistry {
-    /// Return the Sprint 1A overlay registry wired to the 6 real `DerivedCaches` fields.
+    /// Return the Sprint 1B overlay registry — 6 Sprint 1A geomorph
+    /// overlays + 6 Sprint 1B climate / ecology / hex overlays, total
+    /// 12 (matching roadmap §"第一批必须做的 debug overlay" exactly).
     ///
-    /// `final_elevation` reads `z_filled` (not `height`) — `authoritative.height` stores
-    /// `z_raw` pre-pit-fill; the render path and flow routing both see `z_filled`.
-    pub fn sprint_1a_defaults() -> Self {
+    /// `final_elevation` reads `z_filled` (not `height`) —
+    /// `authoritative.height` stores `z_raw` pre-pit-fill; the render
+    /// path and flow routing both see `z_filled`. Only
+    /// `final_elevation` is visible by default; everything else is
+    /// hidden so the user can toggle overlays without fighting alpha
+    /// stacking.
+    pub fn sprint_1b_defaults() -> Self {
         Self {
             entries: vec![
+                // ── Sprint 1A (geomorph + hydro) ──────────────────────
                 OverlayDescriptor {
                     id: "initial_uplift",
                     label: "Initial uplift",
@@ -162,8 +169,63 @@ impl OverlayRegistry {
                     value_range: ValueRange::Fixed(0.0, 1.0),
                     visible: false,
                 },
+                // ── Sprint 1B (climate + ecology + hex) ───────────────
+                OverlayDescriptor {
+                    id: "precipitation",
+                    label: "Precipitation",
+                    source: OverlaySource::ScalarBaked("precipitation"),
+                    palette: PaletteId::Viridis,
+                    value_range: ValueRange::Fixed(0.0, 1.0),
+                    visible: false,
+                },
+                OverlayDescriptor {
+                    id: "temperature",
+                    label: "Temperature",
+                    source: OverlaySource::ScalarBaked("temperature"),
+                    palette: PaletteId::Turbo,
+                    value_range: ValueRange::Auto,
+                    visible: false,
+                },
+                OverlayDescriptor {
+                    id: "soil_moisture",
+                    label: "Soil moisture",
+                    source: OverlaySource::ScalarBaked("soil_moisture"),
+                    palette: PaletteId::Viridis,
+                    value_range: ValueRange::Fixed(0.0, 1.0),
+                    visible: false,
+                },
+                OverlayDescriptor {
+                    id: "dominant_biome",
+                    label: "Dominant biome",
+                    source: OverlaySource::ScalarDerived("dominant_biome_per_cell"),
+                    palette: PaletteId::Categorical,
+                    value_range: ValueRange::Fixed(0.0, 7.0),
+                    visible: false,
+                },
+                OverlayDescriptor {
+                    id: "curvature",
+                    label: "Curvature",
+                    source: OverlaySource::ScalarDerived("curvature"),
+                    palette: PaletteId::Turbo,
+                    value_range: ValueRange::Auto,
+                    visible: false,
+                },
+                OverlayDescriptor {
+                    id: "hex_aggregated",
+                    label: "Hex aggregated",
+                    source: OverlaySource::ScalarDerived("hex_dominant_per_cell"),
+                    palette: PaletteId::Categorical,
+                    value_range: ValueRange::Fixed(0.0, 7.0),
+                    visible: false,
+                },
             ],
         }
+    }
+
+    /// Backwards-compatible alias used by tests and the existing app
+    /// runtime. Returns the Sprint 1B registry.
+    pub fn sprint_1a_defaults() -> Self {
+        Self::sprint_1b_defaults()
     }
 
     /// Return a slice of all registered descriptors.
@@ -225,6 +287,7 @@ pub(crate) fn resolve_scalar_source<'w>(
 ) -> Option<ResolvedField<'w>> {
     use OverlaySource::*;
     match source {
+        // Sprint 1A derived scalars.
         ScalarDerived("initial_uplift") => world
             .derived
             .initial_uplift
@@ -237,9 +300,27 @@ pub(crate) fn resolve_scalar_source<'w>(
         }
         ScalarDerived("basin_id") => world.derived.basin_id.as_ref().map(ResolvedField::U32),
         Mask("river_mask") => world.derived.river_mask.as_ref().map(ResolvedField::Mask),
-        // Sprint 1A has no authoritative / baked scalar sources wired, and
-        // no vector overlays. Return None so the renderer silently skips them
-        // rather than panicking on an unrecognised key.
+
+        // Sprint 1B baked scalar fields.
+        ScalarBaked("precipitation") => world.baked.precipitation.as_ref().map(ResolvedField::F32),
+        ScalarBaked("temperature") => world.baked.temperature.as_ref().map(ResolvedField::F32),
+        ScalarBaked("soil_moisture") => world.baked.soil_moisture.as_ref().map(ResolvedField::F32),
+
+        // Sprint 1B derived scalars.
+        ScalarDerived("curvature") => world.derived.curvature.as_ref().map(ResolvedField::F32),
+        ScalarDerived("dominant_biome_per_cell") => world
+            .derived
+            .dominant_biome_per_cell
+            .as_ref()
+            .map(ResolvedField::U32),
+        ScalarDerived("hex_dominant_per_cell") => world
+            .derived
+            .hex_dominant_per_cell
+            .as_ref()
+            .map(ResolvedField::U32),
+
+        // Unknown / not-yet-populated sources silently return None so
+        // the renderer skips rather than panicking on a missing field.
         _ => None,
     }
 }
@@ -251,12 +332,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_6_sprint_1a_defaults() {
-        assert_eq!(OverlayRegistry::sprint_1a_defaults().all().len(), 6);
+    fn registry_has_12_sprint_1b_defaults() {
+        assert_eq!(OverlayRegistry::sprint_1b_defaults().all().len(), 12);
     }
 
     #[test]
-    fn by_id_queries_all_defaults() {
+    fn by_id_queries_all_sprint_1a_defaults() {
         let reg = OverlayRegistry::sprint_1a_defaults();
         assert!(reg.by_id("initial_uplift").is_some());
         assert!(reg.by_id("final_elevation").is_some());
@@ -264,6 +345,17 @@ mod tests {
         assert!(reg.by_id("flow_accumulation").is_some());
         assert!(reg.by_id("basin_partition").is_some());
         assert!(reg.by_id("river_network").is_some());
+    }
+
+    #[test]
+    fn by_id_queries_all_sprint_1b_defaults() {
+        let reg = OverlayRegistry::sprint_1b_defaults();
+        assert!(reg.by_id("precipitation").is_some());
+        assert!(reg.by_id("temperature").is_some());
+        assert!(reg.by_id("soil_moisture").is_some());
+        assert!(reg.by_id("dominant_biome").is_some());
+        assert!(reg.by_id("curvature").is_some());
+        assert!(reg.by_id("hex_aggregated").is_some());
     }
 
     #[test]

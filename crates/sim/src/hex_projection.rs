@@ -144,12 +144,29 @@ impl SimulationStage for HexProjectionStage {
             });
         }
 
-        world.derived.hex_grid = Some(grid.clone());
-        world.derived.hex_attrs = Some(HexAttributeField {
+        let hex_attrs = HexAttributeField {
             attrs,
             cols: grid.cols,
             rows: grid.rows,
-        });
+        };
+
+        // Per-sim-cell sidecar: look up each cell's hex dominant
+        // biome and cast to u32. Drives the "hex aggregated" overlay
+        // without a separate hex render pipeline.
+        let mut hex_dominant = island_core::field::ScalarField2D::<u32>::new(sim_w, sim_h);
+        for iy in 0..sim_h {
+            for ix in 0..sim_w {
+                if coast.is_land.get(ix, iy) != 1 {
+                    continue;
+                }
+                let hex_id = grid.hex_id_of_cell.get(ix, iy) as usize;
+                hex_dominant.set(ix, iy, hex_attrs.attrs[hex_id].dominant_biome as u32);
+            }
+        }
+
+        world.derived.hex_grid = Some(grid);
+        world.derived.hex_attrs = Some(hex_attrs);
+        world.derived.hex_dominant_per_cell = Some(hex_dominant);
         Ok(())
     }
 }

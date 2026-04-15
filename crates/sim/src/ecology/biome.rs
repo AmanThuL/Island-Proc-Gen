@@ -142,7 +142,22 @@ impl SimulationStage for BiomeWeightsStage {
         // Per-basin mean + α-blended smoothing (DD6 §283-302).
         apply_basin_smoothing(&mut weights, basin_id, coast);
 
+        // Derived sidecar: per-cell argmax as u32 so the overlay path
+        // can render it through the same ScalarDerived resolver that
+        // basin_id uses.
+        let mut dominant = ScalarField2D::<u32>::new(w, h);
+        for iy in 0..h {
+            for ix in 0..w {
+                if coast.is_land.get(ix, iy) != 1 {
+                    continue;
+                }
+                let biome = weights.dominant_biome_at(ix, iy);
+                dominant.set(ix, iy, biome as u32);
+            }
+        }
+
         world.baked.biome_weights = Some(weights);
+        world.derived.dominant_biome_per_cell = Some(dominant);
         Ok(())
     }
 }

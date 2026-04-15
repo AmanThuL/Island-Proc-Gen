@@ -346,6 +346,21 @@ pub struct DerivedCaches {
     /// weights, dominant biome, river flag).
     pub hex_attrs: Option<HexAttributeField>,
 
+    /// BiomeWeightsStage (DD6): per-cell argmax biome index (cast from
+    /// `BiomeType`). Rendered as the "dominant biome" overlay via
+    /// the `Categorical` palette. Produced alongside the full
+    /// `baked.biome_weights` during Sprint 1B pipeline runs so the
+    /// overlay path can reuse the existing ScalarField2D<u32>
+    /// resolve-branch that basin_id uses.
+    pub dominant_biome_per_cell: Option<ScalarField2D<u32>>,
+
+    /// HexProjectionStage (DD8): per-sim-cell dominant biome of the
+    /// hex that contains it, cast to u32. Rendered as the "hex
+    /// aggregated" overlay — visually shows hex-level classification
+    /// at sim resolution so the terrain mesh can colour it without
+    /// a dedicated hex render pipeline.
+    pub hex_dominant_per_cell: Option<ScalarField2D<u32>>,
+
     /// Sprint 1A CoastMaskStage: land / sea / coast masks + cached counts.
     pub coast_mask: Option<CoastMask>,
 
