@@ -129,6 +129,63 @@ pub struct BakedSnapshot {
     pub biome_weights: Option<BiomeWeights>,
 }
 
+// ─── Hex layout + aggregation types ──────────────────────────────────────────
+
+/// Orientation of a hexagonal grid. Sprint 1B ships `FlatTop` — two
+/// parallel edges run along the screen X axis. `PointyTop` is on
+/// reserve for the Sprint 5 full hex view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HexLayout {
+    FlatTop,
+}
+
+/// 64×64 flat-top hex grid overlay on the simulation resolution.
+/// `hex_id_of_cell` is a precomputed row-major lookup of "which hex
+/// does this sim cell belong to", so aggregation passes are a simple
+/// scatter-add without any hex-math inside the hot loop.
+#[derive(Debug, Clone)]
+pub struct HexGrid {
+    pub cols: u32,
+    pub rows: u32,
+    pub hex_size: f32,
+    pub layout: HexLayout,
+    pub hex_id_of_cell: ScalarField2D<u32>,
+}
+
+/// Per-hex aggregated attributes from the sim-cell fields.
+#[derive(Debug, Clone)]
+pub struct HexAttributes {
+    pub elevation: f32,
+    pub slope: f32,
+    pub rainfall: f32,
+    pub temperature: f32,
+    pub moisture: f32,
+    pub biome_weights: Vec<f32>,
+    pub dominant_biome: BiomeType,
+    pub has_river: bool,
+}
+
+/// Flat `cols * rows` storage of [`HexAttributes`], row-major.
+#[derive(Debug, Clone)]
+pub struct HexAttributeField {
+    pub attrs: Vec<HexAttributes>,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+impl HexAttributeField {
+    /// Row-major lookup: `(col, row) → index`.
+    #[inline]
+    pub fn index(&self, col: u32, row: u32) -> usize {
+        (row * self.cols + col) as usize
+    }
+
+    /// Read-only access by hex coordinate.
+    pub fn get(&self, col: u32, row: u32) -> &HexAttributes {
+        &self.attrs[self.index(col, row)]
+    }
+}
+
 /// Functional biome types used by `BiomeWeightsStage` (DD6).
 ///
 /// Fixed ordering is load-bearing: the per-cell weight vector in
@@ -278,6 +335,16 @@ pub struct DerivedCaches {
     /// WaterBalanceStage (DD4): long-term-average runoff `P - ET`.
     /// Drives DD5 soil moisture and Sprint 2 stream-power erosion.
     pub runoff: Option<ScalarField2D<f32>>,
+
+    /// HexProjectionStage (DD8): precomputed 64×64 flat-top hex grid
+    /// plus `hex_id_of_cell` lookup. Invariant under slider re-runs
+    /// that don't touch simulation resolution.
+    pub hex_grid: Option<HexGrid>,
+
+    /// HexProjectionStage (DD8): aggregated per-hex attributes
+    /// (elevation, slope, rainfall, temperature, moisture, biome
+    /// weights, dominant biome, river flag).
+    pub hex_attrs: Option<HexAttributeField>,
 
     /// Sprint 1A CoastMaskStage: land / sea / coast masks + cached counts.
     pub coast_mask: Option<CoastMask>,

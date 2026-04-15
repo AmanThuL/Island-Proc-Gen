@@ -22,5 +22,6 @@ pub use validation::{
 };
 pub use world::{
     AuthoritativeFields, BakedSnapshot, BiomeType, BiomeWeights, CoastMask, D8_OFFSETS,
-    DerivedCaches, FLOW_DIR_SINK, Resolution, WorldState,
+    DerivedCaches, FLOW_DIR_SINK, HexAttributeField, HexAttributes, HexGrid, HexLayout, Resolution,
+    WorldState,
 };

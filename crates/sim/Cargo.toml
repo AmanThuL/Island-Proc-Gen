@@ -8,6 +8,7 @@ authors.workspace = true
 
 [dependencies]
 island_core = { path = "../core", package = "core" }
+hex         = { path = "../hex" }
 anyhow      = { workspace = true }
 thiserror   = { workspace = true }
 tracing     = { workspace = true }

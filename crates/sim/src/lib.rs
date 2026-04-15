@@ -9,6 +9,7 @@
 pub mod climate;
 pub mod ecology;
 pub mod geomorph;
+pub mod hex_projection;
 pub mod hydro;
 pub mod validation_stage;
 
@@ -20,6 +21,7 @@ pub use geomorph::CoastMaskStage;
 pub use geomorph::DerivedGeomorphStage;
 pub use geomorph::PitFillStage;
 pub use geomorph::TopographyStage;
+pub use hex_projection::HexProjectionStage;
 pub use hydro::AccumulationStage;
 pub use hydro::BasinsStage;
 pub use hydro::FlowRoutingStage;
