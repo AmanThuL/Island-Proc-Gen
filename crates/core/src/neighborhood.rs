@@ -31,6 +31,11 @@ pub const RIVER_COAST_CONTACT: Neighborhood = Neighborhood::Moore8;
 ///
 /// Returns a `'static` slice of `(dx, dy)` pairs. Von4 uses N/E/S/W order;
 /// Moore8 uses row-major order omitting the centre.
+///
+/// `#[rustfmt::skip]` preserves the 3×3 grid layout of the Moore8 arm — the
+/// visual hole at the centre documents "skip self" and is load-bearing for
+/// readability of the hydro/coast-detection code that depends on this table.
+#[rustfmt::skip]
 pub const fn neighbour_offsets(kind: Neighborhood) -> &'static [(i32, i32)] {
     match kind {
         Neighborhood::Von4 => &[(0, -1), (1, 0), (0, 1), (-1, 0)],

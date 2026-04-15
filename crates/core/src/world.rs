@@ -57,6 +57,12 @@ pub const FLOW_DIR_SINK: u8 = 0xFF;
 /// D8 neighbour offset table. Index `i` in `0..=7` maps to `(dx, dy)`.
 ///
 /// Order: E, NE, N, NW, W, SW, S, SE — clockwise from east.
+///
+/// `#[rustfmt::skip]` preserves the sign-aligned column layout and the
+/// directional trailing comments. This table is tied to the `FLOW_DIR_SINK`
+/// invariant (sink sentinel is `0xFF`, not `0`, because `0` is east) and the
+/// comments are the first place a reader looks when debugging hydro stages.
+#[rustfmt::skip]
 pub const D8_OFFSETS: [(i32, i32); 8] = [
     ( 1,  0), // 0: E
     ( 1, -1), // 1: NE
