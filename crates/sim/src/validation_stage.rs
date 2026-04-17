@@ -168,4 +168,102 @@ mod tests {
             "ValidationStage must Err when preconditions are missing"
         );
     }
+
+    /// Regression guard for the Sprint 1B wind-slider 0↔π acceptance pair.
+    ///
+    /// The runtime slider handler syncs the new `wind_dir` into
+    /// `world.preset` and calls
+    /// `pipeline.run_from(world, StageId::Precipitation as usize)`.
+    /// If any downstream stage (Fog, Pet, WaterBalance, SoilMoisture,
+    /// BiomeWeights) fails to re-execute or silently reads a stale
+    /// input, the overlay renders identical before/after — exactly
+    /// the visual-acceptance failure mode the Sprint 1B 60↔61
+    /// screenshot pair was meant to catch.
+    ///
+    /// Snapshots five wind-dependent outputs and asserts all five
+    /// mutate on `run_from`: `precipitation` (entry point),
+    /// `fog_likelihood` (reads wind_dir directly, consumed by
+    /// BiomeWeights), `soil_moisture`, `biome_weights`, and
+    /// `dominant_biome_per_cell` (what the overlay renders). In
+    /// practice `precipitation` and `dominant_biome_per_cell` carry
+    /// the independent signal — the middle three are implied by the
+    /// first in most regressions. They're listed anyway so the full
+    /// re-run contract is explicit at the test site; a reader
+    /// diagnosing a future regression can see the whole chain
+    /// without jumping files.
+    #[test]
+    fn wind_dir_rerun_propagates_through_biome_chain() {
+        use crate::{
+            BiomeWeightsStage, FogLikelihoodStage, HexProjectionStage, PetStage,
+            PrecipitationStage, SoilMoistureStage, StageId, TemperatureStage, WaterBalanceStage,
+        };
+        let mut preset = volcanic_preset();
+        preset.prevailing_wind_dir = 0.0;
+        let mut world = WorldState::new(Seed(42), preset, Resolution::new(64, 64));
+
+        let mut pipeline = SimulationPipeline::new();
+        pipeline.push(Box::new(TopographyStage));
+        pipeline.push(Box::new(CoastMaskStage));
+        pipeline.push(Box::new(PitFillStage));
+        pipeline.push(Box::new(DerivedGeomorphStage));
+        pipeline.push(Box::new(FlowRoutingStage));
+        pipeline.push(Box::new(AccumulationStage));
+        pipeline.push(Box::new(BasinsStage));
+        pipeline.push(Box::new(RiverExtractionStage));
+        pipeline.push(Box::new(TemperatureStage));
+        pipeline.push(Box::new(PrecipitationStage));
+        pipeline.push(Box::new(FogLikelihoodStage));
+        pipeline.push(Box::new(PetStage));
+        pipeline.push(Box::new(WaterBalanceStage));
+        pipeline.push(Box::new(SoilMoistureStage));
+        pipeline.push(Box::new(BiomeWeightsStage));
+        pipeline.push(Box::new(HexProjectionStage));
+        pipeline.push(Box::new(ValidationStage));
+
+        pipeline.run(&mut world).expect("initial run");
+        let precip_a = world.baked.precipitation.as_ref().unwrap().data.clone();
+        let fog_a = world.derived.fog_likelihood.as_ref().unwrap().data.clone();
+        let soil_a = world.baked.soil_moisture.as_ref().unwrap().data.clone();
+        let biome_a = world.baked.biome_weights.as_ref().unwrap().weights.clone();
+        let dominant_a = world
+            .derived
+            .dominant_biome_per_cell
+            .as_ref()
+            .unwrap()
+            .data
+            .clone();
+
+        world.preset.prevailing_wind_dir = std::f32::consts::PI;
+        pipeline
+            .run_from(&mut world, StageId::Precipitation as usize)
+            .expect("rerun from Precipitation");
+
+        let precip_b = &world.baked.precipitation.as_ref().unwrap().data;
+        let fog_b = &world.derived.fog_likelihood.as_ref().unwrap().data;
+        let soil_b = &world.baked.soil_moisture.as_ref().unwrap().data;
+        let biome_b = &world.baked.biome_weights.as_ref().unwrap().weights;
+        let dominant_b = &world.derived.dominant_biome_per_cell.as_ref().unwrap().data;
+
+        assert_ne!(
+            &precip_a, precip_b,
+            "precipitation must change when wind flips 180°"
+        );
+        assert_ne!(
+            &fog_a, fog_b,
+            "fog_likelihood must change when wind flips 180°"
+        );
+        assert_ne!(
+            &soil_a, soil_b,
+            "soil_moisture must change when wind flips 180°"
+        );
+        assert_ne!(
+            &biome_a, biome_b,
+            "biome_weights must change when wind flips 180°"
+        );
+        assert_ne!(
+            &dominant_a, dominant_b,
+            "dominant_biome_per_cell must change when wind flips 180° — \
+             if this fails, the wind-slider 0↔π screenshot pair renders identically"
+        );
+    }
 }
