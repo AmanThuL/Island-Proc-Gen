@@ -17,13 +17,12 @@ cobertura.xml
 /captures/
 /benchmarks/
 
-# ─── Obsidian vault symlinks (local editing convenience) ──────────────
-# docs/design and docs/architecture are symlinks into the author's
-# personal Obsidian vault — absolute paths that won't resolve on any
-# other machine. The canonical source of sprint plans / architecture
-# notes lives outside the repo for now.
+# ─── Obsidian vault symlink (local editing convenience) ───────────────
+# docs/design is a symlink into the author's personal Obsidian vault —
+# absolute paths that won't resolve on any other machine. Sprint plans
+# and design docs live outside the repo for now. docs/architecture was
+# previously symlinked too but is now a real tracked directory.
 /docs/design
-/docs/architecture
 
 # ─── Logs ─────────────────────────────────────────────────────────────
 *.log
