@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-15
+**Last Updated:** 2026-04-17
 
 ---
 
@@ -21,20 +21,23 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 1B — climate + ecology closed loop. Library path
-**fully shipped on `dev`** in 14 atomic commits across 2026-04-15.
-All 1B-core tasks from the sprint doc §0 required-for-close-out list
+**Primary:** Sprint 1B — climate + ecology closed loop. **Closed
+on `dev` 2026-04-17.** Library path shipped in 14 atomic commits
+across 2026-04-15 and §10 visual acceptance closed 2026-04-17 with
+a 16-shot capture pass (library + window-session both green). All
+1B-core tasks from the sprint doc §0 required-for-close-out list
 are landed: run_from infra, always-on curvature, 8 new sim stages
 (TemperatureStage → HexProjectionStage), 6 new overlays, 4 new
 validation invariants, golden-seed metrics regen, and the first
 interactive wind-direction slider with end-to-end pipeline re-run
 via `run_from` + `OverlayRenderer::refresh`.
 
-**269 tests passing** across 8 crates (core 55, sim 123, data 10,
-render 65, hex 7, app 9, ui 0, gpu 0). Regression: +81 new tests
-since Sprint 1A's 188 baseline. `cargo fmt --check &&
-cargo clippy --workspace -- -D warnings && cargo test --workspace`
-is the hard CI gate, all green.
+**270 tests passing** across 8 crates (core 55, sim 124, data 10,
+render 65, hex 7, app 9, ui 0, gpu 0). Regression: +82 new tests
+since Sprint 1A's 188 baseline (latest: +1 for the wind→biome
+re-run regression guard in `sim::validation_stage`). `cargo fmt
+--check && cargo clippy --workspace -- -D warnings && cargo test
+--workspace` is the hard CI gate, all green.
 
 **Sprint 1B §10 acceptance checklist status:**
 
@@ -48,9 +51,13 @@ Functional:
   all `is_some()` after pipeline run (asserted by the new
   `full_sprint_1b_pipeline_passes_all_invariants` integration test)
 - ✓ Wind direction slider re-runs the pipeline via `run_from` and
-  refreshes overlay textures in `tick()` — library path is complete;
-  the live `cargo run -p app` window session for visual verification
-  is the last open item (needs user approval per CLAUDE.md)
+  refreshes overlay textures in `tick()` — library path + visual
+  verification both closed 2026-04-17. Pipeline-level regression
+  guard `wind_dir_rerun_propagates_through_biome_chain` in
+  `sim::validation_stage::tests` asserts precipitation /
+  fog_likelihood / soil_moisture / biome_weights /
+  dominant_biome_per_cell all mutate on `run_from(Precipitation)`,
+  independent of whether a given overlay's argmax is wind-stable.
 - ✓ Dominant biome overlay: the 16-cell varied-domain integration
   test asserts at least 3 distinct dominant biomes appear; golden
   seed metrics confirm 3 biomes (Grassland 68%, BareRockLava 28%,
@@ -70,14 +77,27 @@ Paper:
 - Deferred — spec §7 Core Pack reads + Bruijnzeel notes flagged for
   the next low-energy window; non-blocking per §7.
 
+Visual acceptance (16 shots, INDEX.md in
+`docs/design/sprints/sprint_1b_visual_acceptance/`):
+- ✓ 00 baseline matches Sprint 1A `20_preset_hero.png` (cross-
+  sprint regression gate: no 1B stage corrupted a 1A field)
+- ✓ 01 panels: Params panel shows `Climate` section with wind slider;
+  Overlays panel lists all 12 IDs
+- ✓ 40–46 Pass 1 six new overlays + precip/rivers stack
+- ✓ 50–53 Pass 2 wind slider rotates precipitation (all 4 distinct,
+  50↔52 and 51↔53 mirror pairs verified)
+- ✓ 60–61 Pass 3 wind slider rotates soil moisture (mirror flip
+  visible; see 1B visual spec clarification below for why this pair
+  uses `soil_moisture`, not `dominant_biome`)
+- ✓ 70 Pass 4 4-overlay stack renders without clobber or NaN
+
 **Next session priorities** (see [QUICK REFERENCE](#quick-reference)):
-1. User-approved `cargo run -p app` window session to drag the wind
-   slider and visually verify the precipitation / biome overlays
-   refresh in real time.
-2. §7 Paper pack deep reads (Chen 2023 / Bruijnzeel 2005 / 2011).
-3. Sprint 1B-tail (alpha slider per overlay, seed-cycling, 9-shot
+1. §7 Paper pack deep reads (Chen 2023 / Bruijnzeel 2005 / 2011).
+2. Sprint 1B-tail (alpha slider per overlay, seed-cycling, 9-shot
    baseline, blue noise size toggle) — optional, parked under
    [DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints).
+3. Sprint 2 — geomorph credibility (StreamPowerIncisionStage on
+   `authoritative.height`).
 
 ---
 
@@ -105,6 +125,27 @@ pass confirmed no outstanding issues.
 | `0e454db` | 1B.8 — 6 new overlays (12 total) | §6 | 268 → 269 |
 | `75909ea` | 1B.10 — `SummaryMetrics` + golden regen | §9 | 269 (same) |
 | `0ee8b82` | 1B.9 — Wind direction slider + `run_from` re-run | §5 | 269 (same) |
+| `9818e8b` | §10 visual acceptance — window title Sprint 1A → 1B | §10 | 269 (same) |
+| `cefd530` | §10 visual acceptance — wind→biome re-run regression guard | §10 | 269 → 270 |
+
+**Sprint 1B visual spec clarification (2026-04-17):** Pass 3 of the
+visual acceptance (`docs/design/sprints/sprint_1b_visual_acceptance/INDEX.md`)
+originally shot the **Dominant biome** overlay at wind=0 and wind=π
+and expected a mirror flip. Actual capture pair rendered nearly
+identically. Investigation via the new
+`wind_dir_rerun_propagates_through_biome_chain` test confirmed the
+pipeline IS correct — `precipitation`, `fog_likelihood`,
+`soil_moisture`, `biome_weights`, and `dominant_biome_per_cell` all
+mutate on `run_from(Precipitation)`. Root cause of the visual
+identity: only ~3 % of land cells flip biome argmax under a 180°
+wind swing, because the 8-biome categorical argmax is dominated by
+wind-invariant inputs (`z_norm`, `slope`, `river_mask`). Pass 3 was
+retargeted to the **Soil moisture** overlay (far more wind-
+sensitive — max moisture delta 0.23) which captures the propagation
+proof viscerally. The pipeline-level regression guard replaces the
+visual `dominant_biome` probe with a deterministic byte-level
+assertion, so future `run_from` breakage fires at the test
+boundary rather than via human-eyeballed screenshots.
 
 **StageId enum is the single source of truth** for pipeline indices.
 The 16-variant enum (`Topography = 0` … `HexProjection = 15`) is
@@ -183,10 +224,6 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
 
 **From Sprint 1B close-out (new):**
 
-- **User-approved `cargo run -p app` visual verification** of the
-  wind-direction slider. Library path is complete; the live window
-  session to drag the slider and watch the precipitation / biome
-  overlays refresh needs explicit user approval per CLAUDE.md.
 - **Sprint 1B-tail T1/T2/T3** from sprint doc §11 — the "nice to
   have" UI/tooling polish items that depend on Sprint 1B's
   ParamsPanel / OverlayPanel but are explicitly **not** part of the
@@ -198,33 +235,45 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
     stays at the Sprint 1A hardcoded `0.6` for now.
   - **T3 — Blue noise runtime size toggle** (64 / 128 / 256). The
     other two PNGs sit in `assets/noise/` but nothing loads them.
-- **Sprint 2 — BareRockLava / DryShrub / CoastalScrub / LowlandForest
-  parameter tuning.** The current v1 suitability parameters collapse
-  the `volcanic_single` preset onto Grassland + BareRockLava +
-  RiparianVegetation (3 biomes, passes §10 acceptance but leaves 5
-  biomes at 0 % coverage). The spec explicitly parks this under
-  Task 1B.9's slider UI which lands as a scaffold in this sprint but
-  doesn't expose per-biome tunables yet.
+- **Sprint 2 — biome suitability parameter tuning** (previously
+  framed as "BareRockLava / DryShrub / CoastalScrub / LowlandForest
+  tuning"). The current v1 parameters collapse `volcanic_single`
+  onto Grassland + BareRockLava + RiparianVegetation (3 biomes,
+  passes §10 acceptance but leaves 5 biomes at 0 % coverage). The
+  Sprint 1B visual acceptance surfaced a second symptom of the same
+  v1-tight-parameter problem: only ~3 % of land cells flip biome
+  argmax under a 180° wind swing at 256² (measured 2026-04-17 via
+  the new regression test). Tuning directions: widen σ on
+  LowlandForest / MontaneWetForest / Grassland moisture bells so
+  argmax boundaries sit closer to typical soil_moisture values,
+  OR raise `CONDENSATION_RATE` / `RAIN_SHADOW_K` in
+  `sim::climate::precipitation` so the wind-driven moisture swing
+  reaches more cells. Task 1B.9 shipped the slider scaffold; per-
+  biome tunables are not exposed yet.
 - **Sprint 1B paper pack** — `docs/papers/sprint_packs/sprint_1b.md`
   Bruijnzeel 2005 / 2011 notes, Chen 2023 Budyko writeup, and Core
   Pack #2/#3/#5/#6/#8 "Sprint 1B 落地点" sections. Non-blocking per
   §7; tackle in a low-energy session.
-- **`cargo run -p app` slider cadence tuning.** Re-run cost is 8
-  stages at 256² ≈ 100 ms theoretical, well under the 200 ms target.
-  First live session will confirm.
+- **Slider cadence measurement.** Re-run cost is 8 stages at 256² ≈
+  100 ms theoretical, well under the 200 ms target. The 2026-04-17
+  visual acceptance session felt responsive in practice; no
+  profiling numbers captured yet.
 
 ---
 
 ## DEVELOPMENT
 
 ### Sprint 1B — Climate + Ecology closed loop
-**Status:** Library path complete on `dev` as of 2026-04-15. 14
-atomic commits covering every §10 core close-out item. **269 tests**
-across 8 crates (+81 from Sprint 1A's 188 baseline). Wind-direction
-slider wired end-to-end (`ParamsPanel → run_from →
-OverlayRenderer::refresh`) but the live `cargo run -p app` visual
-verification window pass is deferred to the next session per
-CLAUDE.md rule 2.
+**Status:** **Closed on `dev` 2026-04-17.** 14 atomic commits +
+2 §10 close-out commits (window title + regression guard). **270
+tests** across 8 crates (+82 from Sprint 1A's 188 baseline).
+Wind-direction slider wired end-to-end (`ParamsPanel →
+Runtime::tick → pipeline.run_from(StageId::Precipitation) →
+OverlayRenderer::refresh`) and visually verified against the
+16-shot acceptance capture pass. Pass 3 retargeted from
+`dominant_biome` to `soil_moisture` overlay after investigation
+(see RECENTLY SHIPPED for the full write-up and the regression
+test that replaced the visual probe).
 **Doc:** [`docs/design/sprints/sprint_1b_climate_ecology.md`](docs/design/sprints/sprint_1b_climate_ecology.md)
 See [CURRENT FOCUS](#current-focus) and [RECENTLY SHIPPED](#recently-shipped)
 for the per-task + per-commit breakdown.
@@ -640,11 +689,12 @@ incision stage reads, so the first task is a new
 `authoritative.height` via an explicit Euler step. Touches
 `crates/sim/src/geomorph/` and adds a 9th `StageId` ordinal after
 `RiverExtraction`. Sprint 2 doc: `docs/design/sprints/sprint_2_geomorph_credibility.md`.
-**Medium energy?** → Ship the `cargo run -p app` visual verification
-of the Sprint 1B wind slider. Check with user first, then drag the
-slider and inspect the precipitation / biome overlays for live
-refresh. If the slider looks laggy, measure `run_from` wall-clock in
-`Runtime::tick` and compare to the 200 ms §10 target.
+**Medium energy?** → Sprint 1B-tail T1/T2/T3 polish items (alpha
+slider per overlay, seed-cycling for the 9-shot baseline, blue-
+noise size toggle). Or sit with the running app and measure actual
+`run_from` + `refresh` wall-clock in `Runtime::tick` — the 2026-
+04-17 acceptance session felt responsive but no ms numbers were
+captured. Compare to the 200 ms §10 target.
 **Low energy?** → Sprint 1B paper pack. Create
 `docs/papers/sprint_packs/sprint_1b.md` per sprint doc §7: Bruijnzeel
 2005 / 2011 TMCF notes, Chen 2023 Budyko readthrough, and Core Pack

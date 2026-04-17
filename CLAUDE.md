@@ -180,6 +180,46 @@ app ──▶ render ──▶ gpu ──┐
   runtime via wgpu's internal naga. Keep naga in
   `[dev-dependencies]` and pin the version to the one wgpu pulls
   transitively (currently `29.0.1`) so the two parsers never disagree.
+- **`StageId` is the single source of truth for pipeline indices.**
+  Every `run_from` caller (app::Runtime slider handler, golden
+  regen, tests) passes `StageId::X as usize` — never a literal
+  index. The 16-variant enum in `crates/sim/src/lib.rs` is locked by
+  `stage_id_indices_are_dense_and_canonical`; reordering it requires
+  auditing every consumer in lockstep. `ValidationStage` is
+  intentionally NOT a variant (it's a tail hook, not a slider
+  target).
+- **Slider re-run protocol: sync `world.preset` BEFORE `run_from`.**
+  Sprint 1B sliders mutate the runtime's `self.preset`; stages read
+  parameters from `world.preset`. `Runtime::tick` must
+  `self.world.preset = self.preset.clone();` before calling
+  `pipeline.run_from(&mut self.world, StageId::X as usize)`.
+  Forgetting the sync means the slider changes are silently
+  ignored by every stage — a class of bug that produces
+  "identical before/after" screenshots without any panic or test
+  failure. New sliders follow the same pattern.
+- **`BiomeWeightsStage` writes two fields simultaneously.**
+  `baked.biome_weights` holds the rich per-biome partition-of-unity
+  weights; `derived.dominant_biome_per_cell` is a `ScalarField2D<u32>`
+  argmax sidecar that the overlay path renders through the same
+  `ScalarDerived` resolver as `basin_id`. Both are written on every
+  run; the sidecar exists so the overlay doesn't recompute argmax
+  every frame. If you touch the biome stage, update both — or the
+  overlay will silently render stale data.
+- **The `dominant_biome` overlay is not a reliable probe for wind-
+  propagation.** At v1 params, only ~3 % of land cells flip biome
+  argmax under a 180° wind swing (`volcanic_single`, 256², max
+  soil_moisture delta 0.23). The 8-biome categorical argmax is
+  dominated by wind-invariant inputs (z_norm, slope, river_mask).
+  The pipeline-level guard is
+  `sim::validation_stage::tests::wind_dir_rerun_propagates_through_biome_chain`
+  — it asserts `precipitation / fog_likelihood / soil_moisture /
+  biome_weights / dominant_biome_per_cell` all mutate on
+  `run_from(Precipitation)`, which is the real contract. The Sprint
+  1B §10 visual acceptance Pass 3 uses `soil_moisture` (wind-
+  sensitive by construction), not `dominant_biome`, for the 60↔61
+  screenshot pair. When adding future wind-dependent overlays, pick
+  a field whose raw value range is wind-sensitive rather than a
+  categorical argmax.
 
 ---
 

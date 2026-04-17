@@ -11,31 +11,35 @@ This is a single-developer research project. It is **pre-alpha** — read
 
 ## Status
 
-**Sprint 1A render-shell library shipped 2026-04-15**, building on the
-sim pipeline that landed 2026-04-14. The whole simulation chain runs at
-app startup and the entire non-window render shell is in place:
-canonical 8-colour palette locked against
-`assets/visual/palette_reference.jpg`, real Viridis / Turbo / Categorical
-/ TerrainHeight / BinaryBlue lookup tables, three camera presets
-(Hero / Top Debug / Low Oblique), a blue-noise loader wired to the
-Calinou CC0 textures at `assets/noise/`, the `build_terrain_mesh` /
-`build_sea_quad` mesh builders, `shaders/terrain.wgsl` combining the
-§3.2 A1/A2/A4 visual package, and all 6 Sprint 1A overlays pointing
-at the real `derived.*` fields.
+**Sprint 1B climate + ecology closed 2026-04-17.** The full 16-stage
+canonical pipeline runs at app startup and populates every promised
+field: topography, pit-fill, flow routing, accumulation, basins,
+rivers, temperature, precipitation, fog, PET, water balance, soil
+moisture, biome weights, and hex aggregation. 12 overlays toggle in
+the egui panel (6 Sprint 1A geomorph + 6 Sprint 1B climate /
+ecology / hex). The wind-direction slider in the Params panel re-
+runs the climate-ecology chain via `pipeline.run_from(StageId::Precipitation)`
+and refreshes overlay textures on the same frame — propagation
+guarded at the test level by
+`sim::validation_stage::tests::wind_dir_rerun_propagates_through_biome_chain`.
+**270 tests** across 8 crates. `cargo run -p app` opens a working
+window on macOS / Metal.
 
-Only the final wiring remains: swap Sprint 0's placeholder `TerrainRenderer`
-for the new mesh + WGSL pipeline, hand the 6 `OverlayDescriptor`s to a
-CPU-side overlay render path, and capture the 9 baseline screenshots
-(3 camera presets × 3 golden seeds). All of those need a confirmed
-`cargo run -p app` window-session pass. Until then `cargo run -p app`
-still draws the Sprint 0 rainbow quad.
+**Sprint 1A render + sim pipeline shipped 2026-04-14 / 2026-04-15.**
+8 sim stages, 4 pipeline-tail validation invariants (Sprint 1B adds
+4 more, total 8), canonical 8-colour palette locked against
+`assets/visual/palette_reference.jpg`, real Viridis / Turbo /
+Categorical / TerrainHeight / BinaryBlue lookup tables, three
+camera presets (Hero / Top Debug / Low Oblique), Calinou CC0
+blue-noise dither, `shaders/terrain.wgsl` + `shaders/overlay.wgsl`
+combining the §3.2 visual package.
+
+**Sprint 0 (scaffolding) shipped 2026-04-13.** Workspace foundation
+— 8 crates, `WorldState` three-layer split, winit + wgpu + egui
+shell with orbit / pan / zoom camera.
 
 See [`PROGRESS.md`](PROGRESS.md) for the full acceptance-checklist
-status.
-
-**Sprint 0 (scaffolding) shipped 2026-04-13.** The workspace boots, the
-`WorldState` three-layer split is in place, and a placeholder rainbow quad
-renders through the winit + wgpu + egui shell with orbit/pan/zoom.
+status, commit-level breakdown, and deferred-to-later-sprints list.
 
 ## Quick start
 
@@ -56,14 +60,14 @@ Controls in the app window:
 
 | Crate | Role |
 |---|---|
-| `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`, `validation`, `FLOW_DIR_SINK` / `D8_OFFSETS` / neighborhood constants. Must compile without any graphics crate. |
-| `crates/sim` | Sprint 1A sim stages (Topography, Coast, PitFill, DerivedGeomorph, FlowRouting, Accumulation, Basins, Rivers) + `ValidationStage`. Climate + ecology land in Sprint 1B. |
-| `crates/hex` | Hex aggregation (Sprint 1B+). |
-| `crates/data` | Built-in presets (`volcanic_single`, `volcanic_twin`, `caldera`) and golden seeds. |
-| `crates/gpu` | `wgpu` device/surface management. |
-| `crates/render` | Descriptor-based `OverlayRegistry` + placeholder terrain mesh. |
-| `crates/ui` | `egui` panels (overlay toggles, preset params, stats). |
-| `crates/app` | `winit` event loop, orbit camera, save/load Path wrapper. |
+| `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`, `validation` (8 invariants), `FLOW_DIR_SINK` / `D8_OFFSETS` / neighborhood constants, `BiomeType` / `BiomeWeights`. Must compile without any graphics crate. |
+| `crates/sim` | 16 canonical pipeline stages (Sprint 1A: Topography, Coast, PitFill, DerivedGeomorph, FlowRouting, Accumulation, Basins, Rivers; Sprint 1B: Temperature, Precipitation, FogLikelihood, Pet, WaterBalance, SoilMoisture, BiomeWeights, HexProjection) + tail `ValidationStage`. `StageId` enum locks pipeline indices for `SimulationPipeline::run_from`. |
+| `crates/hex` | `HexGrid` + axis-aligned box tessellation (v1 simplification; Sprint 5 can refit to true hexagonal Voronoi). |
+| `crates/data` | Built-in presets (`volcanic_single`, `volcanic_twin`, `caldera`), golden-seed snapshots, `SummaryMetrics` regression tiers. |
+| `crates/gpu` | `wgpu` device/surface management, depth attachment. |
+| `crates/render` | Descriptor-based `OverlayRegistry` (12 overlays), `TerrainRenderer`, `OverlayRenderer`, `SkyRenderer`, canonical palette, camera-preset LUT math. All `&'static str` field-key dispatch confined to `overlay.rs`. |
+| `crates/ui` | `egui` panels — overlay toggles, camera controls, preset params (+ Sprint 1B wind slider), stats. |
+| `crates/app` | `winit` event loop, orbit camera, preset loading, save/load Path wrapper, slider → `run_from` wiring. |
 
 Crate deps flow strictly one way: `app → render → gpu → core` and
 `app → ui/sim/data → core`. `core` is a sink; nothing below it in the graph.
