@@ -24,6 +24,14 @@ overlays toggle in the egui panel; a wind-direction slider re-runs the
 climate-ecology chain end-to-end and refreshes overlay textures on the same
 frame. `cargo run -p app` opens a working window on macOS / Metal.
 
+A windowless `--headless` harness drives the same pipeline for batch capture
+and deterministic regression: `cargo run -p app -- --headless <request.ron>`
+writes an artifact tree of overlay PNGs + `SummaryMetrics` + a top-level
+`summary.ron`; `--headless-validate <run> --against <expected>` diffs two
+summaries by blake3 hash and exits with `0` / `2` / `3` for pass / pipeline-
+regression / tool-error. Two checked-in baselines live at
+`crates/data/golden/headless/{sprint_1a_baseline,sprint_1b_acceptance}/`.
+
 Nothing is stabilised yet: preset parameters, field semantics, save-file
 format, and the visual package all remain fluid. The project has no binary
 releases, no wasm build, and no web viewer. The end-goal shape is a deterministic
@@ -37,6 +45,15 @@ viewer for research exploration.
 cargo build --workspace
 cargo test  --workspace
 cargo run   -p app       # opens a local winit window
+
+# Headless batch capture (no window):
+cargo run -p app --release -- \
+    --headless crates/data/golden/headless/sprint_1a_baseline/request.ron
+
+# Regression diff of a run against a checked-in baseline:
+cargo run -p app --release -- \
+    --headless-validate /captures/headless/<run_id>/ \
+    --against crates/data/golden/headless/sprint_1a_baseline/
 ```
 
 Controls in the app window:
@@ -57,7 +74,7 @@ Controls in the app window:
 | `crates/gpu` | `wgpu` device/surface management, depth attachment. |
 | `crates/render` | Descriptor-based `OverlayRegistry` (12 overlays), `TerrainRenderer`, `OverlayRenderer`, `SkyRenderer`, canonical palette, camera-preset LUT math. All `&'static str` field-key dispatch confined to `overlay.rs`. |
 | `crates/ui` | `egui` panels — overlay toggles, camera controls, preset params (with wind-direction slider), stats. |
-| `crates/app` | `winit` event loop, orbit camera, preset loading, save/load Path wrapper, slider → `run_from` wiring. |
+| `crates/app` | `winit` event loop, orbit camera, preset loading, save/load Path wrapper, slider → `run_from` wiring, and the `--headless` / `--headless-validate` harness (capture request parsing, CPU truth bake, GPU offscreen beauty, summary diff). |
 
 Crate deps flow strictly one way: `app → render → gpu → core` and
 `app → ui/sim/data → core`. `core` is a sink; nothing below it in the graph.
@@ -65,11 +82,14 @@ Crate deps flow strictly one way: `app → render → gpu → core` and
 ## Documentation
 
 - [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md)
-  — system architecture, data model, pipeline walkthrough, and the eight
-  hard invariants.
+  — system architecture, data model, pipeline walkthrough, the eight
+  hard invariants, and the headless harness.
 - [`PROGRESS.md`](PROGRESS.md) — milestone dashboard and development history.
 - [`CLAUDE.md`](CLAUDE.md) — operating notes for AI coding agents working
   in this repo.
+- [`crates/data/golden/headless/README.md`](crates/data/golden/headless/README.md)
+  — layout of the `--headless-validate` baselines + author workflow for
+  regenerating them.
 - [`docs/papers/README.md`](docs/papers/README.md) — indexed paper
   knowledge base (Core Pack + per-topic add-ons).
 

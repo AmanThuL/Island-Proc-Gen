@@ -291,13 +291,184 @@ that string-key dispatches over `WorldState` layout), then samples
 the palette per cell into an RGBA8 texture.
 
 The overlay descriptor contract is what lets the same descriptor
-drive both the real-time GPU render path today and the CPU-side
-PNG batch export path in a future sprint. Any "render closure"
-shortcut would lock the PNG export story and must be rejected.
+drive both the real-time GPU render path (today) and the CPU-side
+PNG batch export path (§6 below). Both paths share one bake
+function — `render::bake_overlay_to_rgba8(desc, world) -> Option<(Vec<u8>, u32, u32)>`
+— so the interactive renderer and the `--headless` harness are
+byte-identical by construction. Any "render closure" shortcut
+would break that sharing and must be rejected.
 
 ---
 
-## 6. Architectural invariants
+## 6. Headless harness
+
+A second, windowless execution path drives the same pipeline and
+the same renderers for batch capture, regression, and AI-agent
+validation:
+
+```
+cargo run -p app -- --headless         <request.ron>
+cargo run -p app -- --headless-validate <run_dir> --against <expected_dir>
+```
+
+Both sub-commands skip the winit event loop entirely, write
+artifacts under a deterministic directory tree, and return an
+AD9-locked `OverallStatus` that `main.rs` maps to a `0 / 2 / 3`
+process exit byte.
+
+### The two capture paths
+
+```mermaid
+flowchart LR
+    subgraph Truth["Truth path — deterministic, authoritative"]
+        direction TB
+        W["WorldState<br/>(fully populated)"]
+        D["OverlayDescriptor"]
+        B["render::bake_overlay_to_rgba8"]
+        P["overlays/&lt;id&gt;.png<br/>+ blake3(RGBA8 bytes)"]
+        W --> B
+        D --> B
+        B --> P
+    end
+    subgraph Beauty["Beauty path — artifact-only"]
+        direction TB
+        W2["WorldState + CameraPreset<br/>+ overlay stack"]
+        SR["SkyRenderer"]
+        TR["TerrainRenderer"]
+        OR["OverlayRenderer"]
+        OFF["Offscreen texture<br/>RENDER_ATTACHMENT | COPY_SRC"]
+        PB["beauty/scene.png<br/>(not used for pass/fail)"]
+        W2 --> SR --> OFF
+        W2 --> TR --> OFF
+        W2 --> OR --> OFF
+        OFF --> PB
+    end
+```
+
+The **truth path** is the hash-backed contract. Same host + same
+binary + same `CaptureRequest` → same overlay RGBA8 bytes, locked
+by a determinism test that runs the harness twice and diffs
+`summary.ron` modulo a timing whitelist (`timestamp_utc`,
+`pipeline_ms`, `bake_ms`, `gpu_render_ms`, `warnings`).
+
+The **beauty path** goes through wgpu rasterisation + depth test
++ alpha blend + lighting + blue-noise dither, so cross-GPU fp
+drift means beauty bytes are **not** part of the pass/fail
+contract — `--headless-validate` only ever writes warnings for
+beauty divergence. This split is load-bearing for future
+cross-platform CI and the wasm target.
+
+### AD8 fallback: beauty-skipped, truth-green
+
+`GpuContext::new_headless((w, h))` is attempted **exactly once**
+at the top of `run_request`. On failure (adapter unavailable,
+driver crash at init, etc.) every `CaptureShot.beauty` is marked
+`BeautyStatus::Skipped { reason }`, the truth path still runs to
+completion, and `overall_status` becomes
+`PassedWithBeautySkipped { skipped_shot_ids, reason }` — exit
+code `0`, not a failure. Retrying adapter construction per shot
+is explicitly forbidden (it would introduce nondeterminism).
+
+### `CaptureRequest` vs `SaveMode::DebugCapture`
+
+These are two different abstractions and share no code path:
+
+| Abstraction | Unit | Code location | Directory |
+|---|---|---|---|
+| `SaveMode::*` | One file (`.ipgs`) | `crates/core/src/save.rs` (byte-level codec) + `crates/app/src/save_io.rs` (~5-line `&Path` wrapper) | User-chosen |
+| `CaptureRequest` run | One directory tree | `crates/app/src/headless/` (owns all `std::fs`, `png`, `ron`) | `/captures/headless/<run_id>/` or `/crates/data/golden/headless/<baseline_id>/` |
+
+`SaveMode::DebugCapture` serialises one `WorldState` at a point
+in time. A `CaptureRequest` run records the outputs of executing
+many shots. The harness may in future call into `core::save` as
+a one-way dependency, but `core::save` must remain byte-level +
+Path-free so the wasm target keeps working.
+
+### Directory layout (AD4)
+
+```
+/captures/headless/<run_id>/                  # runtime outputs, gitignored
+├── request.ron                               # copy of input for audit
+├── summary.ron                               # top-level digest (the compare contract)
+└── shots/<shot_id>/
+    ├── metrics.ron                           # SummaryMetrics when include_metrics=true
+    ├── overlays/<overlay_id>.png             # per-overlay truth PNG
+    └── beauty/scene.png                      # beauty PNG when Rendered
+
+/crates/data/golden/headless/<baseline_id>/   # tracked baselines
+├── request.ron
+├── summary.ron                               # committed expected hashes
+└── shots/<shot_id>/metrics.ron               # committed expected metrics
+                                              # (PNGs intentionally NOT committed)
+```
+
+The `.gitignore` carries `crates/data/golden/headless/**/*.png`
+so re-running the harness into a baseline dir doesn't
+accidentally commit PNG bytes. `--headless-validate` compares
+the two `summary.ron` files directly — it does not read any PNG.
+
+### AD9 `OverallStatus` public contract
+
+The 5-variant set is **locked**: downstream shell scripts
+`case $?` on the exit byte and AI agents `match` on the variant.
+
+| Variant | Producer | Exit |
+|---|---|---|
+| `Passed` | run / validate | `0` |
+| `PassedWithBeautySkipped { skipped_shot_ids, reason }` | run / validate | `0` |
+| `FailedTruthValidation { mismatches }` | validate only | `2` |
+| `FailedMetricsValidation { mismatches }` | validate only | `2` |
+| `InternalError { reason, kind }` | both | `3` |
+
+`InternalErrorKind` carries `#[serde(other)]` on `Other` so a
+Sprint 4 `summary.ron` that names a new kind still parses
+cleanly on a Sprint 1C binary.
+
+### Three-step compare semantics (AD5)
+
+`--headless-validate` applies the steps in order and returns on
+the first failure:
+
+1. **Shape guards** (hard `InternalError`):
+   - `schema_version` equal
+   - Shot-id sets strictly equal (`missing`, `extra` → `ShotSetMismatch`)
+   - Per-shot overlay-id sets strictly equal (`OverlaySetMismatch`)
+   - `request_fingerprint` divergence is a **warning only**; falls through
+
+2. **Truth diff** (hash-based, authoritative):
+   - Any `overlay_hashes[shot_id][overlay_id]` mismatch → `FailedTruthValidation`
+   - If all overlays match, any `metrics_hash` mismatch → `FailedMetricsValidation`
+
+3. **Beauty** (artifact-only, never fails):
+   - Beauty `Skipped` on either side → warning + `PassedWithBeautySkipped`
+   - Beauty `byte_hash` differs but both `Rendered` → warning + `Passed`
+   - Beauty-spec asymmetry → warning + `Passed`
+
+Step 1 guards prevent the "quietly compared a subset" class of
+false-positive when baselines diverge structurally. Step 2's
+early return on `overlay_hashes` means pixel-level drift is
+reported before numeric drift, matching author intuition that
+bit-drift in the raster is the stronger signal.
+
+### Checked-in baselines
+
+- `crates/data/golden/headless/sprint_1a_baseline/` — 9 shots
+  (3 presets × 3 seeds × Hero camera). Seeds `[42, 123, 777]`
+  match the pre-existing `golden_seed_regression` triples so the
+  numeric and visual regressions share one set of pairs.
+- `crates/data/golden/headless/sprint_1b_acceptance/` — 9 shots,
+  the default-wind subset of the 16-shot
+  `docs/design/sprints/sprint_1b_visual_acceptance/` PNG
+  archive. The 6 wind-varying shots and the panel smoke test
+  stay as manual PNGs; migrating them needs either a schema-v2
+  `preset_override` field or a different harness entirely.
+
+See [`crates/data/golden/headless/README.md`](../../crates/data/golden/headless/README.md)
+for the author workflow (regenerate / validate / prune PNGs).
+
+---
+
+## 7. Architectural invariants
 
 These are enforced by tests and CI, not just convention. Breaking
 any of them reverts to `dev` and re-opens the sprint that broke it.
@@ -331,10 +502,13 @@ any of them reverts to `dev` and re-opens the sprint that broke it.
    `crates/sim`, `crates/core::save`, and `crates/core::validation`
    access state via struct field paths like
    `world.authoritative.height` — not by stringly-typed dispatch.
+   `app::headless::executor` looks up overlays by typed
+   registry (`registry.by_id(id)`), never by matching literal
+   field strings itself.
 
 ---
 
-## 7. File layout
+## 8. File layout
 
 ```
 Island-Proc-Gen/
@@ -367,18 +541,27 @@ Island-Proc-Gen/
 │   ├── gpu/                   # wgpu device/surface/depth management
 │   ├── render/                # terrain + overlay + sky pipelines, palette, noise
 │   ├── ui/                    # egui panels (overlay, params, stats)
-│   └── app/                   # winit event loop, Runtime, save_io Path wrapper
+│   ├── app/                   # winit event loop, Runtime, save_io Path wrapper
+│   │   └── src/headless/      # --headless harness: request, executor, output, compare
+│   └── data/
+│       └── golden/
+│           ├── snapshots/     # seed-keyed SummaryMetrics RON (per-seed)
+│           └── headless/      # --headless-validate baselines (request/summary/metrics)
+│               ├── README.md
+│               ├── sprint_1a_baseline/
+│               └── sprint_1b_acceptance/
 ├── docs/
 │   ├── architecture/          # this directory — tracked architecture docs
 │   └── papers/                # tracked paper knowledge base (Core Pack + sprint packs)
-├── CLAUDE.md                  # agent operating notes
+├── CLAUDE.md                  # agent operating notes (project-scoped)
+├── CLAUDE.local.md            # agent operating notes (per-user, gitignored)
 ├── PROGRESS.md                # sprint dashboard + history
 └── README.md                  # public-facing project readme
 ```
 
 ---
 
-## 8. Versioning + compatibility
+## 9. Versioning + compatibility
 
 - **Rust toolchain:** stable, edition 2024, `rustc >= 1.85`
   (pinned by `rust-toolchain.toml`).
@@ -387,16 +570,23 @@ Island-Proc-Gen/
   versions without verifying the egui / wgpu compatibility matrix.
 - **CI gate:**
   `cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo test --workspace`
-  runs on macOS (Metal backend available). No headless GPU tests on
-  the CI runner — `app` / `render` / `gpu` tests that need a device
-  are excluded.
-- **Target platforms:** macOS-first development; the architecture
-  stays platform-agnostic so a future wasm build can reuse `core`,
-  `sim`, `hex`, and `data` unchanged.
+  runs on macOS (Metal backend available). Two additional
+  `continue-on-error: true` steps regenerate the Sprint 1A +
+  Sprint 1B headless baselines and self-validate them — these
+  are non-blocking on first landing; Sprint 2+ can promote them
+  to hard-failing once Metal on the CI runner proves stable.
+  `app` / `render` / `gpu` tests that need a GPU device are
+  excluded from the default workspace test run.
+- **Target platforms:** macOS-first development
+  (AD10 baseline acceptance host = Apple Silicon + Metal); the
+  architecture stays platform-agnostic so a future wasm build
+  can reuse `core`, `sim`, `hex`, and `data` unchanged. Beauty
+  capture on non-Metal hosts falls through the AD8 Skipped path
+  rather than failing.
 
 ---
 
-## 9. What this document deliberately omits
+## 10. What this document deliberately omits
 
 - Per-stage algorithmic details (lapse rates, Budyko ω, suitability
   bell curves). Those live in the sprint docs under `docs/design/`
