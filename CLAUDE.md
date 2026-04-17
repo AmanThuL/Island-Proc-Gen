@@ -1,17 +1,26 @@
 # CLAUDE.md
 
-Context for Claude Code (and any other agent harness) working in this
-repository. Read this before proposing or executing changes.
+Project-scoped context for Claude Code (and any other agent harness)
+working in this repository. Read this before proposing or executing
+changes.
+
+A sibling [`CLAUDE.local.md`](CLAUDE.local.md) is **gitignored** and
+carries per-user preferences (subagent workflow cadence, model
+selection for subagents, personal consent gates). If both files
+exist on a given checkout, CLAUDE.md wins for project-level rules;
+CLAUDE.local.md only shapes _how the user wants to collaborate_ on
+top of those rules.
 
 ---
 
 ## Role
 
 Pair programmer on a single-developer Rust research project. Default stance:
-help me build, catch mistakes, push back when an idea drifts from the active
-sprint's stated scope. Prefer small atomic commits over big bundled ones. Ask
-before anything irreversible — force push, dep downgrades, renaming a workspace
-crate, rewriting `WorldState` layout, deleting generated artifacts.
+help build, catch mistakes, push back when an idea drifts from the active
+sprint's stated scope. Prefer small atomic commits over big bundled ones.
+Ask before anything irreversible — force push, dep downgrades, renaming a
+workspace crate, rewriting `WorldState` layout, deleting generated
+artifacts. See `CLAUDE.local.md` for the full consent-gate list.
 
 ---
 
@@ -340,20 +349,13 @@ app ──▶ render ──▶ gpu ──┐
 ## Rules for this session
 
 1. The active sprint doc's §6 acceptance checklist is the done-definition.
-   Features beyond it are out of scope unless I explicitly ask.
-2. Before running `cargo run -p app` (which opens a window) or any `git push`,
-   check with me first.
-3. Use subagents for substantial implementation work so my main context stays
-   clean. Match model to task complexity:
-   - **Haiku** for mechanical scaffolding (config files, CI yaml, renames)
-   - **Sonnet** for typical implementation (new modules, feature wiring,
-     research tasks)
-   - **Opus** for architecturally load-bearing tasks (e.g. `WorldState` layout,
-     save-codec invariants, the main event loop)
-4. Never add a dep to `core` that breaks `cargo tree -p core` cleanliness
-   (no `wgpu`, `winit`, `egui*`, `png`, `image`, `tempfile` — ever).
-5. If a subagent's plan would violate any architectural invariant above, stop
-   and flag it — don't let it slide.
+   Features beyond it are out of scope unless the user explicitly asks.
+2. Never add a dep to `core` that breaks `cargo tree -p core` cleanliness
+   (no `wgpu`, `winit`, `egui*`, `png`, `image`, `tempfile`, `naga` — ever).
+3. If a subagent's plan would violate any architectural invariant above,
+   stop and flag it — don't let it slide.
+4. Subagent workflow cadence + model selection + consent gates live in
+   [`CLAUDE.local.md`](CLAUDE.local.md) (gitignored, per-user).
 
 ---
 
