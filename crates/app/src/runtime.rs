@@ -102,7 +102,7 @@ impl Runtime {
     pub fn new(event_loop: &ActiveEventLoop) -> anyhow::Result<Self> {
         // ── Window ────────────────────────────────────────────────────────────
         let attrs = WindowAttributes::default()
-            .with_title("Island Proc-Gen — Sprint 1A")
+            .with_title("Island Proc-Gen — Sprint 1B")
             .with_inner_size(LogicalSize::new(
                 INITIAL_WINDOW_WIDTH,
                 INITIAL_WINDOW_HEIGHT,
