@@ -321,15 +321,21 @@ impl Runtime {
         self.terrain.update_view(&self.gpu.queue, vp, eye);
 
         // ── Acquire surface ───────────────────────────────────────────────────
-        let frame = match self.gpu.surface.get_current_texture() {
+        //
+        // `surface_expect` panics with a descriptive message if we ever end
+        // up here with a headless (surface-less) `GpuContext`. Runtime is
+        // the interactive path by construction, so this assumption holds;
+        // the panic would flag a programming error (e.g. a future refactor
+        // that accidentally plumbs a headless ctx through the window event
+        // loop) rather than a runtime concern.
+        let surface = self.gpu.surface_expect();
+        let frame = match surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => f,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
             wgpu::CurrentSurfaceTexture::Outdated
             | wgpu::CurrentSurfaceTexture::Suboptimal(_)
             | wgpu::CurrentSurfaceTexture::Lost => {
-                self.gpu
-                    .surface
-                    .configure(&self.gpu.device, &self.gpu.config);
+                surface.configure(&self.gpu.device, &self.gpu.config);
                 return;
             }
             wgpu::CurrentSurfaceTexture::Validation => return,
