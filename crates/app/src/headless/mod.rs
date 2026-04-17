@@ -15,29 +15,32 @@ use std::path::Path;
 
 use anyhow::Result;
 
+pub mod compare;
 pub mod executor;
 pub mod output;
 pub mod request;
 
-use output::{InternalErrorKind, OverallStatus};
+use output::OverallStatus;
 
 /// Execute a `CaptureRequest` loaded from `request_path`.
 ///
 /// Thin facade over [`executor::run_request`]; kept as the stable public API
 /// that `main.rs` calls so the executor module can evolve without breaking
 /// the `app::headless::run` call site.
-pub fn run(request_path: &Path) -> Result<OverallStatus> {
-    executor::run_request(request_path)
+///
+/// Returns `(OverallStatus, Vec<String>)` where the second element is always
+/// empty — `run` writes warnings into `summary.ron::warnings` itself rather
+/// than surfacing them to the caller.
+pub fn run(request_path: &Path) -> Result<(OverallStatus, Vec<String>)> {
+    Ok((executor::run_request(request_path)?, Vec::new()))
 }
 
 /// Diff a runtime capture directory against a checked-in expected directory.
 ///
-/// Implementation lands in Task 1C.8 (compare tool). Currently a stub.
-pub fn validate(run_dir: &Path, expected_dir: &Path) -> Result<OverallStatus> {
-    Ok(OverallStatus::InternalError {
-        reason: format!(
-            "headless::validate is not yet implemented (Task 1C.8); run={run_dir:?} expected={expected_dir:?}"
-        ),
-        kind: InternalErrorKind::Other,
-    })
+/// Delegates to [`compare::validate`] (AD5 three-step compare semantics).
+/// The second element of the returned tuple carries human-readable warning
+/// messages (fingerprint divergence, beauty asymmetry, etc.) that callers
+/// should print to stderr.
+pub fn validate(run_dir: &Path, expected_dir: &Path) -> Result<(OverallStatus, Vec<String>)> {
+    compare::validate(run_dir, expected_dir)
 }

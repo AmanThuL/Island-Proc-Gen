@@ -159,24 +159,34 @@ fn run_interactive() -> Result<()> {
 
 /// Collapse a `headless::{run,validate}` result to the AD9 exit code byte.
 ///
-/// * `Ok(status)` → `status.exit_code() as u8` (0 / 2 / 3 by AD9 contract)
-/// * `Err(_)`     → `3` (tool-level error — e.g. RON parse or IO outside the
-///   `OverallStatus` reporting pipeline)
+/// * `Ok((status, _))` → `status.exit_code() as u8` (0 / 2 / 3 by AD9 contract)
+/// * `Err(_)`          → `3` (tool-level error — e.g. RON parse or IO outside
+///   the `OverallStatus` reporting pipeline)
 ///
 /// Split from `run_headless_exit` so the routing can be unit-tested — the
 /// stdlib `ExitCode` type does not implement `PartialEq` as of Rust 1.95.
-fn headless_exit_byte(result: &Result<app::headless::output::OverallStatus>) -> u8 {
+fn headless_exit_byte_from_result(
+    result: &Result<(app::headless::output::OverallStatus, Vec<String>)>,
+) -> u8 {
     match result {
-        Ok(status) => status.exit_code() as u8,
+        Ok((status, _)) => status.exit_code() as u8,
         Err(_) => 3,
     }
 }
 
 /// Map a `headless::{run,validate}` result to the AD9 process exit code and
-/// emit a stderr breadcrumb for the tool-level error / internal-error paths.
-fn run_headless_exit(result: Result<app::headless::output::OverallStatus>) -> ExitCode {
+/// emit a stderr breadcrumb for warnings, tool-level errors, and internal
+/// errors.
+fn run_headless_exit(
+    result: Result<(app::headless::output::OverallStatus, Vec<String>)>,
+) -> ExitCode {
+    if let Ok((_, warnings)) = &result {
+        for w in warnings {
+            eprintln!("warn: {w}");
+        }
+    }
     match &result {
-        Ok(app::headless::output::OverallStatus::InternalError { reason, .. }) => {
+        Ok((app::headless::output::OverallStatus::InternalError { reason, .. }, _)) => {
             eprintln!("headless internal error: {reason}");
         }
         Err(e) => {
@@ -184,7 +194,7 @@ fn run_headless_exit(result: Result<app::headless::output::OverallStatus>) -> Ex
         }
         _ => {}
     }
-    ExitCode::from(headless_exit_byte(&result))
+    ExitCode::from(headless_exit_byte_from_result(&result))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -266,30 +276,42 @@ mod tests {
     fn headless_exit_byte_maps_overall_status_to_ad9_code() {
         use app::headless::output::{InternalErrorKind, OverallStatus};
 
-        let passed = Ok(OverallStatus::Passed);
-        assert_eq!(headless_exit_byte(&passed), 0);
+        let passed = Ok((OverallStatus::Passed, vec![]));
+        assert_eq!(headless_exit_byte_from_result(&passed), 0);
 
-        let passed_beauty_skipped = Ok(OverallStatus::PassedWithBeautySkipped {
-            skipped_shot_ids: vec!["s1".into()],
-            reason: "no GPU".into(),
-        });
-        assert_eq!(headless_exit_byte(&passed_beauty_skipped), 0);
+        let passed_beauty_skipped = Ok((
+            OverallStatus::PassedWithBeautySkipped {
+                skipped_shot_ids: vec!["s1".into()],
+                reason: "no GPU".into(),
+            },
+            vec![],
+        ));
+        assert_eq!(headless_exit_byte_from_result(&passed_beauty_skipped), 0);
 
-        let failed_truth = Ok(OverallStatus::FailedTruthValidation { mismatches: vec![] });
-        assert_eq!(headless_exit_byte(&failed_truth), 2);
+        let failed_truth = Ok((
+            OverallStatus::FailedTruthValidation { mismatches: vec![] },
+            vec![],
+        ));
+        assert_eq!(headless_exit_byte_from_result(&failed_truth), 2);
 
-        let failed_metrics = Ok(OverallStatus::FailedMetricsValidation { mismatches: vec![] });
-        assert_eq!(headless_exit_byte(&failed_metrics), 2);
+        let failed_metrics = Ok((
+            OverallStatus::FailedMetricsValidation { mismatches: vec![] },
+            vec![],
+        ));
+        assert_eq!(headless_exit_byte_from_result(&failed_metrics), 2);
 
-        let internal = Ok(OverallStatus::InternalError {
-            reason: "x".into(),
-            kind: InternalErrorKind::Other,
-        });
-        assert_eq!(headless_exit_byte(&internal), 3);
+        let internal = Ok((
+            OverallStatus::InternalError {
+                reason: "x".into(),
+                kind: InternalErrorKind::Other,
+            },
+            vec![],
+        ));
+        assert_eq!(headless_exit_byte_from_result(&internal), 3);
 
         // Any raw `Err` — IO failure / RON parse that couldn't even produce
         // an `OverallStatus` — must also surface as the tool-level `3` byte.
-        let raw_err: Result<OverallStatus> = Err(anyhow!("outer io error"));
-        assert_eq!(headless_exit_byte(&raw_err), 3);
+        let raw_err: Result<(OverallStatus, Vec<String>)> = Err(anyhow!("outer io error"));
+        assert_eq!(headless_exit_byte_from_result(&raw_err), 3);
     }
 }
