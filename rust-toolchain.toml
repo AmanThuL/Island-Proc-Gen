@@ -1,3 +1,15 @@
+# Pinned explicit version so local + CI never drift. Bumps happen
+# intentionally on sprint boundaries rather than the day a new stable
+# lands; see docs/architecture/ARCHITECTURE.md §8 for the policy.
+#
+# When bumping:
+#   1. `rustup install <new version>` locally.
+#   2. `cargo clippy --workspace -- -D warnings` — fix any new lints.
+#   3. `cargo test --workspace` — confirm nothing broke.
+#   4. Update the pin below and note the bump date here.
+#
+# Last bumped: 2026-04-17 (was "stable" floating, bumped to match CI
+# drift that introduced clippy::unnecessary_sort_by).
 [toolchain]
-channel    = "stable"
+channel    = "1.95.0"
 components = ["rustfmt", "clippy"]
