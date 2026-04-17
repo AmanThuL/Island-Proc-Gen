@@ -21,87 +21,100 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 1B — climate + ecology closed loop. **Closed
-on `dev` 2026-04-17.** Library path shipped in 14 atomic commits
-across 2026-04-15 and §10 visual acceptance closed 2026-04-17 with
-a 16-shot capture pass (library + window-session both green). All
-1B-core tasks from the sprint doc §0 required-for-close-out list
-are landed: run_from infra, always-on curvature, 8 new sim stages
-(TemperatureStage → HexProjectionStage), 6 new overlays, 4 new
-validation invariants, golden-seed metrics regen, and the first
-interactive wind-direction slider with end-to-end pipeline re-run
-via `run_from` + `OverlayRenderer::refresh`.
+**Primary:** Sprint 1C — Headless Validation & Offscreen Capture.
+**Closed on `dev` 2026-04-17.** 10 atomic commits (ab0828c →
+dc70e18). `cargo run -p app -- --headless <req>` and
+`cargo run -p app -- --headless-validate <dir> --against <dir>`
+are both live on macOS Metal. Determinism verified via AD5 hash
+comparison; AD8 GPU-bootstrap fallback tested via
+`IPG_FORCE_HEADLESS_GPU_FAIL`; AD10 baseline-acceptance host is
+Apple Silicon + macOS Metal (portability to other hosts follows
+the AD8 soft-fail path).
 
-**270 tests passing** across 8 crates (core 55, sim 124, data 10,
-render 65, hex 7, app 9, ui 0, gpu 0). Regression: +82 new tests
-since Sprint 1A's 188 baseline (latest: +1 for the wind→biome
-re-run regression guard in `sim::validation_stage`). `cargo fmt
---check && cargo clippy --workspace -- -D warnings && cargo test
---workspace` is the hard CI gate, all green.
+**327 tests passing, 5 ignored** across 8 crates (+57 from Sprint
+1B's 270 baseline). Ignored: 2 GPU-requiring headless-context tests
++ 3 GPU-requiring executor tests; all 5 pass locally on the Apple
+M4 Pro / Metal baseline acceptance host. `cargo fmt --check &&
+cargo clippy --workspace -- -D warnings && cargo test --workspace`
+is the hard CI gate, all green.
 
-**Sprint 1B §10 acceptance checklist status:**
-
-Compile + test:
-- ✓ `cargo test --workspace` green (269 / 269)
-- ✓ Every new stage has unit tests + invariant coverage
-- ✓ Golden seed regression passes on regenerated snapshots for all 3 presets
+**Sprint 1C §6 acceptance checklist status:**
 
 Functional:
-- ✓ Temperature / precipitation / soil moisture / biome / hex fields
-  all `is_some()` after pipeline run (asserted by the new
-  `full_sprint_1b_pipeline_passes_all_invariants` integration test)
-- ✓ Wind direction slider re-runs the pipeline via `run_from` and
-  refreshes overlay textures in `tick()` — library path + visual
-  verification both closed 2026-04-17. Pipeline-level regression
-  guard `wind_dir_rerun_propagates_through_biome_chain` in
-  `sim::validation_stage::tests` asserts precipitation /
-  fog_likelihood / soil_moisture / biome_weights /
-  dominant_biome_per_cell all mutate on `run_from(Precipitation)`,
-  independent of whether a given overlay's argmax is wind-stable.
-- ✓ Dominant biome overlay: the 16-cell varied-domain integration
-  test asserts at least 3 distinct dominant biomes appear; golden
-  seed metrics confirm 3 biomes (Grassland 68%, BareRockLava 28%,
-  RiparianVegetation 4%) for `volcanic_single` at 128²
-- ✓ 12 overlays all toggle cleanly via `OverlayPanel` and resolve
-  through the `resolve_scalar_source` typed-borrow path
+- ✓ `--headless <req.ron>` runs full pipeline + bakes requested
+  overlays + writes `summary.ron` + PNGs to `RunLayout` output dir
+- ✓ `--headless-validate <run> --against <expected>` performs AD5
+  three-step diff (shape → truth hash → beauty artifact-only) and
+  exits with the AD9 code (0 pass / 2 truth-fail / 3 internal-error)
+- ✓ Determinism: same request on same host produces identical
+  overlay hashes across runs
+- ✓ AD8 GPU-bootstrap fallback tested via env hook; `summary.ron`
+  written on every code path including mid-shot `InternalError`
+- ✓ Baseline sets checked in at `crates/data/golden/headless/`:
+  `sprint_1a_baseline/` (9 shots — 3 presets × 3 seeds × Hero) and
+  `sprint_1b_acceptance/` (9 shots — default-wind subset of the
+  Sprint 1B visual acceptance INDEX). PNGs not committed
+  (`.gitignore` guards `**/*.png` under that tree).
+- ✓ CI workflow adds non-blocking (`continue-on-error: true`) steps
+  that run `--headless` + `--headless-validate` against both
+  baselines on `macos-latest`
 
 Architectural invariants:
-- ✓ `core` still headless — `cargo tree -p core` free of wgpu /
-  winit / egui / png / image / tempfile / naga
-- ✓ `hex` crate only depends on `core` (see new `hex/Cargo.toml`)
-- ✓ `run_from(stage_index)` works on the wind slider path
-- ✓ 12 overlays toggle + stack (alpha hardcoded from Sprint 1A, not
-  a Sprint 1B blocker)
+- ✓ `cargo tree -p core` still clean of wgpu / winit / egui / png /
+  image / tempfile / naga (invariant #1)
+- ✓ Descriptors-not-closures preserved — `bake_overlay_to_rgba8`
+  takes `&OverlayDescriptor` (invariant #7)
+- ✓ String keys still confined to `render/src/overlay.rs`
+  (invariant #8)
+- ✓ `SaveMode` + `core::save` untouched — `CaptureRequest` harness
+  and save-codec are separate code paths per §0.5
+- ✓ All 8 architectural invariants green
 
-Paper:
-- Deferred — spec §7 Core Pack reads + Bruijnzeel notes flagged for
-  the next low-energy window; non-blocking per §7.
-
-Visual acceptance (16 shots, INDEX.md in
-`docs/design/sprints/sprint_1b_visual_acceptance/`):
-- ✓ 00 baseline matches Sprint 1A `20_preset_hero.png` (cross-
-  sprint regression gate: no 1B stage corrupted a 1A field)
-- ✓ 01 panels: Params panel shows `Climate` section with wind slider;
-  Overlays panel lists all 12 IDs
-- ✓ 40–46 Pass 1 six new overlays + precip/rivers stack
-- ✓ 50–53 Pass 2 wind slider rotates precipitation (all 4 distinct,
-  50↔52 and 51↔53 mirror pairs verified)
-- ✓ 60–61 Pass 3 wind slider rotates soil moisture (mirror flip
-  visible; see 1B visual spec clarification below for why this pair
-  uses `soil_moisture`, not `dominant_biome`)
-- ✓ 70 Pass 4 4-overlay stack renders without clobber or NaN
+Deferred from §6 scope:
+- 7 of 16 Sprint 1B visual shots (wind-varying: 50–53, 60–61; plus
+  1 preset variant) stay as manual PNGs pending `preset_override`
+  schema v2 in Sprint 2 (see DEFERRED below)
 
 **Next session priorities** (see [QUICK REFERENCE](#quick-reference)):
-1. §7 Paper pack deep reads (Chen 2023 / Bruijnzeel 2005 / 2011).
-2. Sprint 1B-tail (alpha slider per overlay, seed-cycling, 9-shot
-   baseline, blue noise size toggle) — optional, parked under
-   [DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints).
-3. Sprint 2 — geomorph credibility (StreamPowerIncisionStage on
-   `authoritative.height`).
+1. Sprint 2 — geomorph credibility. `StreamPowerIncisionStage`
+   on `authoritative.height`; use `--headless` for erosion
+   before/after capture instead of manual window sessions.
+2. Sprint 1B paper pack (low-energy: Bruijnzeel 2005/2011, Chen
+   2023 Budyko, Core Pack #2/#3/#5/#6/#8 落地点 sections).
 
 ---
 
 ## RECENTLY SHIPPED
+
+### Sprint 1C — Headless Validation & Offscreen Capture (2026-04-17, 10 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_1c_headless_validation.md`](docs/design/sprints/sprint_1c_headless_validation.md)
+**Test delta:** 270 → 327 passing (+57), 5 ignored (all pass locally on Metal).
+
+| Commit | Task | What shipped |
+|---|---|---|
+| `060b778` | 1C.1 | `CaptureRequest` RON schema + 4 round-trip tests |
+| `bd082f7` | 1C.3 | CPU overlay bake factored to `render::overlay_export::bake_overlay_to_rgba8`; +1 determinism test |
+| `abbc298` | 1C.4 | `RunSummary` / `ShotSummary` / `TruthSummary` / `BeautySummary` / `OverallStatus` (5 variants) / `InternalErrorKind` (9 variants) + `canonical_bytes` / `compute_run_id` / `compute_request_fingerprint` / `RunLayout` I/O helpers; 21 tests |
+| `7ec7a88` | 1C.5 | `GpuContext::new_headless` + `capture_offscreen_rgba8` with 256-aligned row-pitch readback; `HEADLESS_COLOR_FORMAT` const; 1 regular + 2 `#[ignore]` GPU tests |
+| `ab0828c` | 1C.2 | `--headless` + `--headless-validate --against` flag routing on `main.rs`; `ExitCode` return; `OverallStatus::exit_code()` mapped to AD9 process exits; routing test |
+| `62f2b4a` | 1C.6 | Executor: `run_request` + `run_shot` + `render_beauty_shot`; typed `ShotError`; AD8 GPU-bootstrap with `IPG_FORCE_HEADLESS_GPU_FAIL` hook; shared helpers `sim::default_pipeline`, `data::golden::SummaryMetrics::compute`, `render::camera::preset_by_name` |
+| `71822b4` | 1C.8 | `headless::compare` — AD5 three-step diff (shape → truth hash → beauty artifact-only); `validate` returns `Result<(OverallStatus, Vec<String>)>`; +13 tests |
+| `bd35071` | 1C.9 + 1C.10 | Checked-in baselines: `sprint_1a_baseline/` (9 shots) + `sprint_1b_acceptance/` (9 shots); PNGs gitignored; self-validates exit 0 on both |
+| `dc70e18` | 1C.11 | CI non-blocking steps run `--headless` + `--headless-validate` against both baselines on `macos-latest` |
+
+**Sprint 1A 9-shot golden visual baseline** (long-deferred since
+2026-04-14) is now first-shipped via 1C.9 — no seed-cycling UI
+required; the headless harness drives it directly.
+
+**Invariants:** `cargo tree -p core` clean; descriptors-not-closures
+preserved (`bake_overlay_to_rgba8` takes `&OverlayDescriptor`);
+string keys still confined to `render/src/overlay.rs`; `core::save`
+untouched. All 8 architectural invariants green.
+
+---
+
+### Sprint 1B — Climate + Ecology closed loop (2026-04-17, 14+2 commits on `dev`)
 
 Sprint 1B core, 14 commits on `dev`, 2026-04-15 session. Every
 commit used the simplify → superpowers code-reviewer → commit
@@ -211,7 +224,7 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
 
 ## DEFERRED TO LATER SPRINTS
 
-**From Sprint 1A (still pending, unchanged):**
+**From Sprint 1A (still pending):**
 
 - **Sprint 2 — flow accumulation overlay log-compression audit**
   (Shot 13 washout). Sprint 2's stream-power erosion work is the
@@ -222,19 +235,23 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
   Sprint 2 will touch terrain shading and can ship a shader
   feature-flag for cheap A/B diff.
 
-**From Sprint 1B close-out (new):**
+**From Sprint 1B close-out:**
 
-- **Sprint 1B-tail T1/T2/T3** from sprint doc §11 — the "nice to
-  have" UI/tooling polish items that depend on Sprint 1B's
-  ParamsPanel / OverlayPanel but are explicitly **not** part of the
-  §10 close-out checklist:
-  - **T1 — 9-shot golden visual baseline** (3 camera presets × 3
-    seeds) inherited from Sprint 1A. Needs a seed-cycling slider
-    which isn't in 1B-core.
+- **Sprint 1B-tail T2/T3** from sprint doc §11 — UI polish items
+  explicitly **not** part of the §10 close-out checklist:
   - **T2 — Per-descriptor alpha slider** for the 12 overlays. Alpha
     stays at the Sprint 1A hardcoded `0.6` for now.
   - **T3 — Blue noise runtime size toggle** (64 / 128 / 256). The
     other two PNGs sit in `assets/noise/` but nothing loads them.
+- **Sprint 1B wind-varying shots (50–53, 60–61)** — the 6 shots
+  (wind=0°/90°/180°/270° precipitation + wind=0°/180° soil moisture)
+  that need `preset_override` fields in the `CaptureRequest` schema
+  to migrate into a checked-in headless baseline. Pending schema v2
+  in Sprint 2. The pipeline-level regression guard
+  `sim::validation_stage::tests::wind_dir_rerun_propagates_through_biome_chain`
+  already locks the wind-propagation contract mechanically, so these
+  are visual-artifact captures only — no correctness risk from the
+  deferral.
 - **Sprint 2 — biome suitability parameter tuning** (previously
   framed as "BareRockLava / DryShrub / CoastalScrub / LowlandForest
   tuning"). The current v1 parameters collapse `volcanic_single`
@@ -263,6 +280,17 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
 
 ## DEVELOPMENT
 
+### Sprint 1C — Headless Validation & Offscreen Capture
+**Status:** **Closed on `dev` 2026-04-17.** 10 atomic commits
+(060b778 → dc70e18). **327 tests** across 8 crates (+57 from Sprint
+1B's 270 baseline; 5 ignored GPU tests pass locally on Metal).
+`--headless` and `--headless-validate --against` both live on macOS
+Metal. Sprint 1A 9-shot golden baseline first-shipped via 1C.9.
+Baseline acceptance host: Apple Silicon + macOS Metal (AD10).
+**Doc:** [`docs/design/sprints/sprint_1c_headless_validation.md`](docs/design/sprints/sprint_1c_headless_validation.md)
+See [CURRENT FOCUS](#current-focus) and [RECENTLY SHIPPED](#recently-shipped)
+for the per-task + per-commit breakdown.
+
 ### Sprint 1B — Climate + Ecology closed loop
 **Status:** **Closed on `dev` 2026-04-17.** 14 atomic commits +
 2 §10 close-out commits (window title + regression guard). **270
@@ -275,16 +303,14 @@ OverlayRenderer::refresh`) and visually verified against the
 (see RECENTLY SHIPPED for the full write-up and the regression
 test that replaced the visual probe).
 **Doc:** [`docs/design/sprints/sprint_1b_climate_ecology.md`](docs/design/sprints/sprint_1b_climate_ecology.md)
-See [CURRENT FOCUS](#current-focus) and [RECENTLY SHIPPED](#recently-shipped)
-for the per-task + per-commit breakdown.
+See [RECENTLY SHIPPED](#recently-shipped) for the per-task + per-commit breakdown.
 
 ### Sprint 1A — Terrain + Water Skeleton
 **Status:** §3.2 Visual Package complete (A1–A6 + B3 all shipped on
 `dev` as of 2026-04-14). 16-shot validation captured + audited; Pass
 3.1 post-fix landed for preset framing. The 9-shot golden baseline
-inherited to Sprint 1B is now parked under the 1B-tail list in
-[DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints) rather than
-blocking 1B close-out (per sprint 1B doc §0).
+(long-deferred since 2026-04-14) shipped in Sprint 1C via 1C.9 —
+see `crates/data/golden/headless/sprint_1a_baseline/`.
 **Doc:** [`docs/design/sprints/sprint_1a_terrain_water.md`](docs/design/sprints/sprint_1a_terrain_water.md)
 
 **Shipped this pass (sim pipeline, 2026-04-14):**
@@ -447,12 +473,12 @@ on `dev`):**
   See `RECENTLY SHIPPED` for the analytical framing verification.
   Tests still at 188 (symbol-reference, not literal).
 
-**Still to ship for Sprint 1A §7 full acceptance:**
-- **9-shot golden visual baseline** (3 presets × 3 golden seeds) —
-  deferred to Sprint 1B on seed-cycling UI (see
-  [DEFERRED TO LATER SPRINTS](#deferred-to-later-sprints)).
+**Residuals from Sprint 1A §7:**
+- **9-shot golden visual baseline** — shipped in Sprint 1C via 1C.9
+  (`crates/data/golden/headless/sprint_1a_baseline/`). No seed-cycling
+  UI was needed; the headless harness drives it directly.
 - **Paper pack §6:** Chen 2014 + Génevaux 2013 deep reads, Lague 2014
-  target-deep.
+  target-deep — still outstanding; tackle in a low-energy session.
 
 **Spec clarifications discovered during implementation** (applied to the
 author's Obsidian vault — see `docs/design` which is a gitignored symlink):
@@ -662,10 +688,10 @@ Delivered:
 
 ## UPCOMING SPRINTS
 
+Sprints 1A, 1B, and 1C are shipped. Upcoming work starts at Sprint 2.
+
 | Sprint | Focus | Plan doc |
 |---|---|---|
-| 1A | Terrain + water skeleton (TopographyStage, FlowRoutingStage, AccumulationStage, RiverExtractionStage) | `docs/design/sprints/sprint_1a_terrain_water.md` |
-| 1B | Climate + ecology (orographic precipitation, biome assignment) + hex aggregation start | `docs/design/sprints/sprint_1b_climate_ecology.md` |
 | 2 | Geomorphology credibility (SPIM tuning, golden seed snapshots, reference metrics) | `docs/design/sprints/sprint_2_geomorph_credibility.md` |
 | 3 | Sediment + advanced climate (SPACE-style coupled water/sediment) | `docs/design/sprints/sprint_3_sediment_advanced_climate.md` |
 | 4 | GPU compute shaders + CLI headless batch + PNG gallery export | `docs/design/sprints/sprint_4_gpu_compute.md` |
@@ -688,14 +714,18 @@ incision stage reads, so the first task is a new
 `sim::geomorph::StreamPowerIncisionStage` that mutates
 `authoritative.height` via an explicit Euler step. Touches
 `crates/sim/src/geomorph/` and adds a 9th `StageId` ordinal after
-`RiverExtraction`. Sprint 2 doc: `docs/design/sprints/sprint_2_geomorph_credibility.md`.
-**Medium energy?** → Sprint 1B-tail T1/T2/T3 polish items (alpha
-slider per overlay, seed-cycling for the 9-shot baseline, blue-
-noise size toggle). Or sit with the running app and measure actual
-`run_from` + `refresh` wall-clock in `Runtime::tick` — the 2026-
-04-17 acceptance session felt responsive but no ms numbers were
-captured. Compare to the 200 ms §10 target.
-**Low energy?** → Sprint 1B paper pack. Create
+`RiverExtraction`. Sprint 1C's `--headless` harness means erosion
+before/after comparisons can be driven entirely by request files
+rather than manual window sessions. Sprint 2 doc:
+`docs/design/sprints/sprint_2_geomorph_credibility.md`.
+**Medium energy?** → Sprint 1B-tail T2/T3 polish items (alpha
+slider per overlay, blue-noise size toggle). Or sit with the
+running app and measure actual `run_from` + `refresh` wall-clock
+in `Runtime::tick` — the 2026-04-17 acceptance session felt
+responsive but no ms numbers were captured. Compare to the 200 ms
+§10 target.
+**Low energy?** → Sprint 1B paper pack (Sprint 1C was pure
+engineering; no paper pack). Create
 `docs/papers/sprint_packs/sprint_1b.md` per sprint doc §7: Bruijnzeel
 2005 / 2011 TMCF notes, Chen 2023 Budyko readthrough, and Core Pack
 #2/#3/#5/#6/#8 "Sprint 1B 落地点" sections pointing back at DD2 / DD4
@@ -705,8 +735,8 @@ captured. Compare to the 200 ms §10 target.
 biomes appear in `volcanic_single`. Current output collapses onto
 Grassland / BareRockLava / Riparian. Widen the σ on LowlandForest
 and MontaneWetForest bells, or lower the `soil_moisture` thresholds
-— Task 1B.9 adds the slider hooks, so this can be explored
-interactively once the live window session happens.
+— Task 1B.9 added the slider hooks; the `--headless` harness now
+makes parameter sweeps scriptable without opening a window.
 
 ---
 

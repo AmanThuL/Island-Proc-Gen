@@ -23,10 +23,51 @@ crate, rewriting `WorldState` layout, deleting generated artifacts.
 | [`docs/design/island_generation_complete_roadmap.md`](docs/design/island_generation_complete_roadmap.md) | Authoritative roadmap and architectural rules |
 | [`docs/design/sprints/sprint_N_*.md`](docs/design/sprints/) | The active sprint's implementation plan and §6 acceptance checklist |
 | [`docs/papers/README.md`](docs/papers/README.md) | Paper knowledge base layering (A Core Pack / B Sprint Packs / C Case Studies / D Parking Lot) |
+| [`crates/data/golden/headless/README.md`](crates/data/golden/headless/README.md) | Sprint 1C `--headless-validate` baselines (1A 9-shot + 1B 9-shot) |
 
 **Read the active sprint doc before touching code for that sprint.** The
 sprint's §6 acceptance checklist and §7 risks/invariants are the done-definition
 — not generic Rust best practices.
+
+---
+
+## AI-native validation workflow (Sprint 1C)
+
+You can validate the full pipeline + overlay + beauty-render stack without
+opening a window. Two entry points on the main `app` binary:
+
+```bash
+# Run a CaptureRequest — writes the artifact tree (runtime outputs go under
+# /captures/ which is gitignored; baselines under crates/data/golden/headless/
+# are tracked and re-run idempotently thanks to deterministic run_id).
+cargo run -p app --release -- --headless <path/to/request.ron>
+
+# Diff a runtime capture against a checked-in baseline — pure summary.ron
+# comparison, no PNG reads required.
+cargo run -p app --release -- \
+    --headless-validate /captures/headless/<run_id>/ \
+    --against crates/data/golden/headless/sprint_1a_baseline/
+```
+
+**Exit-code contract (AD9, locked by `main_bin::tests::headless_exit_byte_maps_overall_status_to_ad9_code`):**
+
+| Code | `OverallStatus` variant | Meaning |
+|------|-------------------------|---------|
+| `0`  | `Passed` / `PassedWithBeautySkipped` | Truth path green; beauty may be Rendered or legitimately skipped |
+| `2`  | `FailedTruthValidation` / `FailedMetricsValidation` | Pipeline regression — overlay bytes or SummaryMetrics drifted |
+| `3`  | `InternalError` | Tool-level error (IO, RON parse, shot-set mismatch) — fix the harness, not the pipeline |
+
+Shell scripts `case $?` this directly; AI agents `match` on
+`summary.ron.overall_status` without string scraping. **Always check exit
+code or read `summary.ron.overall_status` — don't assume success just
+because the command returned.**
+
+Two checked-in baselines live under `crates/data/golden/headless/`:
+- `sprint_1a_baseline/` — 3 presets × 3 golden seeds × Hero camera = 9 shots
+- `sprint_1b_acceptance/` — migration of the default-wind subset of the
+  Sprint 1B 16-shot visual acceptance (9 shots; wind-varying shots stay as
+  manual PNGs in `docs/design/sprints/sprint_1b_visual_acceptance/` because
+  the v1 `CaptureRequest` schema has no `preset_override` field)
 
 ---
 
@@ -220,6 +261,65 @@ app ──▶ render ──▶ gpu ──┐
   screenshot pair. When adding future wind-dependent overlays, pick
   a field whose raw value range is wind-sensitive rather than a
   categorical argmax.
+- **`GpuContext::surface` is `Option<wgpu::Surface<'static>>`** so the
+  same type serves both the windowed Runtime and the `--headless`
+  offscreen harness. Interactive code paths call
+  `gpu.surface_expect()` which panics with a descriptive message
+  rather than unwrapping; headless construction via
+  `GpuContext::new_headless((w, h))` sets `surface = None` and picks
+  `surface_format = HEADLESS_COLOR_FORMAT = Rgba8Unorm`. Renderers
+  key off `gpu.surface_format` / `gpu.depth_format` — unchanged
+  fields — so the same `TerrainRenderer` / `SkyRenderer` /
+  `OverlayRenderer` code plugs into both paths.
+- **AD8 GPU bootstrap is top-level, NOT per-shot.**
+  `app::headless::executor::run_request` calls
+  `GpuContext::new_headless(...)` exactly once at the top. On
+  failure all `BeautySpec` shots are marked
+  `BeautyStatus::Skipped`, truth path runs to completion, and
+  `OverallStatus::PassedWithBeautySkipped` keeps exit code 0.
+  Re-trying adapter construction per shot would introduce
+  non-determinism; don't do it.
+- **`CaptureRequest` vs `SaveMode::DebugCapture` are different
+  abstractions.** `core::save` stays byte-level (no Path, no PNG, no
+  `std::fs`) so the wasm target still works; `app::headless` owns
+  all the filesystem + PNG + RON write code. The harness can in
+  principle call `core::save` one-way, but the two must never
+  share code paths — keeping them separate preserves invariants #1
+  and #2.
+- **Truth path is deterministic (AD7); beauty path is artifact-only
+  (AD2 + AD7).** Same host + same binary + same `CaptureRequest`
+  → `summary.ron` is bit-exact modulo the explicit whitelist
+  (`timestamp_utc`, `pipeline_ms`, `bake_ms`, `gpu_render_ms`,
+  `warnings`). Beauty `byte_hash` is bit-exact on the same host
+  per AD7, but cross-GPU fp drift means it's NEVER used for
+  pass/fail — `--headless-validate` Step 3 only ever writes
+  warnings for beauty divergence / skip. The compare tool works
+  off two `summary.ron` files and does not read any PNG.
+- **`metrics_hash` is `Option<String>`.** `None` means the shot
+  explicitly opted out of `include_metrics`; two `None`s compare
+  equal, a mixed `Some`/`None` is a mismatch. If you add a shot
+  with `include_metrics: false` to a baseline, expect no
+  `metrics.ron` file on disk for that shot.
+- **`AD9 OverallStatus` 5-variant set is locked.** Adding a new
+  variant breaks downstream shell scripts and CI expectations.
+  The exit-code map (`main_bin::tests::headless_exit_byte_maps_
+  overall_status_to_ad9_code`) is frozen at 0 / 2 / 3. Sprint 4
+  may add variants only additively per AD9 "扩展规则".
+  `InternalErrorKind::Other` carries `#[serde(other)]` so
+  Sprint 4's new kinds parse cleanly on a 1C binary.
+- **`sim::default_pipeline()`** is the single source of truth for
+  the 17-stage canonical pipeline (16 real + `ValidationStage`
+  tail). Both `crates/data/tests/golden_seed_regression.rs` and
+  `app::headless::executor` consume it. If you add a stage,
+  update `default_pipeline` and bump the `StageId` enum in
+  lockstep (the `stage_id_indices_are_dense_and_canonical` test
+  fires on drift).
+- **Never commit overlay / beauty PNGs under
+  `crates/data/golden/headless/`.** The `.gitignore` carries
+  `crates/data/golden/headless/**/*.png`, but re-running
+  `cargo run -p app -- --headless <baseline>/request.ron`
+  produces them in place. Delete before `git add -A` or use the
+  one-liner in `crates/data/golden/headless/README.md`.
 
 ---
 
