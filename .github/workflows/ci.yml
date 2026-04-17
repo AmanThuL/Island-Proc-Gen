@@ -40,3 +40,28 @@ jobs:
 
       - name: cargo test headless crates
         run: cargo test -p core -p sim -p hex -p data
+
+      # Sprint 1C hook — regenerate both checked-in baselines via the
+      # --headless harness, then --headless-validate against themselves.
+      # Non-blocking on first landing: CI uses `continue-on-error: true`
+      # so a Metal / offscreen flake on the macos runner doesn't block the
+      # PR. Promote to blocking once the hook has proven stable across a
+      # few CI runs (Sprint 2+). See docs/design/sprints/sprint_1c_headless_validation.md
+      # §6 acceptance + §7 "CI hook (可选，第一次非 blocking)".
+      - name: "Sprint 1C: regenerate + --headless-validate sprint_1a_baseline"
+        continue-on-error: true
+        run: |
+          cargo run -p app --release -- \
+            --headless crates/data/golden/headless/sprint_1a_baseline/request.ron
+          cargo run -p app --release -- \
+            --headless-validate crates/data/golden/headless/sprint_1a_baseline \
+            --against crates/data/golden/headless/sprint_1a_baseline
+
+      - name: "Sprint 1C: regenerate + --headless-validate sprint_1b_acceptance"
+        continue-on-error: true
+        run: |
+          cargo run -p app --release -- \
+            --headless crates/data/golden/headless/sprint_1b_acceptance/request.ron
+          cargo run -p app --release -- \
+            --headless-validate crates/data/golden/headless/sprint_1b_acceptance \
+            --against crates/data/golden/headless/sprint_1b_acceptance
