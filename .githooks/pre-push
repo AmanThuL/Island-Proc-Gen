@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# pre-push hook: run `cargo clippy --workspace -- -D warnings` before every push.
+#
+# Mirrors the second step of `.github/workflows/ci.yml`. Root cause for
+# this hook: CI run 24550602452 caught `clippy::unnecessary_sort_by` in
+# rivers.rs after a local push. Pre-commit only runs fmt-check
+# (intentionally — clippy is too slow for interactive commits), so the
+# lint cleared commit time but died at CI.
+#
+# Pushes are infrequent, so absorbing the ~30s warm clippy cost here is
+# the right trade-off. Cold clippy (first run after a clean checkout)
+# can take minutes — that cost comes once per clone.
+#
+# Enabled alongside the pre-commit / post-commit hooks via:
+#
+#     git config core.hooksPath .githooks
+#
+# Bypass only in emergencies: `git push --no-verify` (CLAUDE.md rule:
+# don't bypass without a real reason — CI will fail the same way).
+
+set -euo pipefail
+
+# `cargo` lives under ~/.cargo/bin but non-interactive bash doesn't
+# source ~/.bashrc on this machine, so the hook needs to locate cargo
+# the same way CLAUDE.md documents: prefix with `. "$HOME/.cargo/env"`.
+if [[ -f "$HOME/.cargo/env" ]]; then
+    # shellcheck disable=SC1091
+    . "$HOME/.cargo/env"
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-push: cargo not on PATH — skipping clippy check" >&2
+    echo "pre-push: install rustup or source ~/.cargo/env, then retry" >&2
+    exit 1
+fi
+
+echo "pre-push: running cargo clippy --workspace -- -D warnings (~30s warm)" >&2
+
+if ! cargo clippy --workspace -- -D warnings >/dev/null 2>&1; then
+    echo "" >&2
+    echo "pre-push: cargo clippy FAILED" >&2
+    echo "" >&2
+    echo "Re-run without the output filter to see the specific lints:" >&2
+    echo "" >&2
+    echo "    cargo clippy --workspace -- -D warnings" >&2
+    echo "" >&2
+    echo "Fix the lints, commit, and retry the push. To bypass in a" >&2
+    echo "genuine emergency: git push --no-verify (CI will still fail)." >&2
+    echo "" >&2
+    exit 1
+fi
