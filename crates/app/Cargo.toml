@@ -1,0 +1,34 @@
+[package]
+name              = "app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "app"
+path = "src/main.rs"
+
+[dependencies]
+island_core        = { path = "../core", package = "core" }
+data               = { path = "../data" }
+gpu                = { path = "../gpu" }
+render             = { path = "../render" }
+sim                = { path = "../sim" }
+ui                 = { path = "../ui" }
+anyhow             = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { workspace = true }
+winit              = { workspace = true }
+wgpu               = { workspace = true }
+egui               = { workspace = true }
+egui-wgpu          = { workspace = true }
+egui-winit         = { workspace = true }
+glam               = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,31 @@
+[workspace]
+members  = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+version     = "0.1.0"
+edition     = "2024"
+rust-version = "1.85"
+license     = "MIT OR Apache-2.0"
+authors     = ["Aman Thul"]
+
+[workspace.dependencies]
+wgpu             = "29.0.1"
+winit            = "0.30.13"
+egui             = "0.34.1"
+egui-wgpu        = "0.34.1"
+egui-winit       = "0.34.1"
+glam             = "0.32.1"
+serde            = { version = "1.0.228", features = ["derive"] }
+ron              = "0.12.1"
+toml             = "1.1.2"
+tracing          = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+anyhow           = "1.0.102"
+thiserror        = "2.0.18"
+rand             = "0.9"
+rand_pcg         = "0.9"
+tempfile         = "3"
+png              = "0.17"
+pollster         = "0.4"
+bytemuck         = { version = "1.25", features = ["derive"] }

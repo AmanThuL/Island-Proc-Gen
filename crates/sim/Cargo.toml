@@ -1,0 +1,17 @@
+[package]
+name              = "sim"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+island_core = { path = "../core", package = "core" }
+hex         = { path = "../hex" }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+tracing     = { workspace = true }
+rand        = { workspace = true }
+rand_pcg    = { workspace = true }
+glam        = { workspace = true }

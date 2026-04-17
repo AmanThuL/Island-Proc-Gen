@@ -1,0 +1,24 @@
+[package]
+name              = "core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+# doctest = false: the crate is named `core`, which shadows Rust's stdlib
+# `::core` inside rustdoc's --crate-name core pass. thiserror's derive macro
+# expands to ::core::fmt paths that fail to resolve in that context. Until
+# Sprint 1A decides whether to rename this crate, we skip doc-tests — the
+# unit tests cover the same code paths.
+[lib]
+doctest = false
+
+[dependencies]
+serde     = { workspace = true }
+thiserror = { workspace = true }
+anyhow    = { workspace = true }
+tracing   = { workspace = true }
+rand      = { workspace = true }
+rand_pcg  = { workspace = true }
+ron       = { workspace = true }

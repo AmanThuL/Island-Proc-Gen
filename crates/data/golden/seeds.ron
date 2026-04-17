@@ -1,0 +1,7 @@
+GoldenSeeds(
+    entries: [
+        GoldenSeedEntry(seed: 42, preset_name: "volcanic_single"),
+        GoldenSeedEntry(seed: 123, preset_name: "volcanic_twin"),
+        GoldenSeedEntry(seed: 777, preset_name: "caldera"),
+    ],
+)

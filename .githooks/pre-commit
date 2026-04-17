@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# pre-commit hook: enforce `cargo fmt --check` before every commit.
+#
+# Mirrors the first step of `.github/workflows/ci.yml`. Root cause for
+# this hook: CI run 24436941961 failed because 33 commits on dev had
+# shipped without anything gating fmt locally.
+#
+# Enable once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# Bypass only in emergencies: `git commit --no-verify` (CLAUDE.md rule:
+# don't bypass without a real reason — the hook is catching a genuine
+# CI gate).
+
+set -euo pipefail
+
+# `cargo` lives under ~/.cargo/bin but non-interactive bash doesn't
+# source ~/.bashrc on this machine, so the hook needs to locate cargo
+# the same way CLAUDE.md documents: prefix with `. "$HOME/.cargo/env"`.
+if [[ -f "$HOME/.cargo/env" ]]; then
+    # shellcheck disable=SC1091
+    . "$HOME/.cargo/env"
+fi
+
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "pre-commit: cargo not on PATH — skipping fmt check" >&2
+    echo "pre-commit: install rustup or source ~/.cargo/env, then retry" >&2
+    exit 1
+fi
+
+if ! cargo fmt --check >/dev/null 2>&1; then
+    echo "pre-commit: cargo fmt --check FAILED" >&2
+    echo "" >&2
+    echo "Run \`cargo fmt\` to fix, then \`git add\` the updated files and" >&2
+    echo "re-run your commit. To see the diff without applying it:" >&2
+    echo "" >&2
+    echo "    cargo fmt --check" >&2
+    echo "" >&2
+    exit 1
+fi

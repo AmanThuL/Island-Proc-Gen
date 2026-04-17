@@ -1,19 +1,90 @@
-# My Procedural Island Generation
-I used Unity Engine to develop a 3D tile-based island generation tool. There are a variety of parameters that can be modified in order to generate a desired island terrain, including map seed, moisture level, and etc. In this project, each procedural generated island is a tile-based terrain with land, ocean, biomes, resources (trees/rocks). The Explanation section briefly describes each step during the process of procedural island generation.
+# Island-Proc-Gen
 
-## Explanation
-![flowChart](island-generation-flow-chart.png)
+Procedural volcanic-island generator in Rust. A deterministic simulation pipeline
+stitches together geomorphology (stream-power uplift + erosion), hydrology (flow
+routing, river extraction), climate (orographic precipitation, water balance,
+fog), and ecology (biome assignment) on a shared 2D field layer, rendered live
+with `wgpu` + `egui` and exportable as CPU-side PNG galleries for headless batch
+runs.
 
-By following the procedure above, a tile-based island can be generated in the scene. The screenshot below illustrates a top-down view of a procedural generated island created by the tool.
+This is a single-developer research project. It is **pre-alpha** — APIs, data
+formats, and visual output will change without notice. Read
+[`PROGRESS.md`](PROGRESS.md) for the current state before assuming any feature
+is stable.
 
-![islandExample](island.png)
+![Island-Proc-Gen preview](assets/screenshots/hero.png)
 
-Although the generator is able to create a fine island with limited type of resources, it is still far from realism. There are definitely more potential features that could be further added to the tool.
+## Status
 
-## Potential Features
-- Voronoi polygons: Instead of making a tile-based terrain, an island generated with voronoi polygons would certainly look more natural and irregular in shape.
-- Elevations: Having actual elevations on the terrain instead of a flat terrain.
-- Rivers
-- More foliages and plants
-- Animal flocks
-- Weather system
+A 16-stage canonical simulation pipeline runs at app startup, populating
+continuous 2D fields for terrain height, slope, flow routing, drainage basins,
+rivers, temperature, precipitation, fog, potential evapotranspiration, soil
+moisture, biome weights, and hex aggregation on a 256×256 grid. Twelve live
+overlays toggle in the egui panel; a wind-direction slider re-runs the
+climate-ecology chain end-to-end and refreshes overlay textures on the same
+frame. `cargo run -p app` opens a working window on macOS / Metal.
+
+Nothing is stabilised yet: preset parameters, field semantics, save-file
+format, and the visual package all remain fluid. The project has no binary
+releases, no wasm build, and no web viewer. The end-goal shape is a deterministic
+batch generator (seed + preset → PNG gallery + hex-aggregated JSON) plus a live
+viewer for research exploration.
+
+## Quick start
+
+```bash
+# Prerequisite: Rust stable, edition 2024 (rustc >= 1.85)
+cargo build --workspace
+cargo test  --workspace
+cargo run   -p app       # opens a local winit window
+```
+
+Controls in the app window:
+- Left-drag — orbit
+- Right-drag — pan
+- Scroll — zoom
+- Wind-dir slider in the Params panel — re-runs climate & ecology
+- Close window — clean exit
+
+## Layout
+
+| Crate | Role |
+|---|---|
+| `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`, `validation` (8 invariants), `FLOW_DIR_SINK` / `D8_OFFSETS` / neighborhood constants, `BiomeType` / `BiomeWeights`. Must compile without any graphics crate. |
+| `crates/sim` | 16 canonical pipeline stages (geomorph + hydro + climate + ecology + hex projection) plus a tail `ValidationStage`. `StageId` enum locks pipeline indices for `SimulationPipeline::run_from`. |
+| `crates/hex` | `HexGrid` + axis-aligned box tessellation (v1 simplification; a future pass can refit to true hexagonal Voronoi). |
+| `crates/data` | Built-in presets (`volcanic_single`, `volcanic_twin`, `caldera`), golden-seed snapshots, `SummaryMetrics` regression tiers. |
+| `crates/gpu` | `wgpu` device/surface management, depth attachment. |
+| `crates/render` | Descriptor-based `OverlayRegistry` (12 overlays), `TerrainRenderer`, `OverlayRenderer`, `SkyRenderer`, canonical palette, camera-preset LUT math. All `&'static str` field-key dispatch confined to `overlay.rs`. |
+| `crates/ui` | `egui` panels — overlay toggles, camera controls, preset params (with wind-direction slider), stats. |
+| `crates/app` | `winit` event loop, orbit camera, preset loading, save/load Path wrapper, slider → `run_from` wiring. |
+
+Crate deps flow strictly one way: `app → render → gpu → core` and
+`app → ui/sim/data → core`. `core` is a sink; nothing below it in the graph.
+
+## Documentation
+
+- [`docs/architecture/ARCHITECTURE.md`](docs/architecture/ARCHITECTURE.md)
+  — system architecture, data model, pipeline walkthrough, and the eight
+  hard invariants.
+- [`PROGRESS.md`](PROGRESS.md) — milestone dashboard and development history.
+- [`CLAUDE.md`](CLAUDE.md) — operating notes for AI coding agents working
+  in this repo.
+- [`docs/papers/README.md`](docs/papers/README.md) — indexed paper
+  knowledge base (Core Pack + per-topic add-ons).
+
+## License
+
+Dual-licensed under either of
+
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+
+at your option.
+
+### Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in the work by you, as defined in the Apache-2.0
+license, shall be dual-licensed as above, without any additional terms
+or conditions.

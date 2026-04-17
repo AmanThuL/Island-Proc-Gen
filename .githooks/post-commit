@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# post-commit hook: nudge to push when the local branch gets too far ahead.
+#
+# Nags on stdout when EITHER:
+#   - unpushed commits >= COUNT_THRESHOLD, OR
+#   - oldest unpushed commit is older than AGE_HOURS_THRESHOLD
+#
+# Silent otherwise. Always exits 0 — this is a nudge, never a gate.
+#
+# Enabled alongside the pre-commit hook via:
+#
+#     git config core.hooksPath .githooks
+#
+# Tune the thresholds by editing the two constants below and committing.
+
+set -uo pipefail
+
+readonly COUNT_THRESHOLD=4
+readonly AGE_HOURS_THRESHOLD=6
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || exit 0
+[[ -z "$branch" || "$branch" == "HEAD" ]] && exit 0
+
+upstream="origin/$branch"
+if ! git rev-parse --verify --quiet "$upstream" >/dev/null; then
+    # Fresh local branch, no upstream yet. First `git push -u` will wire it.
+    exit 0
+fi
+
+ahead=$(git rev-list --count "${upstream}..HEAD" 2>/dev/null || echo 0)
+(( ahead == 0 )) && exit 0
+
+# `git log` lists newest-first, so `tail -1` is the oldest unpushed commit.
+oldest_ct=$(git log --format=%ct "${upstream}..HEAD" 2>/dev/null | tail -1)
+[[ -z "$oldest_ct" ]] && exit 0
+
+now=$(date +%s)
+age_hours=$(( (now - oldest_ct) / 3600 ))
+
+trigger_count=0
+trigger_age=0
+(( ahead >= COUNT_THRESHOLD )) && trigger_count=1
+(( age_hours > AGE_HOURS_THRESHOLD )) && trigger_age=1
+(( trigger_count == 0 && trigger_age == 0 )) && exit 0
+
+if (( trigger_count == 1 && trigger_age == 1 )); then
+    reason="${ahead} commits ahead, oldest ${age_hours}h old"
+elif (( trigger_count == 1 )); then
+    reason="${ahead} commits ahead of ${upstream}"
+else
+    reason="oldest unpushed commit is ${age_hours}h old (${ahead} total)"
+fi
+
+echo ""
+echo "─── push reminder ──────────────────────────────────────────"
+echo "  ${branch}: ${reason}"
+echo "  small, frequent pushes give CI a chance to catch things early"
+echo "  → git push"
+echo "────────────────────────────────────────────────────────────"
+
+exit 0
