@@ -1,0 +1,175 @@
+(
+    schema_version: 1,
+    run_id: "sprint_1b_acceptance",
+    request_fingerprint: "ab915a8160fe30770b70d5f2942e1099d034da669bf86085b7adac969e159ab1",
+    timestamp_utc: "2026-04-17T19:23:19Z",
+    shots: [
+        (
+            id: "s00_baseline_default",
+            truth: (
+                overlay_hashes: {
+                    "final_elevation": "34cd604ba417bb901cbae201e266ba8be67910d1a7b15ad61c5aa9c07a997f95",
+                },
+                metrics_hash: Some("3c4c5f75108c35eecc003deb00ff09aacea87b4e64f237920026b808c71ad2ae"),
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                status: Rendered,
+                byte_hash: Some("2c25375b9fef138eed2c76b703786131ee8ca3e9ca1aab23a4115fa8630bb070"),
+            )),
+            pipeline_ms: 6.56375,
+            bake_ms: 7.3974590000000005,
+            gpu_render_ms: Some(47.892875000000004),
+        ),
+        (
+            id: "s40_overlay_temperature",
+            truth: (
+                overlay_hashes: {
+                    "temperature": "eae005d1d658f33346762b0833bff575cbbce21f401787bbba74dc719bdd74db",
+                },
+                metrics_hash: None,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                status: Rendered,
+                byte_hash: Some("eb24c51dc9f4bb9d6af98ac37b5aa83f533f53f27da386ca3a4c670203dc234d"),
+            )),
+            pipeline_ms: 3.704459,
+            bake_ms: 0.5965,
+            gpu_render_ms: Some(27.277333000000002),
+        ),
+        (
+            id: "s41_overlay_precipitation",
+            truth: (
+                overlay_hashes: {
+                    "precipitation": "05b04353622111b9bc0ef6c1c7b19ee819daba9d921ba9f05300d07a1a301b4f",
+                },
+                metrics_hash: None,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                status: Rendered,
+                byte_hash: Some("15917855303c011bb42bec9b957960c45ae46f85145e83fa24c77b53936383cb"),
+            )),
+            pipeline_ms: 3.489167,
+            bake_ms: 0.8500829999999999,
+            gpu_render_ms: Some(30.817792),
+        ),
+        (
+            id: "s42_overlay_soil_moisture",
+            truth: (
+                overlay_hashes: {
+                    "soil_moisture": "9d3412a3462d87f5f0f1fd6cf4560308ad794b584797e191cb940518d9849055",
+                },
+                metrics_hash: None,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                status: Rendered,
+                byte_hash: Some("3aff2bbd240e8bda7ab73918c08b6c9b03547be69741dcc4cc6183a910671f5f"),
+            )),
+            pipeline_ms: 3.562208,
+            bake_ms: 0.679875,
+            gpu_render_ms: Some(30.488167),
+        ),
+        (
+            id: "s43_overlay_curvature",
+            truth: (
+                overlay_hashes: {
+                    "curvature": "fbf2da15ffd8ed9a6f77f0ceb9b352f22e56ec529b307bceb9d3b686ad41fd83",
+                },
+                metrics_hash: None,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                status: Rendered,
+                byte_hash: Some("c974e47d27e29cb3bed6cfedf2799f92071dc185557c7c9426bffa644ccfea5d"),
+            )),
+            pipeline_ms: 3.5149999999999997,
+            bake_ms: 0.419291,
+            gpu_render_ms: Some(25.887334000000003),
+        ),
+        (
+            id: "s44_overlay_dominant_biome",
+            truth: (
+                overlay_hashes: {
+                    "dominant_biome": "eb5c9910924c21ec481740318370c7d015e6ae8e8d518d4f0722abab6856f26f",
+                },
+                metrics_hash: None,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                status: Rendered,
+                byte_hash: Some("674550dcfbd9e4543a01ac9a4c5bc8717c2599c1891ea40a4031596d8de4a8db"),
+            )),
+            pipeline_ms: 3.468417,
+            bake_ms: 0.34683400000000003,
+            gpu_render_ms: Some(28.654249999999998),
+        ),
+        (
+            id: "s45_overlay_hex_aggregated",
+            truth: (
+                overlay_hashes: {
+                    "hex_aggregated": "3f76e88a79b07ead34f6e2f36ba1f310c653c07cf7b821a9abbe9be418367199",
+                },
+                metrics_hash: None,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                status: Rendered,
+                byte_hash: Some("aee6060cbe58642775f47d4e12fc157ee905a2a788b49d3d11146f632c86a5aa"),
+            )),
+            pipeline_ms: 3.474583,
+            bake_ms: 0.345625,
+            gpu_render_ms: Some(28.975792),
+        ),
+        (
+            id: "s46_overlay_precip_plus_rivers",
+            truth: (
+                overlay_hashes: {
+                    "precipitation": "05b04353622111b9bc0ef6c1c7b19ee819daba9d921ba9f05300d07a1a301b4f",
+                    "river_network": "4f76dc76b3a0e56af7b2acad3d085e00571527e55316b470ad06bbb1498312c5",
+                },
+                metrics_hash: None,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                status: Rendered,
+                byte_hash: Some("855853fff5b8fbc6c2f0a2c22c53640e31f2dfeff7e1a582538ba2f21cc8444e"),
+            )),
+            pipeline_ms: 3.5309999999999997,
+            bake_ms: 1.1297499999999998,
+            gpu_render_ms: Some(30.540208),
+        ),
+        (
+            id: "s70_all_overlays_on",
+            truth: (
+                overlay_hashes: {
+                    "basin_partition": "3119fdcc5f92453b020ff008f8be7e8844d6cf7e04b61c184b2e86db0fda8f23",
+                    "curvature": "fbf2da15ffd8ed9a6f77f0ceb9b352f22e56ec529b307bceb9d3b686ad41fd83",
+                    "dominant_biome": "eb5c9910924c21ec481740318370c7d015e6ae8e8d518d4f0722abab6856f26f",
+                    "final_elevation": "34cd604ba417bb901cbae201e266ba8be67910d1a7b15ad61c5aa9c07a997f95",
+                    "flow_accumulation": "86049774e679f8eb6fbae506965568f82161b59a718ea2f31e580996e6eb1a24",
+                    "hex_aggregated": "3f76e88a79b07ead34f6e2f36ba1f310c653c07cf7b821a9abbe9be418367199",
+                    "initial_uplift": "6680d183023499bf6e401f8b6fab10ae1be198b4bbd86e22f094f7189c292fea",
+                    "precipitation": "05b04353622111b9bc0ef6c1c7b19ee819daba9d921ba9f05300d07a1a301b4f",
+                    "river_network": "4f76dc76b3a0e56af7b2acad3d085e00571527e55316b470ad06bbb1498312c5",
+                    "slope": "936c9bfd3b5535361332396b172c9a3f6bbe1cff4699ceb7ba63ef68920d109f",
+                    "soil_moisture": "9d3412a3462d87f5f0f1fd6cf4560308ad794b584797e191cb940518d9849055",
+                    "temperature": "eae005d1d658f33346762b0833bff575cbbce21f401787bbba74dc719bdd74db",
+                },
+                metrics_hash: Some("3c4c5f75108c35eecc003deb00ff09aacea87b4e64f237920026b808c71ad2ae"),
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                status: Rendered,
+                byte_hash: Some("9a7982d8974aeca76cc1d579a52cd6d62cc8e20682e96a34076dcb852edcf559"),
+            )),
+            pipeline_ms: 3.532083,
+            bake_ms: 10.608584,
+            gpu_render_ms: Some(27.663792),
+        ),
+    ],
+    overall_status: Passed,
+    warnings: [],
+)

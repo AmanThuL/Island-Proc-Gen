@@ -1,0 +1,202 @@
+(
+    schema_version: 1,
+    run_id: Some("sprint_1b_acceptance"),
+    output_dir: Some("crates/data/golden/headless/sprint_1b_acceptance"),
+    shots: [
+        (
+            id: "s00_baseline_default",
+            seed: 42,
+            preset: "volcanic_single",
+            sim_resolution: 128,
+            truth: (
+                overlays: [
+                    "final_elevation",
+                ],
+                include_metrics: true,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                overlay_stack: [
+                    "final_elevation",
+                ],
+                resolution: (1280, 800),
+            )),
+        ),
+        (
+            id: "s40_overlay_temperature",
+            seed: 42,
+            preset: "volcanic_single",
+            sim_resolution: 128,
+            truth: (
+                overlays: [
+                    "temperature",
+                ],
+                include_metrics: false,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                overlay_stack: [
+                    "temperature",
+                ],
+                resolution: (1280, 800),
+            )),
+        ),
+        (
+            id: "s41_overlay_precipitation",
+            seed: 42,
+            preset: "volcanic_single",
+            sim_resolution: 128,
+            truth: (
+                overlays: [
+                    "precipitation",
+                ],
+                include_metrics: false,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                overlay_stack: [
+                    "precipitation",
+                ],
+                resolution: (1280, 800),
+            )),
+        ),
+        (
+            id: "s42_overlay_soil_moisture",
+            seed: 42,
+            preset: "volcanic_single",
+            sim_resolution: 128,
+            truth: (
+                overlays: [
+                    "soil_moisture",
+                ],
+                include_metrics: false,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                overlay_stack: [
+                    "soil_moisture",
+                ],
+                resolution: (1280, 800),
+            )),
+        ),
+        (
+            id: "s43_overlay_curvature",
+            seed: 42,
+            preset: "volcanic_single",
+            sim_resolution: 128,
+            truth: (
+                overlays: [
+                    "curvature",
+                ],
+                include_metrics: false,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                overlay_stack: [
+                    "curvature",
+                ],
+                resolution: (1280, 800),
+            )),
+        ),
+        (
+            id: "s44_overlay_dominant_biome",
+            seed: 42,
+            preset: "volcanic_single",
+            sim_resolution: 128,
+            truth: (
+                overlays: [
+                    "dominant_biome",
+                ],
+                include_metrics: false,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                overlay_stack: [
+                    "dominant_biome",
+                ],
+                resolution: (1280, 800),
+            )),
+        ),
+        (
+            id: "s45_overlay_hex_aggregated",
+            seed: 42,
+            preset: "volcanic_single",
+            sim_resolution: 128,
+            truth: (
+                overlays: [
+                    "hex_aggregated",
+                ],
+                include_metrics: false,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                overlay_stack: [
+                    "hex_aggregated",
+                ],
+                resolution: (1280, 800),
+            )),
+        ),
+        (
+            id: "s46_overlay_precip_plus_rivers",
+            seed: 42,
+            preset: "volcanic_single",
+            sim_resolution: 128,
+            truth: (
+                overlays: [
+                    "precipitation",
+                    "river_network",
+                ],
+                include_metrics: false,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                overlay_stack: [
+                    "precipitation",
+                    "river_network",
+                ],
+                resolution: (1280, 800),
+            )),
+        ),
+        (
+            id: "s70_all_overlays_on",
+            seed: 42,
+            preset: "volcanic_single",
+            sim_resolution: 128,
+            truth: (
+                overlays: [
+                    "initial_uplift",
+                    "final_elevation",
+                    "slope",
+                    "flow_accumulation",
+                    "basin_partition",
+                    "river_network",
+                    "precipitation",
+                    "temperature",
+                    "soil_moisture",
+                    "dominant_biome",
+                    "curvature",
+                    "hex_aggregated",
+                ],
+                include_metrics: true,
+            ),
+            beauty: Some((
+                camera_preset: "hero",
+                overlay_stack: [
+                    "initial_uplift",
+                    "final_elevation",
+                    "slope",
+                    "flow_accumulation",
+                    "basin_partition",
+                    "river_network",
+                    "precipitation",
+                    "temperature",
+                    "soil_moisture",
+                    "dominant_biome",
+                    "curvature",
+                    "hex_aggregated",
+                ],
+                resolution: (1280, 800),
+            )),
+        ),
+    ],
+)

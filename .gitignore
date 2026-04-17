@@ -17,6 +17,12 @@ cobertura.xml
 /captures/
 /benchmarks/
 
+# Sprint 1C checked-in baselines carry request.ron + summary.ron +
+# shots/*/metrics.ron (all RON, all small). Re-running the harness into
+# the same dir regenerates overlays/*.png and beauty/scene.png; per AD4
+# those artefacts must NOT be committed — compare reads summary.ron hashes.
+/crates/data/golden/headless/**/*.png
+
 # ─── Obsidian vault symlink (local editing convenience) ───────────────
 # docs/design is a symlink into the author's personal Obsidian vault —
 # absolute paths that won't resolve on any other machine. Sprint plans
