@@ -114,6 +114,8 @@ dependencies = [
  "glam",
  "gpu",
  "render",
+ "ron",
+ "serde",
  "sim",
  "tempfile",
  "tracing",
