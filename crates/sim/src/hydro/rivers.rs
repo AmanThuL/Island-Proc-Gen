@@ -155,7 +155,7 @@ impl SimulationStage for RiverExtractionStage {
                 .filter(|&id| comp_has_coast[id as usize] == 1)
                 .map(|id| (comp_sizes[id as usize], id))
                 .collect();
-            coast_comps.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            coast_comps.sort_unstable_by_key(|c| std::cmp::Reverse(c.0));
             coast_comps.truncate(MAX_RIVERS);
 
             let mut retained: Vec<u8> = vec![0; num_comps + 1];
