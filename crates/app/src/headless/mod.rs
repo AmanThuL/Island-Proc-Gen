@@ -15,6 +15,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
+pub mod executor;
 pub mod output;
 pub mod request;
 
@@ -22,16 +23,11 @@ use output::{InternalErrorKind, OverallStatus};
 
 /// Execute a `CaptureRequest` loaded from `request_path`.
 ///
-/// Implementation lands in Task 1C.6 (executor). Currently a stub that
-/// reports an `InternalError` so calls pre-1C.6 fail loudly rather than
-/// silently succeeding.
+/// Thin facade over [`executor::run_request`]; kept as the stable public API
+/// that `main.rs` calls so the executor module can evolve without breaking
+/// the `app::headless::run` call site.
 pub fn run(request_path: &Path) -> Result<OverallStatus> {
-    Ok(OverallStatus::InternalError {
-        reason: format!(
-            "headless::run is not yet implemented (Task 1C.6); requested {request_path:?}"
-        ),
-        kind: InternalErrorKind::Other,
-    })
+    executor::run_request(request_path)
 }
 
 /// Diff a runtime capture directory against a checked-in expected directory.

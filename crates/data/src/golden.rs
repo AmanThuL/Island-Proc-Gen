@@ -12,6 +12,7 @@
 //!    `CARGO_MANIFEST_DIR` is baked in at compile time and always points to
 //!    `crates/data/`, so this path works unconditionally in `cargo test`.
 
+use island_core::world::{BiomeType, WorldState};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -65,6 +66,247 @@ pub struct SummaryMetrics {
     pub accumulation_blake3: [u8; 32],
     pub basin_id_blake3: [u8; 32],
     pub river_mask_blake3: [u8; 32],
+}
+
+impl SummaryMetrics {
+    /// Compute a [`SummaryMetrics`] snapshot from a fully-run [`WorldState`].
+    ///
+    /// Every `authoritative`, `baked`, and `derived` field read below must be
+    /// populated — otherwise the call panics. This matches the golden-seed
+    /// regression test's original contract: `compute` is only called on a world
+    /// that has run through the canonical Sprint 1A + 1B pipeline.
+    ///
+    /// Used by both `crates/data/tests/golden_seed_regression.rs` and
+    /// `crates/app/src/headless/executor.rs` so the metric definition has a
+    /// single source of truth.
+    pub fn compute(world: &WorldState) -> Self {
+        let height = world
+            .authoritative
+            .height
+            .as_ref()
+            .expect("SummaryMetrics::compute: authoritative.height must be populated");
+        let z_filled = world
+            .derived
+            .z_filled
+            .as_ref()
+            .expect("SummaryMetrics::compute: derived.z_filled must be populated");
+        let slope = world
+            .derived
+            .slope
+            .as_ref()
+            .expect("SummaryMetrics::compute: derived.slope must be populated");
+        let coast = world
+            .derived
+            .coast_mask
+            .as_ref()
+            .expect("SummaryMetrics::compute: derived.coast_mask must be populated");
+        let flow_dir = world
+            .derived
+            .flow_dir
+            .as_ref()
+            .expect("SummaryMetrics::compute: derived.flow_dir must be populated");
+        let accum = world
+            .derived
+            .accumulation
+            .as_ref()
+            .expect("SummaryMetrics::compute: derived.accumulation must be populated");
+        let basin_id = world
+            .derived
+            .basin_id
+            .as_ref()
+            .expect("SummaryMetrics::compute: derived.basin_id must be populated");
+        let river = world
+            .derived
+            .river_mask
+            .as_ref()
+            .expect("SummaryMetrics::compute: derived.river_mask must be populated");
+
+        let land_cell_count = coast.land_cell_count;
+        let coast_cell_count = coast.is_coast.data.iter().filter(|&&v| v == 1).count() as u32;
+        let river_cell_count = river.data.iter().filter(|&&v| v == 1).count() as u32;
+        let basin_count = basin_id.data.iter().copied().max().unwrap_or(0);
+        let river_mouth_count = coast
+            .river_mouth_mask
+            .as_ref()
+            .map(|m| m.data.iter().filter(|&&v| v == 1).count() as u32)
+            .unwrap_or(0);
+
+        let max_elevation = height
+            .data
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
+        let max_elevation_filled = z_filled
+            .data
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
+        let mean_slope = slope.data.iter().sum::<f32>() / slope.data.len() as f32;
+        // longest_river_length: cheapest definition — largest accumulation on a river cell.
+        // Sprint 2 will refine this to actual path length.
+        let longest_river_length = river
+            .data
+            .iter()
+            .zip(accum.data.iter())
+            .filter_map(|(&r, &a)| if r == 1 { Some(a) } else { None })
+            .fold(0.0f32, f32::max);
+        let total_drainage_area = accum.data.iter().sum::<f32>() / accum.data.len() as f32;
+
+        let height_blake3 = blake3_field_f32(&height.data);
+        let z_filled_blake3 = blake3_field_f32(&z_filled.data);
+        let flow_dir_blake3 = blake3_field_u8(&flow_dir.data);
+        let accumulation_blake3 = blake3_field_f32(&accum.data);
+        let basin_id_blake3 = blake3_field_u32(&basin_id.data);
+        let river_mask_blake3 = blake3_field_u8(&river.data);
+
+        // ── Sprint 1B summaries ────────────────────────────────────────────────
+        let precipitation = world
+            .baked
+            .precipitation
+            .as_ref()
+            .expect("SummaryMetrics::compute: baked.precipitation must be populated");
+        let temperature = world
+            .baked
+            .temperature
+            .as_ref()
+            .expect("SummaryMetrics::compute: baked.temperature must be populated");
+        let soil_moisture = world
+            .baked
+            .soil_moisture
+            .as_ref()
+            .expect("SummaryMetrics::compute: baked.soil_moisture must be populated");
+        let biome_weights = world
+            .baked
+            .biome_weights
+            .as_ref()
+            .expect("SummaryMetrics::compute: baked.biome_weights must be populated");
+        let hex_attrs = world
+            .derived
+            .hex_attrs
+            .as_ref()
+            .expect("SummaryMetrics::compute: derived.hex_attrs must be populated");
+
+        let mut land_n = 0_u32;
+        let mut precip_sum = 0.0_f64;
+        let mut temp_sum = 0.0_f64;
+        let mut moist_sum = 0.0_f64;
+        let mut biome_counts = [0_u32; 8];
+        let w = coast.is_land.width;
+        let h = coast.is_land.height;
+        for iy in 0..h {
+            for ix in 0..w {
+                if coast.is_land.get(ix, iy) != 1 {
+                    continue;
+                }
+                land_n += 1;
+                precip_sum += precipitation.get(ix, iy) as f64;
+                temp_sum += temperature.get(ix, iy) as f64;
+                moist_sum += soil_moisture.get(ix, iy) as f64;
+                let dominant = biome_weights.dominant_biome_at(ix, iy) as usize;
+                biome_counts[dominant] += 1;
+            }
+        }
+        let land_n_f = land_n.max(1) as f64;
+        let mean_precipitation = (precip_sum / land_n_f) as f32;
+        let mean_temperature_c = (temp_sum / land_n_f) as f32;
+        let mean_soil_moisture = (moist_sum / land_n_f) as f32;
+
+        let mut biome_coverage_percent = [0.0_f32; 8];
+        for (i, c) in biome_counts.iter().enumerate() {
+            biome_coverage_percent[i] = (*c as f64 * 100.0 / land_n_f) as f32;
+        }
+
+        // Windward vs leeward: project each land cell onto `wind` (the
+        // direction wind comes FROM). Cells whose projection is above the
+        // median of all land cells are "upwind" (windward); below the
+        // median are "downwind" (leeward). Ratio > 1 means the windward
+        // side is wetter, which is the qualitative spec acceptance
+        // criterion for DD2.
+        let wind_dir = world.preset.prevailing_wind_dir;
+        let wind_x = wind_dir.cos();
+        let wind_y = wind_dir.sin();
+        let mut projections: Vec<(f32, f32)> = Vec::with_capacity(land_n as usize);
+        for iy in 0..h {
+            for ix in 0..w {
+                if coast.is_land.get(ix, iy) != 1 {
+                    continue;
+                }
+                let proj = ix as f32 * wind_x + iy as f32 * wind_y;
+                projections.push((proj, precipitation.get(ix, iy)));
+            }
+        }
+        let mut proj_vals: Vec<f32> = projections.iter().map(|(p, _)| *p).collect();
+        proj_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median = proj_vals
+            .get(proj_vals.len() / 2)
+            .copied()
+            .unwrap_or_default();
+
+        let mut windward_sum = 0.0_f64;
+        let mut windward_n = 0_u32;
+        let mut leeward_sum = 0.0_f64;
+        let mut leeward_n = 0_u32;
+        for (proj, p) in &projections {
+            if *proj >= median {
+                windward_sum += *p as f64;
+                windward_n += 1;
+            } else {
+                leeward_sum += *p as f64;
+                leeward_n += 1;
+            }
+        }
+        let windward_mean = windward_sum / windward_n.max(1) as f64;
+        let leeward_mean = leeward_sum / leeward_n.max(1) as f64;
+        let windward_leeward_precip_ratio = (windward_mean / leeward_mean.max(1e-9)) as f32;
+
+        let hex_count = hex_attrs.cols * hex_attrs.rows;
+        debug_assert_eq!(biome_weights.types, BiomeType::ALL);
+
+        SummaryMetrics {
+            land_cell_count,
+            coast_cell_count,
+            river_cell_count,
+            basin_count,
+            river_mouth_count,
+            max_elevation,
+            max_elevation_filled,
+            mean_slope,
+            longest_river_length,
+            total_drainage_area,
+            mean_precipitation,
+            windward_leeward_precip_ratio,
+            mean_temperature_c,
+            mean_soil_moisture,
+            biome_coverage_percent,
+            hex_count,
+            height_blake3,
+            z_filled_blake3,
+            flow_dir_blake3,
+            accumulation_blake3,
+            basin_id_blake3,
+            river_mask_blake3,
+        }
+    }
+}
+
+fn blake3_field_f32(data: &[f32]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    for v in data {
+        hasher.update(&v.to_le_bytes());
+    }
+    *hasher.finalize().as_bytes()
+}
+
+fn blake3_field_u8(data: &[u8]) -> [u8; 32] {
+    *blake3::hash(data).as_bytes()
+}
+
+fn blake3_field_u32(data: &[u32]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    for v in data {
+        hasher.update(&v.to_le_bytes());
+    }
+    *hasher.finalize().as_bytes()
 }
 
 // ─── error ────────────────────────────────────────────────────────────────────

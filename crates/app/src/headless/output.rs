@@ -14,6 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use data::golden::SummaryMetrics;
+
 use crate::headless::request::CaptureRequest;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -66,7 +68,11 @@ pub struct TruthSummary {
     /// Map of overlay ID → 64-hex blake3 hash of the exported PNG bytes.
     pub overlay_hashes: BTreeMap<String, String>,
     /// 64-hex blake3 hash of the serialised `metrics.ron` bytes.
-    pub metrics_hash: String,
+    /// `None` when [`TruthSpec::include_metrics`](crate::headless::request::TruthSpec::include_metrics)
+    /// is `false`; avoids a false-positive equality match between two shots that
+    /// both disabled metrics (they would otherwise share the hash-of-empty-bytes sentinel).
+    #[serde(default)]
+    pub metrics_hash: Option<String>,
 }
 
 /// GPU beauty results for a single shot.
@@ -425,6 +431,35 @@ pub fn write_summary_ron(layout: &RunLayout, summary: &RunSummary) -> std::io::R
     let content = ron::ser::to_string_pretty(summary, ron::ser::PrettyConfig::default())
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     write_atomic(layout.summary_ron(), content.as_bytes())
+}
+
+/// Serialise a [`SummaryMetrics`] snapshot to its canonical RON byte form.
+///
+/// Returned bytes are *exactly* what [`write_metrics_ron`] writes to disk and
+/// what the headless executor feeds into blake3 to compute
+/// [`TruthSummary::metrics_hash`]. Keeping these two in one helper guarantees
+/// they never drift.
+pub fn metrics_ron_bytes(metrics: &SummaryMetrics) -> std::io::Result<Vec<u8>> {
+    let s = ron::ser::to_string_pretty(metrics, ron::ser::PrettyConfig::default())
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    Ok(s.into_bytes())
+}
+
+/// Write a [`SummaryMetrics`] snapshot as pretty RON to
+/// `<root>/shots/<shot_id>/metrics.ron`.
+///
+/// Returns the canonical bytes that were written (same bytes as
+/// [`metrics_ron_bytes`]) so the caller can compute `blake3(...)` without
+/// serialising a second time. Uses a write-to-temp-then-rename strategy to
+/// avoid partial writes.
+pub fn write_metrics_ron(
+    layout: &RunLayout,
+    shot_id: &str,
+    metrics: &SummaryMetrics,
+) -> std::io::Result<Vec<u8>> {
+    let bytes = metrics_ron_bytes(metrics)?;
+    write_atomic(layout.metrics_ron(shot_id), &bytes)?;
+    Ok(bytes)
 }
 
 /// Write `bytes` to `dest` atomically via a sibling `.tmp` file + rename.
@@ -838,7 +873,7 @@ mod tests {
                         m.insert("slope".into(), "b".repeat(64));
                         m
                     },
-                    metrics_hash: "c".repeat(64),
+                    metrics_hash: Some("c".repeat(64)),
                 },
                 beauty: Some(BeautySummary {
                     camera_preset: "hero".into(),

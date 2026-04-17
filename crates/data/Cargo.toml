@@ -11,8 +11,8 @@ island_core = { path = "../core", package = "core" }
 serde     = { workspace = true }
 ron       = { workspace = true }
 thiserror = { workspace = true }
+blake3    = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 sim      = { path = "../sim" }
-blake3   = "1"

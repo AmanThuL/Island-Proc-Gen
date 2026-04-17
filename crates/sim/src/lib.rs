@@ -31,6 +31,56 @@ pub use hydro::SoilMoistureStage;
 pub use hydro::WaterBalanceStage;
 pub use validation_stage::ValidationStage;
 
+use island_core::pipeline::SimulationPipeline;
+
+// ─── default_pipeline ─────────────────────────────────────────────────────────
+
+/// Build the canonical Sprint 1A + Sprint 1B [`SimulationPipeline`].
+///
+/// Push order is identical to [`StageId`]'s discriminant order; the tail
+/// [`ValidationStage`] runs after the 16 "real" stages.
+///
+/// Both the interactive runtime ([`app::runtime::Runtime`]), the golden-seed
+/// regression tests, and the Sprint 1C headless executor build from this
+/// helper so the stage list has a single source of truth.
+///
+/// # Example
+///
+/// ```
+/// use island_core::{pipeline::SimulationPipeline, seed::Seed, world::{Resolution, WorldState}};
+///
+/// # fn doc_example(preset: island_core::preset::IslandArchetypePreset) -> anyhow::Result<()> {
+/// let mut world = WorldState::new(Seed(42), preset, Resolution::new(64, 64));
+/// let pipeline = sim::default_pipeline();
+/// pipeline.run(&mut world)?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn default_pipeline() -> SimulationPipeline {
+    let mut pipeline = SimulationPipeline::new();
+    // Sprint 1A (indices 0..=7)
+    pipeline.push(Box::new(TopographyStage));
+    pipeline.push(Box::new(CoastMaskStage));
+    pipeline.push(Box::new(PitFillStage));
+    pipeline.push(Box::new(DerivedGeomorphStage));
+    pipeline.push(Box::new(FlowRoutingStage));
+    pipeline.push(Box::new(AccumulationStage));
+    pipeline.push(Box::new(BasinsStage));
+    pipeline.push(Box::new(RiverExtractionStage));
+    // Sprint 1B (indices 8..=15)
+    pipeline.push(Box::new(TemperatureStage));
+    pipeline.push(Box::new(PrecipitationStage));
+    pipeline.push(Box::new(FogLikelihoodStage));
+    pipeline.push(Box::new(PetStage));
+    pipeline.push(Box::new(WaterBalanceStage));
+    pipeline.push(Box::new(SoilMoistureStage));
+    pipeline.push(Box::new(BiomeWeightsStage));
+    pipeline.push(Box::new(HexProjectionStage));
+    // Tail hook — runs all 8 invariants.
+    pipeline.push(Box::new(ValidationStage));
+    pipeline
+}
+
 // ─── StageId ──────────────────────────────────────────────────────────────────
 
 /// Symbolic identifier for every stage in the canonical linear pipeline.

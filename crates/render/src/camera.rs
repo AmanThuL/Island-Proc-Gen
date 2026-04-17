@@ -104,9 +104,28 @@ pub fn preset_by_id(id: CameraPresetId) -> CameraPreset {
     }
 }
 
+/// Look up a preset by its canonical RON name (`"hero"`, `"top_debug"`, or
+/// `"low_oblique"`). Used by the Sprint 1C headless executor to translate a
+/// [`crate::overlay::OverlayDescriptor`]-adjacent `BeautySpec.camera_preset`
+/// string into a resolved [`CameraPreset`].
+///
+/// Returns `None` on any other string so the caller can surface a
+/// `BeautySpec.camera_preset` typo as an `InternalError` rather than a panic.
+pub fn preset_by_name(name: &str) -> Option<CameraPreset> {
+    match name {
+        "hero" => Some(PRESET_HERO),
+        "top_debug" => Some(PRESET_TOP_DEBUG),
+        "low_oblique" => Some(PRESET_LOW_OBLIQUE),
+        _ => None,
+    }
+}
+
 /// Compute the eye position in world space for the given preset and island radius.
 /// Same spherical convention as `app::camera`: Y-up, yaw around Y, pitch above XZ.
-pub(crate) fn eye_position(preset: CameraPreset, island_radius: f32) -> Vec3 {
+///
+/// Exposed for Sprint 1C headless beauty capture so the executor can upload
+/// the matching eye position into `TerrainRenderer`'s view uniform.
+pub fn eye_position(preset: CameraPreset, island_radius: f32) -> Vec3 {
     let target = Vec3::new(0.5, 0.0, 0.5);
     let distance = preset.distance_factor * island_radius.max(0.01);
     target
@@ -139,6 +158,29 @@ mod tests {
         ] {
             assert_eq!(preset_by_id(id).id, id);
         }
+    }
+
+    #[test]
+    fn preset_by_name_resolves_canonical_spellings() {
+        assert_eq!(
+            preset_by_name("hero").map(|p| p.id),
+            Some(CameraPresetId::Hero)
+        );
+        assert_eq!(
+            preset_by_name("top_debug").map(|p| p.id),
+            Some(CameraPresetId::TopDebug)
+        );
+        assert_eq!(
+            preset_by_name("low_oblique").map(|p| p.id),
+            Some(CameraPresetId::LowOblique),
+        );
+    }
+
+    #[test]
+    fn preset_by_name_rejects_unknown_strings() {
+        assert!(preset_by_name("").is_none());
+        assert!(preset_by_name("Hero").is_none()); // case-sensitive
+        assert!(preset_by_name("isometric").is_none());
     }
 
     #[test]
