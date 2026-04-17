@@ -21,6 +21,8 @@ render             = { path = "../render" }
 sim                = { path = "../sim" }
 ui                 = { path = "../ui" }
 anyhow             = { workspace = true }
+blake3             = { workspace = true }
+png                = { workspace = true }
 ron                = { workspace = true }
 serde              = { workspace = true }
 tracing            = { workspace = true }

@@ -106,6 +106,7 @@ name = "app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "core",
  "data",
  "egui",
@@ -113,6 +114,7 @@ dependencies = [
  "egui-winit",
  "glam",
  "gpu",
+ "png 0.17.16",
  "render",
  "ron",
  "serde",
