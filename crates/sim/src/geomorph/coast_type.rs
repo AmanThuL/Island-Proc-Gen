@@ -83,9 +83,11 @@ impl SimulationStage for CoastTypeStage {
 
         // ── read parameters ───────────────────────────────────────────────────
         let wind_angle = world.preset.prevailing_wind_dir;
-        // `wind_from` is the unit vector pointing *from* the sea toward the
-        // island (the direction wind travels). The prevailing_wind_dir
-        // convention in the preset is the angle wind blows *from*.
+        // `wind_from` is the unit vector in the direction wind TRAVELS
+        // (matches `climate::common::wind_unit`). The name retains the
+        // existing convention from the sprint doc DD4 pseudo-code; see
+        // `exposure` below, which flips the sign so "coast faces wind" →
+        // positive exposure.
         let wind_from = (wind_angle.cos(), wind_angle.sin());
         let age_bias = match world.preset.island_age {
             IslandAge::Young => 1.0_f32,
@@ -169,7 +171,7 @@ mod tests {
     use island_core::field::{MaskField2D, ScalarField2D, VectorField2D};
     use island_core::preset::{IslandAge, IslandArchetypePreset};
     use island_core::seed::Seed;
-    use island_core::world::{CoastMask, CoastType, DerivedCaches, Resolution, WorldState};
+    use island_core::world::{CoastMask, CoastType, Resolution, WorldState};
 
     fn minimal_preset(island_age: IslandAge, wind_dir: f32) -> IslandArchetypePreset {
         IslandArchetypePreset {
@@ -196,7 +198,6 @@ mod tests {
     ) -> WorldState {
         let w = 3u32;
         let h = 3u32;
-        let n = (w * h) as usize;
         let preset = minimal_preset(island_age, wind_dir);
         let mut world = WorldState::new(Seed(0), preset, Resolution::new(w, h));
 
@@ -240,22 +241,14 @@ mod tests {
 
     #[test]
     fn coast_type_river_mouth_wins_priority() {
-        // slope > S_CLIFF_HIGH, exposure > EXPOSURE_HIGH, but is_river_mouth wins
-        let normal = [-1.0_f32, 0.0]; // outward normal pointing west
-        let wind_dir = std::f32::consts::PI; // wind from east → wind_from = (-1, 0)
-        // exposure = -dot([-1,0], [-1,0]) = -1 → wait, let's recalc
-        // wind_from = (cos(PI), sin(PI)) = (-1, 0)
-        // exposure = -(normal[0]*wind_from.0 + normal[1]*wind_from.1)
-        //          = -((-1)*(-1) + 0*0) = -1  <-- leeward actually
-        // Use wind from west: wind_dir = 0 → wind_from = (1, 0)
-        // exposure = -((-1)*1 + 0*0) = 1 > EXPOSURE_HIGH
-        let wind_dir = 0.0_f32;
+        // slope > S_CLIFF_HIGH and exposure 1.0 > EXPOSURE_HIGH, but is_river_mouth takes priority.
+        // wind_dir=0 → wind_from=(1,0); outward normal=(-1,0) → exposure = -((-1)*1) = 1.0
         let mut world = build_world_with_coast_cell(
             0.40,        // steep
             true,        // river_mouth
             [-1.0, 0.0], // outward normal pointing west (exposure 1.0 with wind from west)
             IslandAge::Young,
-            wind_dir,
+            0.0, // wind_dir
         );
         let out = run_and_get(&mut world);
         assert_eq!(
@@ -346,17 +339,17 @@ mod tests {
             build_world_with_coast_cell(0.40, false, [-1.0, 0.0], IslandAge::Young, 0.0);
         let out = run_and_get(&mut world);
         // Only cell 4 is coast; all others must be 0xFF
-        for i in 0..9usize {
+        for (i, &cell) in out.iter().enumerate() {
             if i == 4 {
                 // coast cell may be any valid type
                 assert_ne!(
-                    out[i],
+                    cell,
                     CoastType::Unknown as u8,
                     "coast cell must not be Unknown"
                 );
             } else {
                 assert_eq!(
-                    out[i],
+                    cell,
                     CoastType::Unknown as u8,
                     "non-coast cell {i} must be Unknown sentinel (0xFF)"
                 );

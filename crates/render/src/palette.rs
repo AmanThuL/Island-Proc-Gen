@@ -256,13 +256,12 @@ pub fn sample_f32(palette: PaletteId, t: f32) -> [f32; 4] {
             }
         }
 
-        // `CoastType` is indexed by raw `u8` value cast through `u32`. The
-        // normalised `t` maps to `value = round(t * max)`, but the overlay
-        // renderer calls `sample_coast_type_by_index` directly for u8 fields.
-        // `sample_f32` for CoastType interprets `t` as a direct index fraction
-        // over 4 entries (0..=3); Unknown sentinel (0xFF → t = 1.0+ after
-        // normalisation) always falls outside and is returned as transparent.
-        // In practice the render path uses `sample_coast_type_by_index` below.
+        // `CoastType` is a 4-entry categorical palette (0=Cliff, 1=Beach,
+        // 2=Estuary, 3=RockyHeadland) plus an out-of-range transparent
+        // sentinel for Unknown (0xFF). The paired overlay descriptor uses
+        // `ValueRange::Fixed(0.0, 4.0)` so `t = disc / 4` → `idx = disc`
+        // exactly for discriminants 0..=3; 0xFF clamps to `t = 1.0` →
+        // `idx = 4` → transparent.
         PaletteId::CoastType => {
             let idx = (t * 4.0) as usize;
             if idx < 4 {
@@ -278,22 +277,6 @@ pub fn sample_f32(palette: PaletteId, t: f32) -> [f32; 4] {
 
 pub fn sample(palette: PaletteId, t: f32) -> [u8; 4] {
     rgba_to_u8(sample_f32(palette, t))
-}
-
-/// Sample the [`PaletteId::CoastType`] palette by raw `u8` index.
-///
-/// * `0..=3` → `COAST_TYPE_TABLE[index]` (Cliff, Beach, Estuary, RockyHeadland).
-/// * `0xFF` (Unknown sentinel) and any other value → `[0.0, 0.0, 0.0, 0.0]` (transparent).
-///
-/// Use this instead of `sample_f32(PaletteId::CoastType, t)` wherever the
-/// raw `ScalarField2D<u8>` value is available, to avoid float precision loss
-/// on the `u8 → f32 → usize` round-trip.
-pub fn sample_coast_type_by_index(index: u8) -> [f32; 4] {
-    if (index as usize) < 4 {
-        COAST_TYPE_TABLE[index as usize]
-    } else {
-        [0.0, 0.0, 0.0, 0.0]
-    }
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────────
@@ -526,5 +509,57 @@ mod tests {
         assert_eq!(sample(PaletteId::Viridis, 0.5)[3], 255);
         assert_eq!(sample(PaletteId::Turbo, 0.5)[3], 255);
         assert_eq!(sample(PaletteId::Categorical, 0.5)[3], 255);
+    }
+
+    // ── CoastType (Sprint 2) ─────────────────────────────────────────────────
+    //
+    // Paired with `ValueRange::Fixed(0.0, 4.0)` in the `coast_type` overlay
+    // descriptor: each discriminant `d ∈ 0..=3` normalises to `t = d / 4`,
+    // and `(t * 4.0) as usize = d` exactly. `Fixed(0.0, 3.0)` would map
+    // `RockyHeadland (3)` to `idx = 4` → transparent, silently hiding the
+    // majority of coast cells. These tests lock the pairing.
+
+    #[test]
+    fn coast_type_four_discriminants_sample_distinct_table_entries() {
+        // Each d ∈ 0..=3 with t = d/4 must sample COAST_TYPE_TABLE[d].
+        for d in 0u8..=3u8 {
+            let t = d as f32 / 4.0;
+            let rgba = sample_f32(PaletteId::CoastType, t);
+            assert_eq!(
+                rgba, COAST_TYPE_TABLE[d as usize],
+                "discriminant {d} (t={t}) should map to COAST_TYPE_TABLE[{d}]"
+            );
+            assert!(
+                rgba[3] > 0.0,
+                "discriminant {d} must be opaque (not the transparent sentinel)"
+            );
+        }
+    }
+
+    #[test]
+    fn coast_type_unknown_sentinel_clamps_to_transparent() {
+        // With descriptor Fixed(0.0, 4.0), the 0xFF sentinel's `t` clamps to
+        // 1.0+, producing idx ≥ 4, i.e. transparent.
+        let rgba = sample_f32(PaletteId::CoastType, 1.0);
+        assert_eq!(rgba, [0.0, 0.0, 0.0, 0.0], "t=1.0 must be transparent");
+        let rgba = sample_f32(PaletteId::CoastType, 100.0);
+        assert_eq!(rgba, [0.0, 0.0, 0.0, 0.0], "large t must be transparent");
+    }
+
+    #[test]
+    fn coast_type_regression_guard_against_fixed_0_to_3_bug() {
+        // With the buggy Fixed(0.0, 3.0) descriptor, RockyHeadland (d=3)
+        // would have produced t = 3/3 = 1.0 → idx = 4 → transparent.
+        // This test pins the correct math: with Fixed(0.0, 4.0), t = 3/4 =
+        // 0.75 → idx = 3 → COAST_TYPE_TABLE[3] (RockyHeadland color).
+        let rgba = sample_f32(PaletteId::CoastType, 0.75);
+        assert_eq!(
+            rgba, COAST_TYPE_TABLE[3],
+            "RockyHeadland must render as COAST_TYPE_TABLE[3], not transparent"
+        );
+        assert!(
+            rgba[3] > 0.0,
+            "RockyHeadland must be opaque — the Fixed(0.0, 3.0) bug would make it transparent"
+        );
     }
 }

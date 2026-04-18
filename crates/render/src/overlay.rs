@@ -220,13 +220,19 @@ impl OverlayRegistry {
                 },
                 // ── Sprint 2 (coastal geomorphology) ──────────────────
                 // String key "coast_type" confined to this file (invariant #8).
-                // Unknown sentinel (0xFF) renders transparent via PaletteId::CoastType.
+                // `Fixed(0.0, 4.0)` so discriminants 0..=3 normalise to
+                // `t = disc / 4`, yielding `idx = (t * 4.0) as usize = disc`
+                // exactly in `PaletteId::CoastType`. `Fixed(0.0, 3.0)` would
+                // map discriminant 3 (RockyHeadland) to `t = 1.0`, `idx = 4`,
+                // transparent — silently hiding the majority of coast cells.
+                // Unknown sentinel (0xFF) clamps to `t = 1.0` → `idx = 4` →
+                // transparent, which is the intended non-coast behaviour.
                 OverlayDescriptor {
                     id: "coast_type",
                     label: "Coast type",
                     source: OverlaySource::ScalarDerived("coast_type"),
                     palette: PaletteId::CoastType,
-                    value_range: ValueRange::Fixed(0.0, 3.0),
+                    value_range: ValueRange::Fixed(0.0, 4.0),
                     visible: false,
                 },
             ],
@@ -327,11 +333,13 @@ pub(crate) fn resolve_scalar_source<'w>(
         // Sprint 2 derived scalars.
         // `coast_type` is `ScalarField2D<u8>` — same layout as `MaskField2D`
         // (which is a type alias for `ScalarField2D<u8>`), so the `Mask`
-        // variant carries it without a new `ResolvedField` variant.
-        // The renderer must check `PaletteId::CoastType` and use
-        // `palette::sample_coast_type_by_index` for correct transparent
-        // Unknown-sentinel handling. Invariant #8: string key "coast_type"
-        // appears only in this file.
+        // variant carries it without a new `ResolvedField` variant. The
+        // descriptor's `ValueRange::Fixed(0.0, 4.0)` + `PaletteId::CoastType`
+        // pair ensures discriminants 0..=3 sample the right entries and the
+        // 0xFF sentinel clamps to transparent — all via the standard
+        // `bake_overlay_to_rgba8` → `sample_f32` path, no per-palette
+        // dispatch needed. Invariant #8: string key "coast_type" appears
+        // only in this file.
         ScalarDerived("coast_type") => world.derived.coast_type.as_ref().map(ResolvedField::Mask),
 
         // Unknown / not-yet-populated sources silently return None so
