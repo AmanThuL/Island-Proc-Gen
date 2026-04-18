@@ -553,6 +553,7 @@ fn load_preset() -> IslandArchetypePreset {
                 prevailing_wind_dir: 0.0,
                 marine_moisture_strength: 0.7,
                 sea_level: 0.3,
+                erosion: island_core::preset::ErosionParams::default(),
             }
         }
     }

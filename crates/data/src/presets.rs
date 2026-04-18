@@ -149,6 +149,7 @@ mod tests {
             prevailing_wind_dir: 1.5708,
             marine_moisture_strength: 0.75,
             sea_level: 0.30,
+            erosion: Default::default(),
         };
         assert_eq!(p, expected);
     }
@@ -166,6 +167,7 @@ mod tests {
             prevailing_wind_dir: 1.5708,
             marine_moisture_strength: 0.70,
             sea_level: 0.32,
+            erosion: Default::default(),
         };
         assert_eq!(p, expected);
     }
@@ -183,6 +185,7 @@ mod tests {
             prevailing_wind_dir: 1.5708,
             marine_moisture_strength: 0.80,
             sea_level: 0.28,
+            erosion: Default::default(),
         };
         assert_eq!(p, expected);
     }

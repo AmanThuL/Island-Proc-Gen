@@ -50,6 +50,7 @@ use island_core::world::WorldState;
 ///     prevailing_wind_dir: 0.0,
 ///     marine_moisture_strength: 0.5,
 ///     sea_level: 0.3,
+///     erosion: Default::default(),
 /// };
 /// let mut world = WorldState::new(Seed(42), preset, Resolution::new(32, 32));
 /// let pipeline = default_pipeline();
@@ -221,6 +222,7 @@ mod tests {
             prevailing_wind_dir: 0.0,
             marine_moisture_strength: 0.5,
             sea_level: 0.3,
+            erosion: Default::default(),
         }
     }
 

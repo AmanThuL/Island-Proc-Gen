@@ -125,6 +125,7 @@ mod tests {
             prevailing_wind_dir: 0.0,
             marine_moisture_strength: 0.5,
             sea_level: 0.0,
+            erosion: Default::default(),
         }
     }
 

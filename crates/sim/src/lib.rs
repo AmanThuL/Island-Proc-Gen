@@ -21,6 +21,7 @@ pub use ecology::BiomeWeightsStage;
 pub use geomorph::CoastMaskStage;
 pub use geomorph::DerivedGeomorphStage;
 pub use geomorph::PitFillStage;
+pub use geomorph::StreamPowerIncisionStage;
 pub use geomorph::TopographyStage;
 pub use hex_projection::HexProjectionStage;
 pub use hydro::AccumulationStage;
