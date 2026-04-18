@@ -66,6 +66,25 @@ pub struct SummaryMetrics {
     pub accumulation_blake3: [u8; 32],
     pub basin_id_blake3: [u8; 32],
     pub river_mask_blake3: [u8; 32],
+
+    // ── Sprint 2 erosion + coast summaries ──────────────────────────────────
+    /// Fraction of relief lost by erosion, `(max_pre - max_post) / max_pre`
+    /// clamped to `[0, 1]`. `0.0` when no baseline was recorded (e.g. a
+    /// partial pipeline run without `ErosionOuterLoop`).
+    pub erosion_relief_drop_fraction: f32,
+    /// Count per `CoastType` variant in canonical enum order
+    /// `[Cliff, Beach, Estuary, RockyHeadland]`. Sum ≈ `coast_cell_count`
+    /// (non-coast cells carry the `Unknown = 0xFF` sentinel and are not
+    /// counted).
+    pub coast_type_counts: [u32; 4],
+    /// Cells that crossed the `sea_level` threshold during erosion, computed
+    /// as `|baseline.land_cell_count_pre - current_land_cell_count|`. The
+    /// `erosion_no_excessive_sea_crossing` invariant asserts this is ≤ 5 %
+    /// of `baseline.land_cell_count_pre`.
+    pub erosion_sea_crossing_count: u32,
+    /// blake3 of the `derived.coast_type.data` byte field. Bit-exact on the
+    /// same host.
+    pub coast_type_blake3: [u8; 32],
 }
 
 impl SummaryMetrics {
@@ -262,6 +281,43 @@ impl SummaryMetrics {
         let hex_count = hex_attrs.cols * hex_attrs.rows;
         debug_assert_eq!(biome_weights.types, BiomeType::ALL);
 
+        // ── Sprint 2 summaries ────────────────────────────────────────────────
+        // `erosion_baseline` and `coast_type` are populated by ErosionOuterLoop
+        // and CoastTypeStage, both members of `sim::default_pipeline()`. If
+        // the caller ran a partial pipeline that omits them, the Sprint 2
+        // summaries fall back to zero / empty rather than panicking — matching
+        // the `skip_if_missing` semantics that `core::validation`'s Sprint 2
+        // invariants use.
+        let (erosion_relief_drop_fraction, erosion_sea_crossing_count) =
+            match world.derived.erosion_baseline.as_ref() {
+                Some(baseline) => {
+                    let max_pre = baseline.max_height_pre;
+                    let drop = if max_pre > 0.0 {
+                        ((max_pre - max_elevation) / max_pre).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let crossed = (baseline.land_cell_count_pre as i64 - land_cell_count as i64)
+                        .unsigned_abs() as u32;
+                    (drop, crossed)
+                }
+                None => (0.0, 0),
+            };
+
+        let (coast_type_counts, coast_type_blake3) = match world.derived.coast_type.as_ref() {
+            Some(ct) => {
+                let mut counts = [0_u32; 4];
+                for &v in &ct.data {
+                    if (v as usize) < 4 {
+                        counts[v as usize] += 1;
+                    }
+                    // Unknown = 0xFF and any out-of-range sentinel is not counted.
+                }
+                (counts, blake3_field_u8(&ct.data))
+            }
+            None => ([0_u32; 4], [0_u8; 32]),
+        };
+
         SummaryMetrics {
             land_cell_count,
             coast_cell_count,
@@ -285,6 +341,10 @@ impl SummaryMetrics {
             accumulation_blake3,
             basin_id_blake3,
             river_mask_blake3,
+            erosion_relief_drop_fraction,
+            coast_type_counts,
+            erosion_sea_crossing_count,
+            coast_type_blake3,
         }
     }
 }
