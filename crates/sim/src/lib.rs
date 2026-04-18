@@ -20,6 +20,7 @@ pub use climate::TemperatureStage;
 pub use ecology::BiomeWeightsStage;
 pub use geomorph::CoastMaskStage;
 pub use geomorph::DerivedGeomorphStage;
+pub use geomorph::ErosionOuterLoop;
 pub use geomorph::HillslopeDiffusionStage;
 pub use geomorph::PitFillStage;
 pub use geomorph::StreamPowerIncisionStage;
@@ -39,10 +40,10 @@ use island_core::pipeline::SimulationPipeline;
 
 // ─── default_pipeline ─────────────────────────────────────────────────────────
 
-/// Build the canonical Sprint 1A + Sprint 1B [`SimulationPipeline`].
+/// Build the canonical Sprint 1A + Sprint 1B + Sprint 2 [`SimulationPipeline`].
 ///
 /// Push order is identical to [`StageId`]'s discriminant order, forming the
-/// 17-stage canonical pipeline (16 [`StageId`] variants + terminal
+/// 18-stage canonical pipeline (17 [`StageId`] variants + terminal
 /// [`ValidationStage`]).
 ///
 /// Both the interactive runtime ([`app::runtime::Runtime`]), the golden-seed
@@ -72,7 +73,12 @@ pub fn default_pipeline() -> SimulationPipeline {
     pipeline.push(Box::new(AccumulationStage));
     pipeline.push(Box::new(BasinsStage));
     pipeline.push(Box::new(RiverExtractionStage));
-    // Sprint 1B (indices 8..=15)
+    // Sprint 2 (index 8) — ErosionOuterLoop owns its own n_batch × n_inner
+    // SPIM + hillslope iteration plus end-of-batch Coastal..RiverExtraction
+    // re-run, so `default_pipeline` sees it as one opaque stage.
+    pipeline.push(Box::new(ErosionOuterLoop::default()));
+    // Sprint 1B (indices 9..=16) — shifted down by 1 in Sprint 2 Task 2.3
+    // to make room for `ErosionOuterLoop`.
     pipeline.push(Box::new(TemperatureStage));
     pipeline.push(Box::new(PrecipitationStage));
     pipeline.push(Box::new(FogLikelihoodStage));
@@ -88,9 +94,9 @@ pub fn default_pipeline() -> SimulationPipeline {
 
 // ─── StageId ──────────────────────────────────────────────────────────────────
 
-/// Symbolic identifier for every stage in the 17-stage canonical pipeline.
+/// Symbolic identifier for every stage in the 18-stage canonical pipeline.
 ///
-/// There are exactly **16 variants** (`Topography = 0` … `HexProjection = 15`).
+/// There are exactly **17 variants** (`Topography = 0` … `HexProjection = 16`).
 /// The discriminant is the stage's index in the `run()` push order, so
 /// `pipeline.run_from(world, StageId::Precipitation as usize)` is the
 /// correct call for a slider that touches `PrecipitationStage`. Any
@@ -98,8 +104,14 @@ pub fn default_pipeline() -> SimulationPipeline {
 /// (sprint docs, assembly code) resolves in favour of this enum — it is
 /// the single source of truth for stage indices.
 ///
+/// Sprint 2 Task 2.3 inserted `ErosionOuterLoop = 8` between
+/// `RiverExtraction` and `Temperature`, shifting every Sprint 1B variant
+/// down by 1. Sprint 2 Task 2.4 will later insert `CoastType = 9` between
+/// `ErosionOuterLoop` and `Temperature`, shifting 1B variants down by a
+/// further slot — not in scope for Task 2.3.
+///
 /// `ValidationStage` is intentionally **not** a `StageId` variant: it is
-/// the terminal tail hook that runs invariants after the 16 `StageId` stages
+/// the terminal tail hook that runs invariants after the 17 `StageId` stages
 /// finish, and is never a `run_from` target.
 #[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -112,14 +124,15 @@ pub enum StageId {
     Accumulation = 5,
     Basins = 6,
     RiverExtraction = 7,
-    Temperature = 8,
-    Precipitation = 9,
-    FogLikelihood = 10,
-    Pet = 11,
-    WaterBalance = 12,
-    SoilMoisture = 13,
-    BiomeWeights = 14,
-    HexProjection = 15,
+    ErosionOuterLoop = 8,
+    Temperature = 9,
+    Precipitation = 10,
+    FogLikelihood = 11,
+    Pet = 12,
+    WaterBalance = 13,
+    SoilMoisture = 14,
+    BiomeWeights = 15,
+    HexProjection = 16,
 }
 
 impl StageId {
@@ -154,6 +167,7 @@ mod stage_id_tests {
             Accumulation,
             Basins,
             RiverExtraction,
+            ErosionOuterLoop,
             Temperature,
             Precipitation,
             FogLikelihood,
@@ -167,5 +181,10 @@ mod stage_id_tests {
             assert_eq!(id.index(), i, "StageId::{:?} is not at index {}", id, i);
         }
         assert_eq!(ordered.len(), StageId::STAGE_COUNT);
+        assert_eq!(
+            StageId::STAGE_COUNT,
+            17,
+            "Sprint 2 Task 2.3 locks STAGE_COUNT == 17 until Task 2.4 adds CoastType"
+        );
     }
 }

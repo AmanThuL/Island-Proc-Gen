@@ -69,9 +69,9 @@ pub fn invalidate_from(world: &mut WorldState, from: StageId) {
     // express this mapping — each StageId writes a different set of
     // derived/baked fields — so we iterate with an explicit match.
     //
-    // `StageId` is `#[repr(usize)]` with contiguous discriminants 0..=15,
+    // `StageId` is `#[repr(usize)]` with contiguous discriminants 0..=16,
     // locked by `stage_id_indices_are_dense_and_canonical`. The `idx` range
-    // is bounded by `StageId::HexProjection as usize = 15`.
+    // is bounded by `StageId::HexProjection as usize = 16`.
     let start = from as usize;
     let end = StageId::HexProjection as usize;
     for idx in start..=end {
@@ -84,15 +84,16 @@ pub fn invalidate_from(world: &mut WorldState, from: StageId) {
             5 => StageId::Accumulation,
             6 => StageId::Basins,
             7 => StageId::RiverExtraction,
-            8 => StageId::Temperature,
-            9 => StageId::Precipitation,
-            10 => StageId::FogLikelihood,
-            11 => StageId::Pet,
-            12 => StageId::WaterBalance,
-            13 => StageId::SoilMoisture,
-            14 => StageId::BiomeWeights,
-            15 => StageId::HexProjection,
-            _ => unreachable!("idx is bounded by HexProjection = 15"),
+            8 => StageId::ErosionOuterLoop,
+            9 => StageId::Temperature,
+            10 => StageId::Precipitation,
+            11 => StageId::FogLikelihood,
+            12 => StageId::Pet,
+            13 => StageId::WaterBalance,
+            14 => StageId::SoilMoisture,
+            15 => StageId::BiomeWeights,
+            16 => StageId::HexProjection,
+            _ => unreachable!("idx is bounded by HexProjection = 16"),
         };
         clear_stage_outputs(world, stage);
     }
@@ -111,8 +112,18 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
         // TopographyStage: writes derived.initial_uplift.
         // (authoritative.height + authoritative.sediment are NOT cleared —
         //  they are world truth, not caches.)
+        //
+        // `derived.erosion_baseline` is a one-shot pre-erosion snapshot
+        // produced by `ErosionOuterLoop` on its first run. Conceptually it
+        // is invalidated only by a **full reset** — re-running Topography
+        // regenerates the pre-erosion height field, so the cached
+        // snapshot is by definition stale. Downstream frontiers (Coastal,
+        // PitFill, …, BiomeWeights) preserve the baseline so the outer
+        // loop's own per-batch `invalidate_from(Coastal)` does not wipe
+        // the sticky snapshot mid-iteration.
         StageId::Topography => {
             world.derived.initial_uplift = None;
+            world.derived.erosion_baseline = None;
         }
 
         // CoastMaskStage: writes derived.coast_mask + derived.shoreline_normal.
@@ -154,6 +165,20 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
             if let Some(cm) = world.derived.coast_mask.as_mut() {
                 cm.river_mouth_mask = None;
             }
+        }
+
+        // ErosionOuterLoop: mutates authoritative.height in place (which
+        // is world truth, NOT a cache — never cleared here). Its
+        // derived-side artefact `erosion_baseline` is a one-shot
+        // pre-erosion snapshot whose only legitimate reset is a full
+        // re-run of `TopographyStage` — see that arm above. Clearing it
+        // here would be wiped by the outer loop's own per-batch
+        // `invalidate_from(Coastal)` mid-iteration, leaving the baseline
+        // as post-erosion state by the last batch. Leaving this arm as a
+        // noop preserves the sticky baseline across the
+        // `Coastal..=RiverExtraction` reroute.
+        StageId::ErosionOuterLoop => {
+            // deliberately empty — see module-level comment + docstring.
         }
 
         // TemperatureStage: writes baked.temperature.
@@ -282,6 +307,7 @@ mod tests {
         assert!(world.derived.accumulation.is_none(), "accumulation");
         assert!(world.derived.basin_id.is_none(), "basin_id");
         assert!(world.derived.river_mask.is_none(), "river_mask");
+        assert!(world.derived.erosion_baseline.is_none(), "erosion_baseline");
         assert!(world.derived.fog_likelihood.is_none(), "fog_likelihood");
         assert!(world.derived.pet.is_none(), "pet");
         assert!(world.derived.et.is_none(), "et");
@@ -361,32 +387,43 @@ mod tests {
             world.derived.river_mask.is_none(),
             "river_mask must be None"
         );
-        // Temperature (8)
+        // ErosionOuterLoop (8): `erosion_baseline` is a sticky pre-erosion
+        // snapshot, cleared only by `invalidate_from(Topography)` (see
+        // Topography arm in `clear_stage_outputs`). `invalidate_from`
+        // frontiers at or above Coastal leave it untouched, so the outer
+        // loop's own per-batch `invalidate_from(Coastal)` cannot wipe it
+        // mid-iteration. Here it must still be populated from the initial
+        // full-pipeline run.
+        assert!(
+            world.derived.erosion_baseline.is_some(),
+            "erosion_baseline must be preserved (sticky, only Topography frontier clears it)"
+        );
+        // Temperature (9)
         assert!(
             world.baked.temperature.is_none(),
             "baked.temperature must be None"
         );
-        // Precipitation (9)
+        // Precipitation (10)
         assert!(
             world.baked.precipitation.is_none(),
             "baked.precipitation must be None"
         );
-        // FogLikelihood (10)
+        // FogLikelihood (11)
         assert!(
             world.derived.fog_likelihood.is_none(),
             "fog_likelihood must be None"
         );
-        // Pet (11)
+        // Pet (12)
         assert!(world.derived.pet.is_none(), "pet must be None");
-        // WaterBalance (12)
+        // WaterBalance (13)
         assert!(world.derived.et.is_none(), "et must be None");
         assert!(world.derived.runoff.is_none(), "runoff must be None");
-        // SoilMoisture (13)
+        // SoilMoisture (14)
         assert!(
             world.baked.soil_moisture.is_none(),
             "baked.soil_moisture must be None"
         );
-        // BiomeWeights (14)
+        // BiomeWeights (15)
         assert!(
             world.baked.biome_weights.is_none(),
             "baked.biome_weights must be None"
@@ -395,7 +432,7 @@ mod tests {
             world.derived.dominant_biome_per_cell.is_none(),
             "dominant_biome_per_cell must be None"
         );
-        // HexProjection (15)
+        // HexProjection (16)
         assert!(world.derived.hex_grid.is_none(), "hex_grid must be None");
         assert!(world.derived.hex_attrs.is_none(), "hex_attrs must be None");
         assert!(
@@ -585,6 +622,58 @@ mod tests {
         *hasher.finalize().as_bytes()
     }
 
+    /// Build a Sprint 1A+1B pipeline **without** `ErosionOuterLoop`.
+    ///
+    /// Used by the `invalidate_plus_run_from_equals_fresh_run_at` helper so
+    /// that the test's bit-exact invariant still holds. With
+    /// `ErosionOuterLoop` in the pipeline, calling
+    /// `invalidate_from(X) + run_from(X)` for any `X <= ErosionOuterLoop`
+    /// would re-execute the SPIM + hillslope loop on an already-eroded
+    /// `authoritative.height` — doubling the erosion applied to world_a
+    /// versus world_b and breaking the bit-exact equality. That is a
+    /// property of erosion mutating world truth, not a bug in
+    /// `invalidate_from`, so the test deliberately sidesteps it by using a
+    /// pipeline that doesn't touch `authoritative.height` after
+    /// `TopographyStage`.
+    fn non_eroding_pipeline() -> island_core::pipeline::SimulationPipeline {
+        use crate::{
+            AccumulationStage, BasinsStage, BiomeWeightsStage, CoastMaskStage,
+            DerivedGeomorphStage, FlowRoutingStage, FogLikelihoodStage, HexProjectionStage,
+            PetStage, PitFillStage, PrecipitationStage, RiverExtractionStage, SoilMoistureStage,
+            TemperatureStage, TopographyStage, ValidationStage, WaterBalanceStage,
+        };
+        let mut pipeline = island_core::pipeline::SimulationPipeline::new();
+        pipeline.push(Box::new(TopographyStage));
+        pipeline.push(Box::new(CoastMaskStage));
+        pipeline.push(Box::new(PitFillStage));
+        pipeline.push(Box::new(DerivedGeomorphStage));
+        pipeline.push(Box::new(FlowRoutingStage));
+        pipeline.push(Box::new(AccumulationStage));
+        pipeline.push(Box::new(BasinsStage));
+        pipeline.push(Box::new(RiverExtractionStage));
+        // ErosionOuterLoop intentionally omitted — see docstring above.
+        pipeline.push(Box::new(TemperatureStage));
+        pipeline.push(Box::new(PrecipitationStage));
+        pipeline.push(Box::new(FogLikelihoodStage));
+        pipeline.push(Box::new(PetStage));
+        pipeline.push(Box::new(WaterBalanceStage));
+        pipeline.push(Box::new(SoilMoistureStage));
+        pipeline.push(Box::new(BiomeWeightsStage));
+        pipeline.push(Box::new(HexProjectionStage));
+        pipeline.push(Box::new(ValidationStage));
+        pipeline
+    }
+
+    /// For non-eroding pipeline callers: translate a `StageId` discriminant
+    /// (which includes `ErosionOuterLoop = 8`) into the corresponding index
+    /// in [`non_eroding_pipeline`], where every post-RiverExtraction stage
+    /// is shifted left by one slot.
+    fn non_eroding_index(id: StageId) -> usize {
+        let raw = id as usize;
+        let erosion = StageId::ErosionOuterLoop as usize;
+        if raw >= erosion { raw - 1 } else { raw }
+    }
+
     /// Core of Test 3: build two identical worlds, run full pipeline on world_b
     /// as reference, then run full + invalidate_from(frontier) + run_from on
     /// world_a, and assert bit-exact equality of all derived/baked caches.
@@ -595,13 +684,13 @@ mod tests {
 
         // world_a: full run, then invalidate + run_from
         let mut world_a = WorldState::new(seed, preset.clone(), res);
-        let pipeline = crate::default_pipeline();
+        let pipeline = non_eroding_pipeline();
         pipeline
             .run(&mut world_a)
             .expect("world_a initial full run");
         invalidate_from(&mut world_a, frontier);
         pipeline
-            .run_from(&mut world_a, frontier as usize)
+            .run_from(&mut world_a, non_eroding_index(frontier))
             .expect("world_a run_from");
 
         // world_b: single clean full run (reference)

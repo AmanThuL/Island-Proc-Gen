@@ -281,6 +281,26 @@ impl BiomeWeights {
     }
 }
 
+/// Sprint 2 DD3/DD8: snapshot of pre-erosion height / land statistics,
+/// captured by `ErosionOuterLoop` before its first iteration and read by
+/// the `erosion_no_explosion` / `erosion_no_excessive_sea_crossing`
+/// invariants in `core::validation` (Task 2.9).
+///
+/// Lives inside `DerivedCaches` (which is `#[serde(skip)]`), so this struct
+/// is purely in-memory and deliberately does **not** derive
+/// `serde::Serialize` / `Deserialize`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ErosionBaseline {
+    /// Maximum `authoritative.height` value across all land cells, sampled
+    /// immediately before the first inner SPIM iteration runs.
+    pub max_height_pre: f32,
+
+    /// Count of cells with `coast_mask.is_land == 1` at snapshot time. Used
+    /// by `erosion_no_excessive_sea_crossing` to bound how many cells
+    /// crossed the sea-level threshold during erosion.
+    pub land_cell_count_pre: u32,
+}
+
 /// Land / sea / coast classification produced by `CoastMaskStage`.
 ///
 /// `land_cell_count` is cached so downstream stages avoid re-popcounting
@@ -379,6 +399,12 @@ pub struct DerivedCaches {
 
     /// Sprint 1A RiverExtractionStage: extracted main river network.
     pub river_mask: Option<MaskField2D>,
+
+    /// Sprint 2 DD3/DD8: pre-erosion snapshot captured once by
+    /// `ErosionOuterLoop::run` before its first inner iteration. Consumed
+    /// by the `erosion_no_explosion` / `erosion_no_excessive_sea_crossing`
+    /// invariants (Task 2.9). `None` until `ErosionOuterLoop` has run.
+    pub erosion_baseline: Option<ErosionBaseline>,
 }
 
 // ─── WorldState ──────────────────────────────────────────────────────────────

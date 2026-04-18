@@ -194,32 +194,17 @@ mod tests {
     /// without jumping files.
     #[test]
     fn wind_dir_rerun_propagates_through_biome_chain() {
-        use crate::{
-            BiomeWeightsStage, FogLikelihoodStage, HexProjectionStage, PetStage,
-            PrecipitationStage, SoilMoistureStage, StageId, TemperatureStage, WaterBalanceStage,
-        };
+        use crate::StageId;
         let mut preset = volcanic_preset();
         preset.prevailing_wind_dir = 0.0;
         let mut world = WorldState::new(Seed(42), preset, Resolution::new(64, 64));
 
-        let mut pipeline = SimulationPipeline::new();
-        pipeline.push(Box::new(TopographyStage));
-        pipeline.push(Box::new(CoastMaskStage));
-        pipeline.push(Box::new(PitFillStage));
-        pipeline.push(Box::new(DerivedGeomorphStage));
-        pipeline.push(Box::new(FlowRoutingStage));
-        pipeline.push(Box::new(AccumulationStage));
-        pipeline.push(Box::new(BasinsStage));
-        pipeline.push(Box::new(RiverExtractionStage));
-        pipeline.push(Box::new(TemperatureStage));
-        pipeline.push(Box::new(PrecipitationStage));
-        pipeline.push(Box::new(FogLikelihoodStage));
-        pipeline.push(Box::new(PetStage));
-        pipeline.push(Box::new(WaterBalanceStage));
-        pipeline.push(Box::new(SoilMoistureStage));
-        pipeline.push(Box::new(BiomeWeightsStage));
-        pipeline.push(Box::new(HexProjectionStage));
-        pipeline.push(Box::new(ValidationStage));
+        // Use the canonical pipeline builder so `StageId::Precipitation as usize`
+        // correctly resolves to PrecipitationStage's index. A bespoke pipeline
+        // that omits any StageId variant (e.g. ErosionOuterLoop) shifts every
+        // downstream index and silently breaks this symbolic lookup — that
+        // regression hit on Sprint 2 Task 2.3 when ErosionOuterLoop was inserted.
+        let pipeline = crate::default_pipeline();
 
         pipeline.run(&mut world).expect("initial run");
         let precip_a = world.baked.precipitation.as_ref().unwrap().data.clone();
