@@ -34,8 +34,6 @@ impl SimulationStage for StreamPowerIncisionStage {
         let m = world.preset.erosion.spim_m;
         let n = world.preset.erosion.spim_n;
         let sea_level = world.preset.sea_level;
-        let width = world.resolution.sim_width;
-        let height_cells = world.resolution.sim_height;
 
         // ── prerequisite checks ───────────────────────────────────────────────
         // Verify derived prerequisites exist before taking &mut on height.
@@ -73,7 +71,7 @@ impl SimulationStage for StreamPowerIncisionStage {
         // Split borrow: `world.derived` and `world.authoritative` are disjoint
         // struct fields so the compiler accepts shared refs into `derived` held
         // simultaneously with the `&mut` into `authoritative.height`.
-        let n_cells = (width as usize) * (height_cells as usize);
+        let n_cells = world.resolution.sim_width as usize * world.resolution.sim_height as usize;
 
         let accumulation = &world.derived.accumulation.as_ref().unwrap().data;
         let slope = &world.derived.slope.as_ref().unwrap().data;
@@ -89,13 +87,10 @@ impl SimulationStage for StreamPowerIncisionStage {
             let a = accumulation[i];
             let s = slope[i];
 
-            // `ef` = K * A^m * S^n. Replace any non-finite result with 0.0
-            // so the height field stays deterministic on extreme inputs
-            // (e.g. accumulation == f32::MAX) without silent NaN propagation.
-            let ef = {
-                let v = k * a.powf(m) * s.powf(n);
-                if v.is_finite() { v } else { 0.0 }
-            };
+            // `ef` = K * A^m * S^n. Non-finite → 0.0 so extreme accumulation
+            // (e.g. f32::MAX) doesn't silently NaN-propagate into the height field.
+            let ef = k * a.powf(m) * s.powf(n);
+            let ef = if ef.is_finite() { ef } else { 0.0 };
 
             // In-place incision; clamp at sea_level (dt = 1.0 in v1).
             h_field.data[i] = (h_field.data[i] - ef).max(sea_level);
@@ -143,20 +138,16 @@ mod tests {
         }
     }
 
-    /// All-land coast mask for an `w × h` grid.
+    /// All-land coast mask for a `w × h` grid.
     fn all_land_coast(w: u32, h: u32) -> CoastMask {
-        let n = (w * h) as usize;
+        let n = w * h;
         let mut is_land = MaskField2D::new(w, h);
-        for i in 0..n {
-            is_land.data[i] = 1;
-        }
-        let is_sea = MaskField2D::new(w, h);
-        let is_coast = MaskField2D::new(w, h);
+        is_land.data.fill(1);
         CoastMask {
             is_land,
-            is_sea,
-            is_coast,
-            land_cell_count: n as u32,
+            is_sea: MaskField2D::new(w, h),
+            is_coast: MaskField2D::new(w, h),
+            land_cell_count: n,
             river_mouth_mask: None,
         }
     }
@@ -164,26 +155,20 @@ mod tests {
     /// Mixed coast mask: rows 0..half are sea, rows half..h are land.
     fn half_sea_coast(w: u32, h: u32) -> CoastMask {
         let half = h / 2;
+        let sea_cells = (half * w) as usize;
+        let land_cells = ((h - half) * w) as usize;
+
         let mut is_land = MaskField2D::new(w, h);
+        is_land.data[sea_cells..].fill(1);
+
         let mut is_sea = MaskField2D::new(w, h);
-        let is_coast = MaskField2D::new(w, h);
-        let mut land_count = 0u32;
-        for iy in 0..h {
-            for ix in 0..w {
-                let i = (iy * w + ix) as usize;
-                if iy >= half {
-                    is_land.data[i] = 1;
-                    land_count += 1;
-                } else {
-                    is_sea.data[i] = 1;
-                }
-            }
-        }
+        is_sea.data[..sea_cells].fill(1);
+
         CoastMask {
             is_land,
             is_sea,
-            is_coast,
-            land_cell_count: land_count,
+            is_coast: MaskField2D::new(w, h),
+            land_cell_count: land_cells as u32,
             river_mouth_mask: None,
         }
     }
@@ -307,7 +292,10 @@ mod tests {
 
     // ─── Test 4: SPIM stays finite on extreme accumulation ───────────────────
     //
-    // accumulation = f32::MAX on a few cells; all output heights must be finite.
+    // accumulation = f32::MAX with locked `m = 0.35` produces `ef ≈ 3e9`,
+    // finite but huge — the sea-level clamp path catches it and heights
+    // stay finite (not the non-finite guard, which cannot trigger at
+    // `m ≤ 1.0` because `f32::MAX.powf(0.35) ≈ 3e13 < f32::INF`).
     #[test]
     fn spim_finite_on_extreme_accumulation() {
         let (w, h) = (8u32, 8u32);
@@ -333,6 +321,50 @@ mod tests {
                 "cell {i}: height is non-finite after extreme accumulation"
             );
         }
+    }
+
+    // ─── Test 4b: non-finite guard explicitly exercised ──────────────────────
+    //
+    // The locked `(m, n) = (0.35, 1.0)` can't produce a non-finite `ef`, so
+    // the `if ef.is_finite() { ef } else { 0.0 }` guard is defensively
+    // present against future parameter experimentation (e.g. a tuner that
+    // overrides `m` past 1.0 and combines with f32::MAX accumulation). Force
+    // `m = 2.5` + `A = f32::MAX` to push `A^m` past f32::INF, then assert
+    // height still drops at most by the sea-level clamp's worth — meaning
+    // `ef` was squashed to 0.0 by the guard, NOT applied as Inf.
+    #[test]
+    fn spim_non_finite_guard_clamps_to_zero_under_parameter_override() {
+        let (w, h) = (4u32, 1u32);
+        let sea_level = 0.1;
+        let preset = IslandArchetypePreset {
+            erosion: ErosionParams {
+                spim_k: 1.0,
+                spim_m: 2.5, // m > 1 — can produce ef > f32::MAX
+                spim_n: 1.0,
+                ..ErosionParams::default()
+            },
+            ..base_preset(sea_level)
+        };
+        let mut world = make_world(w, h, preset, 0.5, 0.1, 1.0, all_land_coast(w, h));
+        world.derived.accumulation.as_mut().unwrap().data[1] = f32::MAX;
+
+        StreamPowerIncisionStage
+            .run(&mut world)
+            .expect("spim run failed");
+
+        let h_field = world.authoritative.height.as_ref().unwrap();
+        // If the guard didn't fire, `h - Inf = -Inf`, clamp to sea_level.
+        // If the guard DID fire (ef → 0.0), `h - 0.0 = 0.5`.
+        // Assert the non-finite branch produced 0.5, not sea_level 0.1.
+        assert!(
+            h_field.data[1].is_finite(),
+            "cell 1 height non-finite — guard failed"
+        );
+        assert!(
+            (h_field.data[1] - 0.5).abs() < 1e-5,
+            "cell 1 height {} != 0.5 — non-finite guard did not clamp ef to 0",
+            h_field.data[1]
+        );
     }
 
     // ─── Test 5: missing accumulation returns Err ─────────────────────────────

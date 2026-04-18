@@ -280,4 +280,38 @@ mod tests {
             ron::from_str(&serialized).expect("deserialize failed");
         assert_eq!(original, deserialized);
     }
+
+    // 6. A RON string with a partially-specified `erosion` field falls back to
+    //    per-field defaults for the missing keys. Proves `#[serde(default =
+    //    "…")]` on each ErosionParams field does its job when the erosion
+    //    block exists but is incomplete — future preset RON files can
+    //    override only the keys they care about.
+    #[test]
+    fn island_archetype_with_partial_erosion_fills_per_field_defaults() {
+        let ron_str = r#"IslandArchetypePreset(
+            name: "partial_erosion",
+            island_radius: 0.55,
+            max_relief: 0.85,
+            volcanic_center_count: 1,
+            island_age: Young,
+            prevailing_wind_dir: 1.5708,
+            marine_moisture_strength: 0.75,
+            sea_level: 0.30,
+            erosion: (
+                spim_k: 5.0e-3,
+                n_batch: 3,
+            ),
+        )"#;
+        let preset: IslandArchetypePreset =
+            ron::from_str(ron_str).expect("deserialize with partial erosion");
+        // Overridden fields present.
+        assert_eq!(preset.erosion.spim_k, 5.0e-3);
+        assert_eq!(preset.erosion.n_batch, 3);
+        // Unspecified fields fall back to per-field default fns.
+        assert_eq!(preset.erosion.spim_m, 0.35);
+        assert_eq!(preset.erosion.spim_n, 1.0);
+        assert_eq!(preset.erosion.hillslope_d, 1.0e-3);
+        assert_eq!(preset.erosion.n_diff_substep, 4);
+        assert_eq!(preset.erosion.n_inner, 10);
+    }
 }
