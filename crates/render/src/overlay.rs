@@ -107,9 +107,10 @@ pub struct OverlayRegistry {
 }
 
 impl OverlayRegistry {
-    /// Return the Sprint 2 overlay registry — 6 Sprint 1A geomorph
+    /// Return the Sprint 2.5 overlay registry — 6 Sprint 1A geomorph
     /// overlays + 6 Sprint 1B climate / ecology / hex overlays + 1 Sprint 2
-    /// coastal geomorphology overlay, total 13.
+    /// coastal geomorphology overlay + 2 Sprint 2.5 hex debug overlays,
+    /// total 15.
     ///
     /// `final_elevation` reads `z_filled` (not `height`) —
     /// `authoritative.height` stores `z_raw` pre-pit-fill; the render
@@ -117,7 +118,7 @@ impl OverlayRegistry {
     /// `final_elevation` is visible by default; everything else is
     /// hidden so the user can toggle overlays without fighting alpha
     /// stacking.
-    pub fn sprint_2_defaults() -> Self {
+    pub fn sprint_2_5_defaults() -> Self {
         Self {
             entries: vec![
                 // ── Sprint 1A (geomorph + hydro) ──────────────────────
@@ -235,6 +236,25 @@ impl OverlayRegistry {
                     value_range: ValueRange::Fixed(0.0, 4.0),
                     visible: false,
                 },
+                // ── Sprint 2.5.B (hex slope variance) ─────────────────
+                // `ValueRange::Auto`: variance has no fixed upper bound.
+                OverlayDescriptor {
+                    id: "hex_projection_error",
+                    label: "Hex projection error",
+                    source: OverlaySource::ScalarDerived("hex_slope_variance_per_cell"),
+                    palette: PaletteId::Viridis,
+                    value_range: ValueRange::Auto,
+                    visible: false,
+                },
+                // ── Sprint 2.5.D (hex accessibility cost) ─────────────
+                OverlayDescriptor {
+                    id: "hex_accessibility",
+                    label: "Hex accessibility cost",
+                    source: OverlaySource::ScalarDerived("hex_accessibility_per_cell"),
+                    palette: PaletteId::Viridis,
+                    value_range: ValueRange::Auto,
+                    visible: false,
+                },
             ],
         }
     }
@@ -270,7 +290,7 @@ impl OverlayRegistry {
 
 impl Default for OverlayRegistry {
     fn default() -> Self {
-        Self::sprint_2_defaults()
+        Self::sprint_2_5_defaults()
     }
 }
 
@@ -342,6 +362,18 @@ pub(crate) fn resolve_scalar_source<'w>(
         // only in this file.
         ScalarDerived("coast_type") => world.derived.coast_type.as_ref().map(ResolvedField::Mask),
 
+        ScalarDerived("hex_slope_variance_per_cell") => world
+            .derived
+            .hex_slope_variance_per_cell
+            .as_ref()
+            .map(ResolvedField::F32),
+
+        ScalarDerived("hex_accessibility_per_cell") => world
+            .derived
+            .hex_accessibility_per_cell
+            .as_ref()
+            .map(ResolvedField::F32),
+
         // Unknown / not-yet-populated sources silently return None so
         // the renderer skips rather than panicking on a missing field.
         _ => None,
@@ -355,13 +387,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_13_sprint_2_defaults() {
-        assert_eq!(OverlayRegistry::sprint_2_defaults().all().len(), 13);
+    fn registry_has_15_sprint_2_5_defaults() {
+        assert_eq!(OverlayRegistry::sprint_2_5_defaults().all().len(), 15);
     }
 
     #[test]
     fn coast_type_descriptor_is_correct() {
-        let reg = OverlayRegistry::sprint_2_defaults();
+        let reg = OverlayRegistry::sprint_2_5_defaults();
         let d = reg
             .by_id("coast_type")
             .expect("coast_type overlay must exist");
@@ -380,7 +412,7 @@ mod tests {
 
     #[test]
     fn by_id_queries_all_sprint_1a_defaults() {
-        let reg = OverlayRegistry::sprint_2_defaults();
+        let reg = OverlayRegistry::sprint_2_5_defaults();
         assert!(reg.by_id("initial_uplift").is_some());
         assert!(reg.by_id("final_elevation").is_some());
         assert!(reg.by_id("slope").is_some());
@@ -391,7 +423,7 @@ mod tests {
 
     #[test]
     fn by_id_queries_all_sprint_1b_defaults() {
-        let reg = OverlayRegistry::sprint_2_defaults();
+        let reg = OverlayRegistry::sprint_2_5_defaults();
         assert!(reg.by_id("precipitation").is_some());
         assert!(reg.by_id("temperature").is_some());
         assert!(reg.by_id("soil_moisture").is_some());
@@ -402,13 +434,13 @@ mod tests {
 
     #[test]
     fn by_id_unknown_returns_none() {
-        let reg = OverlayRegistry::sprint_2_defaults();
+        let reg = OverlayRegistry::sprint_2_5_defaults();
         assert!(reg.by_id("nope").is_none());
     }
 
     #[test]
     fn set_visibility_changes_flag() {
-        let mut reg = OverlayRegistry::sprint_2_defaults();
+        let mut reg = OverlayRegistry::sprint_2_5_defaults();
         assert!(!reg.by_id("initial_uplift").unwrap().visible);
         reg.set_visibility("initial_uplift", true);
         assert!(reg.by_id("initial_uplift").unwrap().visible);
@@ -417,13 +449,13 @@ mod tests {
     // Sprint 1A defaults: only final_elevation is visible → count == 1.
     #[test]
     fn visible_entries_filters() {
-        let reg = OverlayRegistry::sprint_2_defaults();
+        let reg = OverlayRegistry::sprint_2_5_defaults();
         assert_eq!(reg.visible_entries().count(), 1);
     }
 
     #[test]
     fn source_field_keys_match_sprint_1a_plan() {
-        let reg = OverlayRegistry::sprint_2_defaults();
+        let reg = OverlayRegistry::sprint_2_5_defaults();
 
         assert_eq!(
             reg.by_id("initial_uplift").unwrap().source,
@@ -455,7 +487,7 @@ mod tests {
     // Dedicated guard: future refactorers must not silently revert to height.
     #[test]
     fn final_elevation_not_authoritative_height() {
-        let reg = OverlayRegistry::sprint_2_defaults();
+        let reg = OverlayRegistry::sprint_2_5_defaults();
         let d = reg.by_id("final_elevation").unwrap();
         assert_ne!(d.source, OverlaySource::ScalarAuthoritative("height"));
         assert_eq!(d.source, OverlaySource::ScalarDerived("z_filled"));
@@ -463,7 +495,7 @@ mod tests {
 
     #[test]
     fn flow_accumulation_uses_log_compressed() {
-        let reg = OverlayRegistry::sprint_2_defaults();
+        let reg = OverlayRegistry::sprint_2_5_defaults();
         assert_eq!(
             reg.by_id("flow_accumulation").unwrap().value_range,
             ValueRange::LogCompressed,
@@ -472,10 +504,89 @@ mod tests {
 
     #[test]
     fn river_network_uses_binary_blue() {
-        let reg = OverlayRegistry::sprint_2_defaults();
+        let reg = OverlayRegistry::sprint_2_5_defaults();
         let d = reg.by_id("river_network").unwrap();
         assert_eq!(d.palette, PaletteId::BinaryBlue);
         assert_eq!(d.source, OverlaySource::Mask("river_mask"));
+    }
+
+    #[test]
+    fn sprint_2_5_hex_debug_overlay_descriptors_exist() {
+        let reg = OverlayRegistry::sprint_2_5_defaults();
+
+        let d = reg
+            .by_id("hex_projection_error")
+            .expect("hex_projection_error overlay must exist");
+        assert_eq!(
+            d.source,
+            OverlaySource::ScalarDerived("hex_slope_variance_per_cell"),
+            "hex_projection_error must source hex_slope_variance_per_cell"
+        );
+        assert_eq!(d.palette, PaletteId::Viridis);
+        assert_eq!(d.value_range, ValueRange::Auto);
+        assert!(!d.visible);
+
+        let d = reg
+            .by_id("hex_accessibility")
+            .expect("hex_accessibility overlay must exist");
+        assert_eq!(
+            d.source,
+            OverlaySource::ScalarDerived("hex_accessibility_per_cell"),
+            "hex_accessibility must source hex_accessibility_per_cell"
+        );
+        assert_eq!(d.palette, PaletteId::Viridis);
+        assert_eq!(d.value_range, ValueRange::Auto);
+        assert!(!d.visible);
+    }
+
+    #[test]
+    fn sprint_2_5_hex_debug_resolve_scalar_source() {
+        use island_core::{
+            field::ScalarField2D,
+            preset::{IslandAge, IslandArchetypePreset},
+            seed::Seed,
+            world::{Resolution, WorldState},
+        };
+        let preset = IslandArchetypePreset {
+            name: "overlay_test".into(),
+            island_radius: 0.5,
+            max_relief: 0.5,
+            volcanic_center_count: 1,
+            island_age: IslandAge::Young,
+            prevailing_wind_dir: 0.0,
+            marine_moisture_strength: 0.5,
+            sea_level: 0.3,
+            erosion: Default::default(),
+        };
+        let mut world = WorldState::new(Seed(0), preset, Resolution::new(16, 16));
+
+        // Populate the broadcast caches that resolve_scalar_source reads.
+        let mut var_field = ScalarField2D::<f32>::new(16, 16);
+        var_field.data.fill(0.1);
+        world.derived.hex_slope_variance_per_cell = Some(var_field);
+
+        let mut acc_field = ScalarField2D::<f32>::new(16, 16);
+        acc_field.data.fill(1.5);
+        world.derived.hex_accessibility_per_cell = Some(acc_field);
+
+        // Both keys must resolve to Some(ResolvedField::F32).
+        let resolved = resolve_scalar_source(
+            &world,
+            OverlaySource::ScalarDerived("hex_slope_variance_per_cell"),
+        );
+        assert!(
+            matches!(resolved, Some(ResolvedField::F32(_))),
+            "hex_slope_variance_per_cell must resolve to F32 when populated"
+        );
+
+        let resolved = resolve_scalar_source(
+            &world,
+            OverlaySource::ScalarDerived("hex_accessibility_per_cell"),
+        );
+        assert!(
+            matches!(resolved, Some(ResolvedField::F32(_))),
+            "hex_accessibility_per_cell must resolve to F32 when populated"
+        );
     }
 
     #[test]

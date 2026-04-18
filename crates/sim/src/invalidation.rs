@@ -227,11 +227,15 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
         }
 
         // HexProjectionStage: writes derived.hex_grid + derived.hex_attrs
-        // + derived.hex_dominant_per_cell.
+        // + derived.hex_dominant_per_cell + derived.hex_debug
+        // + derived.hex_slope_variance_per_cell + derived.hex_accessibility_per_cell.
         StageId::HexProjection => {
             world.derived.hex_grid = None;
             world.derived.hex_attrs = None;
             world.derived.hex_dominant_per_cell = None;
+            world.derived.hex_debug = None;
+            world.derived.hex_slope_variance_per_cell = None;
+            world.derived.hex_accessibility_per_cell = None;
         }
     }
 }
@@ -335,6 +339,15 @@ mod tests {
         assert!(
             world.derived.hex_dominant_per_cell.is_none(),
             "hex_dominant_per_cell"
+        );
+        assert!(world.derived.hex_debug.is_none(), "hex_debug");
+        assert!(
+            world.derived.hex_slope_variance_per_cell.is_none(),
+            "hex_slope_variance_per_cell"
+        );
+        assert!(
+            world.derived.hex_accessibility_per_cell.is_none(),
+            "hex_accessibility_per_cell"
         );
 
         // ── every baked.* field is None ───────────────────────────────────────
@@ -457,6 +470,18 @@ mod tests {
         assert!(
             world.derived.hex_dominant_per_cell.is_none(),
             "hex_dominant_per_cell must be None"
+        );
+        assert!(
+            world.derived.hex_debug.is_none(),
+            "hex_debug must be None (downstream of Accumulation)"
+        );
+        assert!(
+            world.derived.hex_slope_variance_per_cell.is_none(),
+            "hex_slope_variance_per_cell must be None"
+        );
+        assert!(
+            world.derived.hex_accessibility_per_cell.is_none(),
+            "hex_accessibility_per_cell must be None"
         );
     }
 
@@ -598,6 +623,34 @@ mod tests {
                 }
             }
         }
+
+        {
+            let hd = world.derived.hex_debug.as_ref().expect("hex_debug");
+            for v in &hd.slope_variance {
+                hasher.update(&v.to_le_bytes());
+            }
+            for v in &hd.accessibility_cost {
+                hasher.update(&v.to_le_bytes());
+            }
+        }
+        hash_f32(
+            &mut hasher,
+            &world
+                .derived
+                .hex_slope_variance_per_cell
+                .as_ref()
+                .expect("hex_slope_variance_per_cell")
+                .data,
+        );
+        hash_f32(
+            &mut hasher,
+            &world
+                .derived
+                .hex_accessibility_per_cell
+                .as_ref()
+                .expect("hex_accessibility_per_cell")
+                .data,
+        );
 
         // ── baked fields ───────────────────────────────────────────────────────
         hash_f32(

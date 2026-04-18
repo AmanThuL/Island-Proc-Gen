@@ -281,6 +281,29 @@ impl BiomeWeights {
     }
 }
 
+/// Per-hex debug attributes computed by `HexProjectionStage` alongside the
+/// main `HexAttributes` aggregation. Both `Vec` fields have length
+/// `cols * rows` and are row-major, matching `HexAttributeField`.
+#[derive(Debug, Clone)]
+pub struct HexDebugAttributes {
+    /// Variance of `derived.slope` over the land sim cells in each hex.
+    ///
+    /// Computed as `E[slope²] − (E[slope])²` using `f64` accumulators to
+    /// avoid catastrophic cancellation. Small negative results from fp noise
+    /// are clamped to `0.0`. Hexes with no land sim cells keep `0.0`.
+    pub slope_variance: Vec<f32>,
+
+    /// Per-hex accessibility cost `1 + W_SLOPE * mean_slope
+    /// + W_RIVER * river_penalty + W_CLIFF * cliff_penalty`.
+    ///
+    /// `river_penalty = 1.0` if any cell in the hex has `river_mask == 1`,
+    /// else `0.0`. `cliff_penalty = mean(coast_type[p] == Cliff ? 1.0 : 0.0)`
+    /// over all sim cells in the hex (`Unknown` sentinel cells contribute `0.0`
+    /// to the numerator but count in the denominator). Hexes with no sim cells
+    /// get cost `1.0`.
+    pub accessibility_cost: Vec<f32>,
+}
+
 /// Sprint 2 DD3/DD8: snapshot of pre-erosion height / land statistics,
 /// captured by `ErosionOuterLoop` before its first iteration and read by
 /// the `erosion_no_explosion` / `erosion_no_excessive_sea_crossing`
@@ -430,6 +453,20 @@ pub struct DerivedCaches {
     /// by the `erosion_no_explosion` / `erosion_no_excessive_sea_crossing`
     /// invariants (Task 2.9). `None` until `ErosionOuterLoop` has run.
     pub erosion_baseline: Option<ErosionBaseline>,
+
+    /// Per-hex debug attributes (`slope_variance`, `accessibility_cost`).
+    /// `None` until `HexProjectionStage` has run.
+    pub hex_debug: Option<HexDebugAttributes>,
+
+    /// Broadcast of `hex_debug.slope_variance[h]` to each sim cell in hex `h`.
+    /// Drives the `hex_projection_error` overlay. `None` until
+    /// `HexProjectionStage` has run.
+    pub hex_slope_variance_per_cell: Option<ScalarField2D<f32>>,
+
+    /// Broadcast of `hex_debug.accessibility_cost[h]` to each sim cell in
+    /// hex `h`. Drives the `hex_accessibility` overlay. `None` until
+    /// `HexProjectionStage` has run.
+    pub hex_accessibility_per_cell: Option<ScalarField2D<f32>>,
 }
 
 // ─── WorldState ──────────────────────────────────────────────────────────────
