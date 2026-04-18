@@ -9,8 +9,9 @@
 //! coast stages. Sprint 1B adds 4 more (`precipitation_nonneg`,
 //! `biome_weights_normalized`, `temperature_physical_range`,
 //! `hex_attrs_present`). Sprint 2 adds 3 more (`coast_type_well_formed`,
-//! `erosion_no_explosion`, `erosion_no_excessive_sea_crossing`), for a
-//! total of **11 invariants**. To keep the stage working for pipelines
+//! `erosion_no_explosion`, `erosion_no_excessive_sea_crossing`). Sprint
+//! 2.5 Task 2.5.G adds 1 more (`basin_partition_post_erosion_well_formed`),
+//! for a total of **12 invariants**. To keep the stage working for pipelines
 //! that stop at 1A (e.g. validation unit tests that only need the
 //! routing stack), each 1B check is gated on its input field: if the
 //! field is still `None`, the invariant is skipped with a
@@ -18,21 +19,21 @@
 //! "not applicable yet" rather than a failure. Every other error
 //! (actual invariant violations) propagates normally.
 //!
-//! The 3 Sprint 2 invariants self-skip (return `Ok(())`) when their
+//! The Sprint 2 and 2.5 invariants self-skip (return `Ok(())`) when their
 //! precondition fields are `None`, so they are called directly with `?`.
 
 use island_core::pipeline::SimulationStage;
 use island_core::validation::{
-    ValidationError, accumulation_monotone, basin_partition_dag, biome_weights_normalized,
-    coast_type_well_formed, coastline_consistency, erosion_no_excessive_sea_crossing,
-    erosion_no_explosion, hex_attrs_present, precipitation_nonneg, river_termination,
-    temperature_physical_range,
+    ValidationError, accumulation_monotone, basin_partition_dag,
+    basin_partition_post_erosion_well_formed, biome_weights_normalized, coast_type_well_formed,
+    coastline_consistency, erosion_no_excessive_sea_crossing, erosion_no_explosion,
+    hex_attrs_present, precipitation_nonneg, river_termination, temperature_physical_range,
 };
 use island_core::world::WorldState;
 
-/// Run all 11 core validation invariants in order, short-circuiting on
+/// Run all 12 core validation invariants in order, short-circuiting on
 /// the first real failure. 1B invariants whose preconditions are missing
-/// are silently skipped. Sprint 2 invariants self-skip when their
+/// are silently skipped. Sprint 2 and 2.5 invariants self-skip when their
 /// precondition fields are `None`.
 pub struct ValidationStage;
 
@@ -56,12 +57,12 @@ impl SimulationStage for ValidationStage {
         skip_if_missing(temperature_physical_range(world))?;
         skip_if_missing(hex_attrs_present(world))?;
 
-        // Sprint 2: self-skipping invariants — return Ok(()) when their
-        // precondition fields are None (ErosionOuterLoop / CoastTypeStage
-        // not yet run), so no `skip_if_missing` wrapper is needed.
+        // Sprint 2 / 2.5: self-skipping invariants — return Ok(()) when their
+        // precondition fields are None, so no `skip_if_missing` wrapper needed.
         coast_type_well_formed(world)?;
         erosion_no_explosion(world)?;
         erosion_no_excessive_sea_crossing(world)?;
+        basin_partition_post_erosion_well_formed(world)?;
 
         Ok(())
     }
@@ -187,20 +188,21 @@ mod tests {
 
     /// End-to-end Sprint 2 integration test: run the full 19-stage canonical
     /// pipeline (18 `StageId` variants + tail `ValidationStage`) and assert
-    /// all 11 invariants pass, including the 3 Sprint 2 additions.
+    /// all 12 invariants pass, including the 3 Sprint 2 additions and the
+    /// Sprint 2.5 Task 2.5.G addition.
     ///
     /// Mirrors `full_sprint_1b_pipeline_passes_all_invariants` but uses
     /// `sim::default_pipeline()` (which includes `ErosionOuterLoop` and
     /// `CoastTypeStage`) and additionally checks that `erosion_baseline` and
-    /// `coast_type` are populated before explicitly calling each of the 11
+    /// `coast_type` are populated before explicitly calling each of the 12
     /// invariants to confirm they all return `Ok`.
     #[test]
-    fn full_sprint_2_pipeline_passes_all_11_invariants() {
+    fn full_sprint_2_pipeline_passes_all_12_invariants() {
         use island_core::validation::{
-            accumulation_monotone, basin_partition_dag, biome_weights_normalized,
-            coast_type_well_formed, coastline_consistency, erosion_no_excessive_sea_crossing,
-            erosion_no_explosion, hex_attrs_present, precipitation_nonneg, river_termination,
-            temperature_physical_range,
+            accumulation_monotone, basin_partition_dag, basin_partition_post_erosion_well_formed,
+            biome_weights_normalized, coast_type_well_formed, coastline_consistency,
+            erosion_no_excessive_sea_crossing, erosion_no_explosion, hex_attrs_present,
+            precipitation_nonneg, river_termination, temperature_physical_range,
         };
 
         let mut world = WorldState::new(Seed(42), volcanic_preset(), Resolution::new(64, 64));
@@ -208,7 +210,7 @@ mod tests {
 
         pipeline
             .run(&mut world)
-            .expect("full Sprint 2 canonical pipeline must pass all 11 invariants");
+            .expect("full Sprint 2 canonical pipeline must pass all 12 invariants");
 
         // Sprint 2 output fields must be populated.
         assert!(
@@ -220,7 +222,7 @@ mod tests {
             "coast_type must be Some after CoastTypeStage"
         );
 
-        // Explicitly call each of the 11 invariants — if any regresses,
+        // Explicitly call each of the 12 invariants — if any regresses,
         // the test names the failing invariant directly.
         coastline_consistency(&world).expect("1. coastline_consistency");
         basin_partition_dag(&world).expect("2. basin_partition_dag");
@@ -233,6 +235,38 @@ mod tests {
         coast_type_well_formed(&world).expect("9. coast_type_well_formed");
         erosion_no_explosion(&world).expect("10. erosion_no_explosion");
         erosion_no_excessive_sea_crossing(&world).expect("11. erosion_no_excessive_sea_crossing");
+        basin_partition_post_erosion_well_formed(&world)
+            .expect("12. basin_partition_post_erosion_well_formed");
+    }
+
+    /// Integration test: full Sprint 2 canonical pipeline passes the new
+    /// `basin_partition_post_erosion_well_formed` invariant (Task 2.5.G).
+    ///
+    /// Uses `sim::default_pipeline()` which runs all 18 stages + tail
+    /// `ValidationStage`, ensuring the CC labelling pass in `BasinsStage`
+    /// produces a well-formed partition that the new 12th invariant accepts.
+    #[test]
+    fn full_sprint_2_pipeline_passes_basin_partition_post_erosion_well_formed() {
+        use island_core::validation::basin_partition_post_erosion_well_formed;
+
+        let mut world = WorldState::new(Seed(42), volcanic_preset(), Resolution::new(64, 64));
+        let pipeline = crate::default_pipeline();
+
+        pipeline
+            .run(&mut world)
+            .expect("full Sprint 2 canonical pipeline must pass all 12 invariants");
+
+        assert!(
+            world.derived.basin_id.is_some(),
+            "basin_id must be Some after BasinsStage"
+        );
+        assert!(
+            world.derived.coast_mask.is_some(),
+            "coast_mask must be Some after CoastMaskStage"
+        );
+
+        basin_partition_post_erosion_well_formed(&world)
+            .expect("basin_partition_post_erosion_well_formed must pass on the Sprint 2 pipeline");
     }
 
     /// Regression guard for the Sprint 1B wind-slider 0↔π acceptance pair.

@@ -85,6 +85,24 @@ pub enum ValidationError {
     )]
     NonCoastCellNotUnknown { cell_index: usize, value: u8 },
 
+    /// A basin occupies more than 50 % of land cells, indicating the partition
+    /// is degenerate (e.g. the CC labelling accidentally merged unrelated regions).
+    #[error(
+        "basin partition: basin id {basin_id} covers {count} cells ({fraction:.1}% of {land_total} land cells, exceeds 50% limit)"
+    )]
+    BasinExceedsHalfLand {
+        basin_id: u32,
+        count: u32,
+        fraction: f32,
+        land_total: u32,
+    },
+
+    /// The sum of cells with `basin_id > 0` exceeds `land_cell_count`.
+    #[error(
+        "basin partition: {labeled_cells} labeled cells (basin_id > 0) exceed land_cell_count {land_total}"
+    )]
+    BasinLabeledCellsExceedLand { labeled_cells: u32, land_total: u32 },
+
     /// A height value became non-finite (NaN or ±∞) during erosion.
     #[error("erosion: height at flat index {cell_index} is non-finite ({value})")]
     ErosionHeightNonFinite { cell_index: usize, value: f32 },
@@ -545,6 +563,66 @@ pub const EROSION_MAX_GROWTH_FACTOR: f32 = 1.05;
 /// Sprint 2 §8: a 5 % sea-crossing limit bounds the worst-case island
 /// shrinkage caused by mis-tuned erosion strength or duration parameters.
 pub const EROSION_MAX_SEA_CROSSING_FRACTION: f32 = 0.05;
+
+/// Post-erosion basin partition well-formedness check (Task 2.5.G).
+///
+/// Checks two sub-invariants:
+/// 1. No basin has area > 50 % of total land cells (degenerate merge guard).
+/// 2. `sum(cells with basin_id > 0) <= land_cell_count` (labeled cells are a
+///    subset of land; small unlabeled sink CCs may keep basin_id = 0).
+///
+/// Returns `Ok(())` immediately if either `derived.basin_id` or
+/// `derived.coast_mask` is `None` (stage hasn't run yet — skip).
+pub fn basin_partition_post_erosion_well_formed(world: &WorldState) -> Result<(), ValidationError> {
+    let basin_id = match world.derived.basin_id.as_ref() {
+        Some(b) => b,
+        None => return Ok(()),
+    };
+    let coast_mask = match world.derived.coast_mask.as_ref() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+
+    let land_total = coast_mask.land_cell_count;
+    if land_total == 0 {
+        return Ok(()); // all-sea preset; nothing to check.
+    }
+
+    let mut counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+    let mut labeled_cells: u32 = 0;
+
+    for &id in &basin_id.data {
+        if id > 0 {
+            *counts.entry(id).or_insert(0) += 1;
+            labeled_cells += 1;
+        }
+    }
+
+    // Sub-invariant 1: no single basin > 50 % of land.
+    // Integer halving is intentionally conservative (rounds down).
+    let half = land_total / 2;
+    for (&id, &count) in &counts {
+        if count > half {
+            let fraction = count as f32 / land_total as f32 * 100.0;
+            return Err(ValidationError::BasinExceedsHalfLand {
+                basin_id: id,
+                count,
+                fraction,
+                land_total,
+            });
+        }
+    }
+
+    // Sub-invariant 2: labeled cells <= land total.
+    if labeled_cells > land_total {
+        return Err(ValidationError::BasinLabeledCellsExceedLand {
+            labeled_cells,
+            land_total,
+        });
+    }
+
+    Ok(())
+}
 
 /// Every coast cell's `coast_type` byte must be in `0..=3`; every non-coast
 /// cell must carry the sentinel `0xFF` (`CoastType::Unknown`).
