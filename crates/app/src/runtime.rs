@@ -21,13 +21,7 @@ use island_core::{
     world::{Resolution, WorldState},
 };
 use render::{OverlayRenderer, SkyRenderer, TerrainRenderer, overlay::OverlayRegistry};
-use sim::{
-    AccumulationStage, BasinsStage, BiomeWeightsStage, CoastMaskStage, DerivedGeomorphStage,
-    FlowRoutingStage, FogLikelihoodStage, HexProjectionStage, PetStage, PitFillStage,
-    PrecipitationStage, RiverExtractionStage, SoilMoistureStage, TemperatureStage, TopographyStage,
-    ValidationStage, WaterBalanceStage,
-};
-use sim::{StageId, invalidate_from};
+use sim::{StageId, default_pipeline, invalidate_from};
 
 use crate::camera::{Camera, InputState};
 
@@ -102,7 +96,7 @@ impl Runtime {
     pub fn new(event_loop: &ActiveEventLoop) -> anyhow::Result<Self> {
         // ── Window ────────────────────────────────────────────────────────────
         let attrs = WindowAttributes::default()
-            .with_title("Island Proc-Gen — Sprint 1B")
+            .with_title("Island Proc-Gen — Sprint 2")
             .with_inner_size(LogicalSize::new(
                 INITIAL_WINDOW_WIDTH,
                 INITIAL_WINDOW_HEIGHT,
@@ -143,12 +137,14 @@ impl Runtime {
         let seed = Seed(42);
         let resolution = Resolution::new(256, 256);
 
-        // ── Sprint 1B pipeline (built once, reused for slider re-runs) ───────
-        let pipeline = build_sprint_1b_pipeline();
+        // ── Canonical 19-stage pipeline (built once, reused for slider re-runs) ─
+        // Uses `sim::default_pipeline()` — the single source of truth for stage
+        // ordering. Sliders call `run_from(StageId::X as usize)` and rely on
+        // the pipeline's push-order matching the enum discriminants. A local
+        // copy of the builder here would silently drift when StageId changes.
+        let pipeline = default_pipeline();
         let mut world = WorldState::new(seed, preset.clone(), resolution);
-        pipeline
-            .run(&mut world)
-            .context("initial Sprint 1B pipeline run")?;
+        pipeline.run(&mut world).context("initial pipeline run")?;
         let land_cells = world
             .derived
             .coast_mask
@@ -157,7 +153,7 @@ impl Runtime {
             .unwrap_or(0);
         info!(
             stages = pipeline.len(),
-            land_cells, "Sprint 1B pipeline completed (all 8 invariants passed)"
+            land_cells, "pipeline completed (all 11 invariants passed)"
         );
 
         // ── Terrain renderer (must follow pipeline so z_filled is populated) ─
@@ -520,39 +516,6 @@ impl Runtime {
         self.window.pre_present_notify();
         frame.present();
     }
-}
-
-// ── Sprint 1B pipeline builder ────────────────────────────────────────────────
-
-/// Build the canonical Sprint 1A + Sprint 1B `SimulationPipeline`.
-///
-/// Push order MUST match `sim::StageId` ordinals so slider re-run via
-/// `SimulationPipeline::run_from(world, StageId::X as usize)` targets
-/// the correct stage. `StageId` is the single source of truth for stage
-/// indices — any reordering here must update the enum in lockstep.
-fn build_sprint_1b_pipeline() -> SimulationPipeline {
-    let mut pipeline = SimulationPipeline::new();
-    // Sprint 1A (indices 0..=7)
-    pipeline.push(Box::new(TopographyStage));
-    pipeline.push(Box::new(CoastMaskStage));
-    pipeline.push(Box::new(PitFillStage));
-    pipeline.push(Box::new(DerivedGeomorphStage));
-    pipeline.push(Box::new(FlowRoutingStage));
-    pipeline.push(Box::new(AccumulationStage));
-    pipeline.push(Box::new(BasinsStage));
-    pipeline.push(Box::new(RiverExtractionStage));
-    // Sprint 1B (indices 8..=15)
-    pipeline.push(Box::new(TemperatureStage));
-    pipeline.push(Box::new(PrecipitationStage));
-    pipeline.push(Box::new(FogLikelihoodStage));
-    pipeline.push(Box::new(PetStage));
-    pipeline.push(Box::new(WaterBalanceStage));
-    pipeline.push(Box::new(SoilMoistureStage));
-    pipeline.push(Box::new(BiomeWeightsStage));
-    pipeline.push(Box::new(HexProjectionStage));
-    // Tail hook — runs all 8 invariants.
-    pipeline.push(Box::new(ValidationStage));
-    pipeline
 }
 
 // ── Preset loading helper ─────────────────────────────────────────────────────
