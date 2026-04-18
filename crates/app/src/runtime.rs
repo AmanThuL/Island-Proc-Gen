@@ -21,13 +21,13 @@ use island_core::{
     world::{Resolution, WorldState},
 };
 use render::{OverlayRenderer, SkyRenderer, TerrainRenderer, overlay::OverlayRegistry};
-use sim::StageId;
 use sim::{
     AccumulationStage, BasinsStage, BiomeWeightsStage, CoastMaskStage, DerivedGeomorphStage,
     FlowRoutingStage, FogLikelihoodStage, HexProjectionStage, PetStage, PitFillStage,
     PrecipitationStage, RiverExtractionStage, SoilMoistureStage, TemperatureStage, TopographyStage,
     ValidationStage, WaterBalanceStage,
 };
+use sim::{StageId, invalidate_from};
 
 use crate::camera::{Camera, InputState};
 
@@ -435,6 +435,24 @@ impl Runtime {
                 .run_from(&mut self.world, StageId::Precipitation as usize)
             {
                 warn!("slider re-run failed: {err}");
+            } else {
+                self.overlay
+                    .refresh(&self.gpu, &self.world, &self.overlay_registry);
+            }
+        }
+
+        // Sprint 2.7: erosion slider re-run protocol (CLAUDE.md Gotchas):
+        //   1. Sync world.preset from self.preset so stages read the new values.
+        //   2. Invalidate caches from the ErosionOuterLoop frontier.
+        //   3. Re-run from ErosionOuterLoop (includes CoastType + all 1B stages).
+        if params_result.erosion_changed {
+            self.world.preset = self.preset.clone();
+            invalidate_from(&mut self.world, StageId::ErosionOuterLoop);
+            if let Err(err) = self
+                .pipeline
+                .run_from(&mut self.world, StageId::ErosionOuterLoop as usize)
+            {
+                warn!("erosion slider re-run failed: {err}");
             } else {
                 self.overlay
                     .refresh(&self.gpu, &self.world, &self.overlay_registry);
