@@ -1,5 +1,74 @@
 use std::path::PathBuf;
 
+use island_core::preset::{ErosionParams, IslandAge, IslandArchetypePreset};
+
+/// Sprint 2 DD5: selective overrides folded on top of the loaded preset.
+///
+/// Applied by `headless::executor::run_shot` *after*
+/// `data::presets::load_preset(&shot.preset)` returns and *before* the
+/// simulation pipeline runs. Every field is `Option`; only `Some`
+/// variants override the loaded preset. `None` leaves the preset
+/// field unchanged (forward-compat with Sprint 1C v1 request files).
+///
+/// Primary use-case for Sprint 2 is the before/after erosion compare
+/// in `crates/data/golden/headless/sprint_2_erosion/`: `pre_*` shots
+/// set `erosion: Some(ErosionParams { n_batch: 0, ..default })` to
+/// turn the ErosionOuterLoop into a noop, while `post_*` shots leave
+/// `preset_override = None` and get the locked defaults.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct PresetOverride {
+    #[serde(default)]
+    pub island_radius: Option<f32>,
+    #[serde(default)]
+    pub max_relief: Option<f32>,
+    #[serde(default)]
+    pub volcanic_center_count: Option<u32>,
+    #[serde(default)]
+    pub island_age: Option<IslandAge>,
+    #[serde(default)]
+    pub prevailing_wind_dir: Option<f32>,
+    #[serde(default)]
+    pub marine_moisture_strength: Option<f32>,
+    #[serde(default)]
+    pub sea_level: Option<f32>,
+    #[serde(default)]
+    pub erosion: Option<ErosionParams>,
+}
+
+impl PresetOverride {
+    /// Fold `self` on top of `preset`, assigning only the `Some` fields.
+    ///
+    /// `None` fields are a no-op — the existing preset value is left intact.
+    /// This is the canonical application point; call it from the executor
+    /// immediately after `data::presets::load_preset` returns.
+    pub fn apply_to(&self, preset: &mut IslandArchetypePreset) {
+        if let Some(v) = self.island_radius {
+            preset.island_radius = v;
+        }
+        if let Some(v) = self.max_relief {
+            preset.max_relief = v;
+        }
+        if let Some(v) = self.volcanic_center_count {
+            preset.volcanic_center_count = v;
+        }
+        if let Some(v) = self.island_age {
+            preset.island_age = v;
+        }
+        if let Some(v) = self.prevailing_wind_dir {
+            preset.prevailing_wind_dir = v;
+        }
+        if let Some(v) = self.marine_moisture_strength {
+            preset.marine_moisture_strength = v;
+        }
+        if let Some(v) = self.sea_level {
+            preset.sea_level = v;
+        }
+        if let Some(ref v) = self.erosion {
+            preset.erosion = v.clone();
+        }
+    }
+}
+
 /// A headless capture request, described in RON format and passed to
 /// `cargo run -p app -- --headless <request.ron>`.
 ///
@@ -25,9 +94,11 @@ use std::path::PathBuf;
 ///     ],
 /// )
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct CaptureRequest {
-    /// Schema version. Always `1` for Sprint 1C. Bump only on breaking changes.
+    /// Schema version. Sprint 1C shipped v1; Sprint 2 bumped to v2 to add
+    /// `CaptureShot.preset_override` (see DD5). v1 request files still parse
+    /// under v2 because `preset_override` is `#[serde(default)]`.
     pub schema_version: u32,
 
     /// Stable identifier for this run.
@@ -57,7 +128,7 @@ pub struct CaptureRequest {
 }
 
 /// A single capture unit: one `(seed, preset, resolution)` combination.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct CaptureShot {
     /// Unique identifier within the request; becomes the shot sub-directory name.
     pub id: String,
@@ -77,6 +148,12 @@ pub struct CaptureShot {
     /// GPU offscreen beauty capture.  `None` skips the GPU render for this shot.
     #[serde(default)]
     pub beauty: Option<BeautySpec>,
+
+    /// Sprint 2 DD5: optional overrides applied on top of the loaded preset.
+    /// `None` (v1 default) leaves the loaded preset untouched so v1 request
+    /// files produce bit-exact identical results under v2 binaries.
+    #[serde(default)]
+    pub preset_override: Option<PresetOverride>,
 }
 
 /// Specification for the deterministic CPU truth path.
@@ -136,6 +213,7 @@ mod tests {
                         overlay_stack: vec!["river_network".to_owned()],
                         resolution: (1280, 800),
                     }),
+                    preset_override: None,
                 },
                 CaptureShot {
                     id: "shot_truth_only".to_owned(),
@@ -147,6 +225,7 @@ mod tests {
                         include_metrics: false,
                     },
                     beauty: None,
+                    preset_override: None,
                 },
             ],
         }
@@ -245,6 +324,7 @@ mod tests {
                     overlay_stack: vec![],
                     resolution: (1280, 800),
                 }),
+                preset_override: None,
             }],
         }
     }
@@ -268,5 +348,223 @@ mod tests {
                 "camera preset name '{name}' must survive RON round-trip"
             );
         }
+    }
+
+    // ── Sprint 2 DD5: PresetOverride tests ──────────────────────────────────
+
+    #[test]
+    fn preset_override_none_is_v1_forward_compat() {
+        // A v1 RON document (no preset_override field) parses to
+        // preset_override == None, preserving bit-exact backward compat.
+        let ron_str = r#"(
+            schema_version: 1,
+            shots: [
+                (
+                    id: "v1_shot",
+                    seed: 7,
+                    preset: "volcanic_single",
+                    sim_resolution: 64,
+                    truth: (overlays: []),
+                ),
+            ],
+        )"#;
+        let req: CaptureRequest =
+            ron::de::from_str(ron_str).expect("v1 document must parse under v2 schema");
+        assert_eq!(
+            req.shots[0].preset_override, None,
+            "preset_override must default to None when the field is absent (v1 forward-compat)"
+        );
+    }
+
+    #[test]
+    fn preset_override_some_full_round_trips() {
+        // A CaptureShot with every PresetOverride field set must survive
+        // a RON round-trip via PartialEq (no Eq required — f32 fields).
+        let override_spec = PresetOverride {
+            island_radius: Some(0.42),
+            max_relief: Some(0.42),
+            volcanic_center_count: Some(3),
+            island_age: Some(IslandAge::Mature),
+            prevailing_wind_dir: Some(0.42),
+            marine_moisture_strength: Some(0.42),
+            sea_level: Some(0.42),
+            erosion: Some(ErosionParams {
+                n_batch: 0,
+                ..ErosionParams::default()
+            }),
+        };
+        let shot = CaptureShot {
+            id: "override_shot".to_owned(),
+            seed: 1,
+            preset: "volcanic_single".to_owned(),
+            sim_resolution: 64,
+            truth: TruthSpec {
+                overlays: vec![],
+                include_metrics: false,
+            },
+            beauty: None,
+            preset_override: Some(override_spec),
+        };
+        let ron_str = ron::ser::to_string_pretty(&shot, ron::ser::PrettyConfig::default())
+            .expect("serialization must succeed");
+        let recovered: CaptureShot =
+            ron::de::from_str(&ron_str).expect("deserialization must succeed");
+        assert_eq!(
+            shot, recovered,
+            "full PresetOverride must survive RON round-trip"
+        );
+    }
+
+    #[test]
+    fn preset_override_partial_applies_only_some_fields() {
+        // Only marine_moisture_strength is Some; every other field stays at
+        // its pre-call value when apply_to is invoked.
+        let override_spec = PresetOverride {
+            island_radius: None,
+            max_relief: None,
+            volcanic_center_count: None,
+            island_age: None,
+            prevailing_wind_dir: None,
+            marine_moisture_strength: Some(0.1),
+            sea_level: None,
+            erosion: None,
+        };
+        let mut preset = data::presets::load_preset("volcanic_single")
+            .expect("volcanic_single must be a known preset");
+        let original_island_radius = preset.island_radius;
+        let original_max_relief = preset.max_relief;
+        let original_volcanic_center_count = preset.volcanic_center_count;
+        let original_island_age = preset.island_age;
+        let original_prevailing_wind_dir = preset.prevailing_wind_dir;
+        let original_sea_level = preset.sea_level;
+        let original_erosion = preset.erosion.clone();
+
+        override_spec.apply_to(&mut preset);
+
+        assert_eq!(
+            preset.marine_moisture_strength, 0.1,
+            "marine_moisture_strength must be overridden to 0.1"
+        );
+        assert_eq!(
+            preset.island_radius, original_island_radius,
+            "island_radius must be unchanged"
+        );
+        assert_eq!(
+            preset.max_relief, original_max_relief,
+            "max_relief must be unchanged"
+        );
+        assert_eq!(
+            preset.volcanic_center_count, original_volcanic_center_count,
+            "volcanic_center_count must be unchanged"
+        );
+        assert_eq!(
+            preset.island_age, original_island_age,
+            "island_age must be unchanged"
+        );
+        assert_eq!(
+            preset.prevailing_wind_dir, original_prevailing_wind_dir,
+            "prevailing_wind_dir must be unchanged"
+        );
+        assert_eq!(
+            preset.sea_level, original_sea_level,
+            "sea_level must be unchanged"
+        );
+        assert_eq!(
+            preset.erosion, original_erosion,
+            "erosion must be unchanged"
+        );
+    }
+
+    #[test]
+    fn preset_override_erosion_folds_into_preset() {
+        // apply_to with only the erosion field set overrides n_batch and n_inner
+        // while leaving the other ErosionParams fields at their defaults.
+        let override_spec = PresetOverride {
+            island_radius: None,
+            max_relief: None,
+            volcanic_center_count: None,
+            island_age: None,
+            prevailing_wind_dir: None,
+            marine_moisture_strength: None,
+            sea_level: None,
+            erosion: Some(ErosionParams {
+                n_batch: 0,
+                n_inner: 5,
+                ..ErosionParams::default()
+            }),
+        };
+        let mut preset = data::presets::load_preset("volcanic_single")
+            .expect("volcanic_single must be a known preset");
+        override_spec.apply_to(&mut preset);
+
+        assert_eq!(preset.erosion.n_batch, 0, "n_batch must be overridden to 0");
+        assert_eq!(preset.erosion.n_inner, 5, "n_inner must be overridden to 5");
+        // The remaining erosion fields must be the ErosionParams::default() values.
+        let defaults = ErosionParams::default();
+        assert_eq!(
+            preset.erosion.spim_k, defaults.spim_k,
+            "spim_k must remain at default"
+        );
+        assert_eq!(
+            preset.erosion.spim_m, defaults.spim_m,
+            "spim_m must remain at default"
+        );
+        assert_eq!(
+            preset.erosion.spim_n, defaults.spim_n,
+            "spim_n must remain at default"
+        );
+        assert_eq!(
+            preset.erosion.hillslope_d, defaults.hillslope_d,
+            "hillslope_d must remain at default"
+        );
+        assert_eq!(
+            preset.erosion.n_diff_substep, defaults.n_diff_substep,
+            "n_diff_substep must remain at default"
+        );
+    }
+
+    #[test]
+    fn schema_v2_parses_preset_override_from_ron() {
+        // A hand-written v2 RON string with a nested preset_override must parse
+        // to the exact PresetOverride struct, including the erosion sub-struct.
+        let ron_str = r#"(
+            schema_version: 2,
+            shots: [
+                (
+                    id: "erosion_pre",
+                    seed: 42,
+                    preset: "volcanic_single",
+                    sim_resolution: 64,
+                    truth: (overlays: []),
+                    preset_override: Some((
+                        erosion: Some((
+                            n_batch: 0,
+                            n_inner: 5,
+                        )),
+                    )),
+                ),
+            ],
+        )"#;
+        let req: CaptureRequest =
+            ron::de::from_str(ron_str).expect("v2 document with preset_override must parse");
+        assert_eq!(req.schema_version, 2);
+        let override_spec = req.shots[0]
+            .preset_override
+            .as_ref()
+            .expect("preset_override must be Some");
+        let erosion = override_spec
+            .erosion
+            .as_ref()
+            .expect("erosion field must be Some");
+        assert_eq!(erosion.n_batch, 0, "n_batch must be 0");
+        assert_eq!(erosion.n_inner, 5, "n_inner must be 5");
+        // All other PresetOverride fields must be None (not present in the RON).
+        assert_eq!(override_spec.island_radius, None);
+        assert_eq!(override_spec.max_relief, None);
+        assert_eq!(override_spec.volcanic_center_count, None);
+        assert_eq!(override_spec.island_age, None);
+        assert_eq!(override_spec.prevailing_wind_dir, None);
+        assert_eq!(override_spec.marine_moisture_strength, None);
+        assert_eq!(override_spec.sea_level, None);
     }
 }

@@ -240,8 +240,14 @@ pub fn run_shot(
         .with_context(|| format!("create_shot_dirs({:?}) failed", shot.id))?;
 
     // ── Preset ───────────────────────────────────────────────────────────────
-    let preset = data::presets::load_preset(&shot.preset)
+    let mut preset = data::presets::load_preset(&shot.preset)
         .map_err(|e| ShotError::PresetNotFound(e.to_string()))?;
+
+    // DD5: fold any per-shot preset overrides on top of the loaded preset
+    // before the simulation runs. None is a no-op (v1 forward-compat).
+    if let Some(override_spec) = &shot.preset_override {
+        override_spec.apply_to(&mut preset);
+    }
 
     // ── Build world + run pipeline ──────────────────────────────────────────
     let resolution = Resolution::new(shot.sim_resolution, shot.sim_resolution);
@@ -575,6 +581,7 @@ mod tests {
                         include_metrics: true,
                     },
                     beauty: None,
+                    preset_override: None,
                 },
                 CaptureShot {
                     id: "with_beauty".into(),
@@ -590,6 +597,7 @@ mod tests {
                         overlay_stack: vec![],
                         resolution: (320, 200),
                     }),
+                    preset_override: None,
                 },
             ],
         }
@@ -655,6 +663,7 @@ mod tests {
                     include_metrics: false,
                 },
                 beauty: None,
+                preset_override: None,
             }],
         };
         let req_path = write_request(dir.path(), &req);

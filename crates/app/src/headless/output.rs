@@ -548,6 +548,7 @@ mod tests {
                 include_metrics: true,
             },
             beauty: None,
+            preset_override: None,
         }
     }
 
@@ -566,6 +567,7 @@ mod tests {
                 overlay_stack: beauty_overlays.iter().map(|s| s.to_string()).collect(),
                 resolution: (1280, 800),
             }),
+            preset_override: None,
         }
     }
 
