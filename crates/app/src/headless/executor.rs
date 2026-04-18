@@ -458,7 +458,7 @@ fn render_beauty_shot(
             });
             sky.draw(&mut rpass);
             terrain.draw(&mut rpass);
-            overlay_renderer.draw(&mut rpass, &registry);
+            overlay_renderer.draw(&mut rpass, &registry, &gpu.queue);
         })
         .map_err(|e| ShotError::GpuRuntime(format!("capture_offscreen_rgba8 failed: {e:#}")))?;
 

@@ -15,6 +15,10 @@
 //!   once per frame and both passes see the latest value.
 //! * Depth: `LessEqual` + `depth_write_enabled = false` so overlays paint on
 //!   the terrain surface without occluding each other.
+//! * Alpha is read from [`OverlayDescriptor::alpha`] every frame via
+//!   `queue.write_buffer` into the per-descriptor alpha uniform buffer.
+//!   Cost is `registry.len() × 4 bytes` per frame — negligible even at 25+
+//!   overlays. This replaces the previous hard-coded 0.6 constant.
 
 use bytemuck::{Pod, Zeroable};
 use gpu::GpuContext;
@@ -45,6 +49,10 @@ struct OverlayAlphaUniform {
 /// `Arc<Buffer>`, so every bound resource stays alive for the bind group's
 /// lifetime. This mirrors how `sky.rs` drops its local uniform buffer after
 /// `create_bind_group`.
+///
+/// The alpha buffer is kept separately in [`OverlayRenderer::alpha_bufs`] so
+/// that [`OverlayRenderer::draw`] can `write_buffer` the current
+/// `descriptor.alpha` every frame without rebuilding the bind group.
 struct OverlayBake {
     bind_group: wgpu::BindGroup,
 }
@@ -68,6 +76,11 @@ pub struct OverlayRenderer {
 
     /// Per-descriptor bake (None if the field was not populated at boot).
     entries: Vec<Option<OverlayBake>>,
+
+    /// Per-descriptor alpha uniform buffers. Parallel to `entries`; `None`
+    /// when the corresponding `entries[i]` is `None`. Written every frame
+    /// via `queue.write_buffer` with the current `descriptor.alpha`.
+    alpha_bufs: Vec<Option<wgpu::Buffer>>,
 
     /// Terrain vertex buffer — shared via `Arc` incref, no GPU copy.
     terrain_vbo: wgpu::Buffer,
@@ -296,18 +309,29 @@ impl OverlayRenderer {
         });
 
         // ── Per-descriptor bake ───────────────────────────────────────────────
-        let entries: Vec<Option<OverlayBake>> = registry
-            .all()
-            .iter()
-            .enumerate()
-            .map(|(idx, desc)| bake_descriptor(device, queue, &bgl1, desc, world, idx))
-            .collect();
+        let mut entries: Vec<Option<OverlayBake>> = Vec::with_capacity(registry.all().len());
+        let mut alpha_bufs: Vec<Option<wgpu::Buffer>> = Vec::with_capacity(registry.all().len());
+
+        for (idx, desc) in registry.all().iter().enumerate() {
+            let result = bake_descriptor(device, queue, &bgl1, desc, world, idx);
+            match result {
+                Some((bake, buf)) => {
+                    entries.push(Some(bake));
+                    alpha_bufs.push(Some(buf));
+                }
+                None => {
+                    entries.push(None);
+                    alpha_bufs.push(None);
+                }
+            }
+        }
 
         Self {
             pipeline,
             group0_bg,
             bgl1,
             entries,
+            alpha_bufs,
             // `Buffer::clone` is an `Arc` incref — no GPU copy.
             terrain_vbo: terrain_vbo.clone(),
             terrain_ibo: terrain_ibo.clone(),
@@ -329,19 +353,53 @@ impl OverlayRenderer {
     pub fn refresh(&mut self, gpu: &GpuContext, world: &WorldState, registry: &OverlayRegistry) {
         let device = &gpu.device;
         let queue = &gpu.queue;
-        self.entries = registry
-            .all()
-            .iter()
-            .enumerate()
-            .map(|(idx, desc)| bake_descriptor(device, queue, &self.bgl1, desc, world, idx))
-            .collect();
+
+        let mut new_entries: Vec<Option<OverlayBake>> = Vec::with_capacity(registry.all().len());
+        let mut new_alpha_bufs: Vec<Option<wgpu::Buffer>> =
+            Vec::with_capacity(registry.all().len());
+
+        for (idx, desc) in registry.all().iter().enumerate() {
+            match bake_descriptor(device, queue, &self.bgl1, desc, world, idx) {
+                Some((bake, buf)) => {
+                    new_entries.push(Some(bake));
+                    new_alpha_bufs.push(Some(buf));
+                }
+                None => {
+                    new_entries.push(None);
+                    new_alpha_bufs.push(None);
+                }
+            }
+        }
+
+        self.entries = new_entries;
+        self.alpha_bufs = new_alpha_bufs;
     }
 
     /// Draw all visible overlays into `rpass`.
     ///
     /// Must be called AFTER [`TerrainRenderer::draw`] in the same render pass.
     /// The view uniform is already up-to-date (written by `terrain.update_view`).
-    pub fn draw<'rp>(&'rp self, rpass: &mut wgpu::RenderPass<'rp>, registry: &OverlayRegistry) {
+    ///
+    /// Per-frame cost: `registry.len() × 4 bytes` of `write_buffer` calls to
+    /// update each descriptor's alpha uniform from `descriptor.alpha`. This is
+    /// negligible even at 25+ overlays.
+    pub fn draw<'rp>(
+        &'rp self,
+        rpass: &mut wgpu::RenderPass<'rp>,
+        registry: &OverlayRegistry,
+        queue: &wgpu::Queue,
+    ) {
+        // Update every baked descriptor's alpha uniform from its descriptor
+        // value before issuing any draw calls. Cost: registry.len() × 4 bytes.
+        for (idx, desc) in registry.all().iter().enumerate() {
+            if let Some(buf) = self.alpha_bufs[idx].as_ref() {
+                let alpha_data = OverlayAlphaUniform {
+                    alpha: [desc.alpha, 0.0, 0.0, 0.0],
+                };
+                queue.write_buffer(buf, 0, bytemuck::cast_slice(&[alpha_data]));
+            }
+        }
+
         // Set the shared state once before the per-overlay loop.
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &self.group0_bg, &[]);
@@ -363,12 +421,16 @@ impl OverlayRenderer {
 
 // ── Bake helpers ─────────────────────────────────────────────────────────────
 
-/// Build an [`OverlayBake`] for one descriptor, or return `None` if the field
-/// is not yet in `world`.
+/// Build an [`OverlayBake`] and its alpha uniform buffer for one descriptor,
+/// or return `None` if the field is not yet in `world`.
 ///
-/// `texture`, `sampler`, and `alpha_buf` are all dropped at the end of this
-/// function. The bind group keeps them alive via its internal `Arc` refs —
-/// see [`OverlayBake`] for the full chain.
+/// Returns `Some((bake, alpha_buf))` so the caller can store the buffer
+/// separately for per-frame `write_buffer` updates via `descriptor.alpha`.
+///
+/// `texture`, `sampler` are dropped at the end of this function; the bind
+/// group keeps them alive via its internal `Arc` refs. The alpha buffer is
+/// returned to the caller for per-frame writes — the bind group holds its
+/// own `Arc` ref so the buffer stays valid as long as the bind group lives.
 fn bake_descriptor(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -376,7 +438,7 @@ fn bake_descriptor(
     desc: &OverlayDescriptor,
     world: &WorldState,
     idx: usize,
-) -> Option<OverlayBake> {
+) -> Option<(OverlayBake, wgpu::Buffer)> {
     let (rgba_bytes, width, height) = crate::overlay_export::bake_overlay_to_rgba8(desc, world)?;
 
     // ── Upload texture ────────────────────────────────────────────────────────
@@ -415,9 +477,12 @@ fn bake_descriptor(
         ..Default::default()
     });
 
-    // ── Alpha uniform — Sprint 1A default: 0.6 ───────────────────────────────
+    // ── Alpha uniform — initialised from descriptor.alpha ─────────────────────
+    // The buffer is returned to the caller and written every frame via
+    // `queue.write_buffer` so that alpha slider changes take effect immediately
+    // without requiring a full `refresh`. COPY_DST usage enables write_buffer.
     let alpha_data = OverlayAlphaUniform {
-        alpha: [0.6, 0.0, 0.0, 0.0],
+        alpha: [desc.alpha, 0.0, 0.0, 0.0],
     };
     let alpha_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some(&format!("overlay_alpha_buf_{idx}")),
@@ -445,7 +510,7 @@ fn bake_descriptor(
         ],
     });
 
-    Some(OverlayBake { bind_group })
+    Some((OverlayBake { bind_group }, alpha_buf))
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

@@ -97,6 +97,9 @@ pub struct OverlayDescriptor {
     pub value_range: ValueRange,
     /// Whether this overlay is currently shown.
     pub visible: bool,
+    /// Opacity applied when blending this overlay over the terrain.
+    /// Range `[0.0, 1.0]`; default `0.6`.
+    pub alpha: f32,
 }
 
 // ─── OverlayRegistry ─────────────────────────────────────────────────────────
@@ -129,6 +132,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Grayscale,
                     value_range: ValueRange::Auto,
                     visible: false,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "final_elevation",
@@ -137,6 +141,7 @@ impl OverlayRegistry {
                     palette: PaletteId::TerrainHeight,
                     value_range: ValueRange::Auto,
                     visible: true,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "slope",
@@ -145,6 +150,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Viridis,
                     value_range: ValueRange::Auto,
                     visible: false,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "flow_accumulation",
@@ -153,6 +159,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Turbo,
                     value_range: ValueRange::LogCompressed,
                     visible: false,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "basin_partition",
@@ -161,6 +168,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Categorical,
                     value_range: ValueRange::Auto,
                     visible: false,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "river_network",
@@ -169,6 +177,7 @@ impl OverlayRegistry {
                     palette: PaletteId::BinaryBlue,
                     value_range: ValueRange::Fixed(0.0, 1.0),
                     visible: false,
+                    alpha: 0.6,
                 },
                 // ── Sprint 1B (climate + ecology + hex) ───────────────
                 OverlayDescriptor {
@@ -178,6 +187,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Viridis,
                     value_range: ValueRange::Fixed(0.0, 1.0),
                     visible: false,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "temperature",
@@ -186,6 +196,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Turbo,
                     value_range: ValueRange::Auto,
                     visible: false,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "soil_moisture",
@@ -194,6 +205,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Viridis,
                     value_range: ValueRange::Fixed(0.0, 1.0),
                     visible: false,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "dominant_biome",
@@ -202,6 +214,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Categorical,
                     value_range: ValueRange::Fixed(0.0, 7.0),
                     visible: false,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "curvature",
@@ -210,6 +223,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Turbo,
                     value_range: ValueRange::Auto,
                     visible: false,
+                    alpha: 0.6,
                 },
                 OverlayDescriptor {
                     id: "hex_aggregated",
@@ -218,6 +232,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Categorical,
                     value_range: ValueRange::Fixed(0.0, 7.0),
                     visible: false,
+                    alpha: 0.6,
                 },
                 // ── Sprint 2 (coastal geomorphology) ──────────────────
                 // String key "coast_type" confined to this file (invariant #8).
@@ -235,6 +250,7 @@ impl OverlayRegistry {
                     palette: PaletteId::CoastType,
                     value_range: ValueRange::Fixed(0.0, 4.0),
                     visible: false,
+                    alpha: 0.6,
                 },
                 // ── Sprint 2.5.B (hex slope variance) ─────────────────
                 // `ValueRange::Auto`: variance has no fixed upper bound.
@@ -245,6 +261,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Viridis,
                     value_range: ValueRange::Auto,
                     visible: false,
+                    alpha: 0.6,
                 },
                 // ── Sprint 2.5.D (hex accessibility cost) ─────────────
                 OverlayDescriptor {
@@ -254,6 +271,7 @@ impl OverlayRegistry {
                     palette: PaletteId::Viridis,
                     value_range: ValueRange::Auto,
                     visible: false,
+                    alpha: 0.6,
                 },
                 // ── hex river crossing mask ────────────────────────────
                 // Pre-rasterised Bresenham line from entry_edge midpoint to
@@ -268,6 +286,7 @@ impl OverlayRegistry {
                     palette: PaletteId::BinaryBlue,
                     value_range: ValueRange::Fixed(0.0, 1.0),
                     visible: false,
+                    alpha: 0.6,
                 },
             ],
         }
@@ -276,6 +295,15 @@ impl OverlayRegistry {
     /// Return a slice of all registered descriptors.
     pub fn all(&self) -> &[OverlayDescriptor] {
         &self.entries
+    }
+
+    /// Return a mutable iterator over all registered descriptors.
+    ///
+    /// Used by [`crate::overlay_panel::OverlayPanel`] to update per-descriptor
+    /// `visible` and `alpha` fields from the egui UI without requiring a
+    /// string-keyed setter for each property.
+    pub fn entries_mut(&mut self) -> impl Iterator<Item = &mut OverlayDescriptor> {
+        self.entries.iter_mut()
     }
 
     /// Look up a descriptor by its `id`.
@@ -411,6 +439,20 @@ mod tests {
     #[test]
     fn registry_has_16_sprint_2_5_defaults() {
         assert_eq!(OverlayRegistry::sprint_2_5_defaults().all().len(), 16);
+    }
+
+    #[test]
+    fn overlay_descriptor_alpha_default_is_0_6() {
+        let reg = OverlayRegistry::sprint_2_5_defaults();
+        // Every descriptor in sprint_2_5_defaults uses alpha = 0.6.
+        for d in reg.all() {
+            assert!(
+                (d.alpha - 0.6).abs() < f32::EPSILON,
+                "descriptor '{}' alpha must be 0.6, got {}",
+                d.id,
+                d.alpha
+            );
+        }
     }
 
     #[test]

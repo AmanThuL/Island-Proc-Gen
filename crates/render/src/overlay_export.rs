@@ -128,6 +128,7 @@ mod tests {
             palette: PaletteId::TerrainHeight,
             value_range: ValueRange::Auto,
             visible: true,
+            alpha: 0.6,
         };
 
         let (rgba, width, height) = bake_overlay_to_rgba8(&desc, &world)
@@ -168,6 +169,7 @@ mod tests {
             palette: PaletteId::BinaryBlue,
             value_range: ValueRange::Fixed(0.0, 1.0),
             visible: true,
+            alpha: 0.6,
         };
 
         let (rgba, width, height) =
@@ -202,6 +204,7 @@ mod tests {
             palette: PaletteId::TerrainHeight,
             value_range: ValueRange::Auto,
             visible: true,
+            alpha: 0.6,
         };
 
         assert!(
@@ -230,6 +233,7 @@ mod tests {
             palette: PaletteId::TerrainHeight,
             value_range: ValueRange::Auto,
             visible: true,
+            alpha: 0.6,
         };
 
         let first = bake_overlay_to_rgba8(&desc, &world).expect("z_filled is populated");

@@ -483,7 +483,8 @@ impl Runtime {
             });
             self.sky.draw(&mut rpass);
             self.terrain.draw(&mut rpass);
-            self.overlay.draw(&mut rpass, &self.overlay_registry);
+            self.overlay
+                .draw(&mut rpass, &self.overlay_registry, &self.gpu.queue);
         }
 
         // ── egui pass ─────────────────────────────────────────────────────────
