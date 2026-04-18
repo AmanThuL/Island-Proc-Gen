@@ -134,18 +134,13 @@ mod tests {
     }
 
     fn all_land_coast(w: u32, h: u32) -> CoastMask {
-        let n = (w * h) as usize;
         let mut is_land = MaskField2D::new(w, h);
-        for i in 0..n {
-            is_land.data[i] = 1;
-        }
-        let is_sea = MaskField2D::new(w, h);
-        let is_coast = MaskField2D::new(w, h);
+        is_land.data.fill(1);
         CoastMask {
             is_land,
-            is_sea,
-            is_coast,
-            land_cell_count: n as u32,
+            is_sea: MaskField2D::new(w, h),
+            is_coast: MaskField2D::new(w, h),
+            land_cell_count: w * h,
             river_mouth_mask: None,
         }
     }
@@ -239,17 +234,15 @@ mod tests {
     #[test]
     fn hillslope_leaves_coast_and_sea_unchanged() {
         let (w, h) = (8u32, 8u32);
-        let n = (w * h) as usize;
-
         let mut is_land = MaskField2D::new(w, h);
         let mut is_sea = MaskField2D::new(w, h);
         let mut is_coast = MaskField2D::new(w, h);
 
         for ix in 0..w {
             // row 0: sea
-            is_sea.data[(0 * w + ix) as usize] = 1;
+            is_sea.data[(ix) as usize] = 1;
             // row 1: coast
-            is_coast.data[(1 * w + ix) as usize] = 1;
+            is_coast.data[(w + ix) as usize] = 1;
             // rows 2..8: land
             for iy in 2..h {
                 is_land.data[(iy * w + ix) as usize] = 1;
@@ -259,7 +252,7 @@ mod tests {
             is_land,
             is_sea,
             is_coast,
-            land_cell_count: (w * (h - 2)) as u32,
+            land_cell_count: w * (h - 2),
             river_mouth_mask: None,
         };
 
@@ -297,9 +290,6 @@ mod tests {
                 "coast cell ({ix},1) must be unchanged"
             );
         }
-
-        // Avoid unused variable warning.
-        let _ = n;
     }
 
     // ─── Test 4: grid boundary cells are never written ────────────────────────
@@ -357,12 +347,16 @@ mod tests {
         );
     }
 
-    // ─── Test 7: CFL stability — 10 sequential runs stay finite ──────────────
+    // ─── Test 7: CFL stability — 10 sequential runs on a high-frequency field ─
     //
-    // 8×8 all-land; linear ramp along x from 0.0 to 1.0. Run 10 times in
-    // sequence (simulating many outer-loop iterations). Every cell must remain
-    // finite and within [-0.5, 1.5] (generous bounds; diffusion is
-    // monotone-decreasing on extrema so values actually stay in [0, 1]).
+    // 8×8 all-land; checkerboard pattern `(-1)^(x+y)` with amplitude 1.0.
+    // A checkerboard has the maximum possible Laplacian magnitude for this
+    // stencil (|lap| = 8 per cell), so it actually exercises the CFL
+    // amplification factor — a linear ramp has Laplacian 0 everywhere and
+    // therefore can't detect an unstable D. Diffusion on a checkerboard
+    // strictly shrinks the amplitude each substep (the field decays
+    // monotonically toward the mean ≈ 0). Bounds assert: finite + inside
+    // [-1.5, 1.5] after 10 runs.
     #[test]
     fn hillslope_cfl_stable_at_default_d() {
         let (w, h) = (8u32, 8u32);
@@ -371,26 +365,42 @@ mod tests {
             let f = world.authoritative.height.as_mut().unwrap();
             for iy in 0..h as usize {
                 for ix in 0..w as usize {
-                    f.data[iy * w as usize + ix] = ix as f32 / (w - 1) as f32;
+                    let sign = if (ix + iy) % 2 == 0 { 1.0 } else { -1.0 };
+                    f.data[iy * w as usize + ix] = sign;
                 }
             }
         }
+
+        // Record initial interior amplitude for a second regression: the
+        // maximum interior cell magnitude must strictly decrease across all
+        // runs (diffusion is monotone on extrema). A future D that made the
+        // scheme unstable would inflate this value instead of shrinking it.
+        let interior_max_initial: f32 = 1.0;
 
         for _ in 0..10 {
             HillslopeDiffusionStage.run(&mut world).expect("run failed");
         }
 
         let f = world.authoritative.height.as_ref().unwrap();
-        for i in 0..(w * h) as usize {
-            let v = f.data[i];
-            assert!(
-                v.is_finite(),
-                "cell {i}: height is non-finite after 10 runs: {v}"
-            );
-            assert!(
-                v >= -0.5 && v <= 1.5,
-                "cell {i}: height {v} escaped bounds [-0.5, 1.5]"
-            );
+        let mut interior_max_after: f32 = 0.0;
+        for iy in 1..(h as usize - 1) {
+            for ix in 1..(w as usize - 1) {
+                let v = f.data[iy * w as usize + ix];
+                assert!(
+                    v.is_finite(),
+                    "cell ({ix},{iy}): height is non-finite after 10 runs: {v}"
+                );
+                assert!(
+                    (-1.5..=1.5).contains(&v),
+                    "cell ({ix},{iy}): height {v} escaped bounds [-1.5, 1.5]"
+                );
+                interior_max_after = interior_max_after.max(v.abs());
+            }
         }
+        assert!(
+            interior_max_after < interior_max_initial,
+            "interior max amplitude should strictly decrease under diffusion, \
+             got {interior_max_after} >= initial {interior_max_initial}"
+        );
     }
 }
