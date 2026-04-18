@@ -32,6 +32,15 @@ pub enum ValueRange {
     /// Auto-ranged on `log(value + 1)`. Used for flow accumulation where
     /// the raw distribution spans several decades.
     LogCompressed,
+    /// Like `LogCompressed`, but the upper range is clamped to the given
+    /// percentile (e.g. `0.99` for P99) of the field distribution before
+    /// applying the log transform. Values above the clamp percentile are
+    /// mapped to `t = 1.0`. Prevents extreme outliers from washing out the
+    /// majority of the colour range into a single palette band.
+    ///
+    /// The percentile `q` must be in `(0.0, 1.0)`. Values outside this range
+    /// are clamped by the caller before use.
+    LogCompressedClampPercentile(f32),
 }
 
 impl ValueRange {
@@ -40,11 +49,16 @@ impl ValueRange {
     /// * `Auto` → returns `(field_min, field_max)` from the supplied values.
     /// * `Fixed(lo, hi)` → returns `(lo, hi)` unchanged.
     /// * `LogCompressed` → returns `(ln(1+field_min), ln(1+field_max))`.
+    /// * `LogCompressedClampPercentile(_)` → same as `LogCompressed`.
+    ///   The caller is responsible for passing an already-clamped `field_max`
+    ///   (i.e. the raw percentile value rather than the absolute maximum).
+    ///   See [`crate::overlay_export::bake_overlay_to_rgba8`] for how the
+    ///   percentile is computed and passed in.
     pub fn resolve(self, field_min: f32, field_max: f32) -> (f32, f32) {
         match self {
             ValueRange::Auto => (field_min, field_max),
             ValueRange::Fixed(lo, hi) => (lo, hi),
-            ValueRange::LogCompressed => (
+            ValueRange::LogCompressed | ValueRange::LogCompressedClampPercentile(_) => (
                 (1.0 + field_min.max(0.0)).ln(),
                 (1.0 + field_max.max(0.0)).ln(),
             ),
@@ -157,7 +171,14 @@ impl OverlayRegistry {
                     label: "Flow accumulation",
                     source: OverlaySource::ScalarDerived("accumulation"),
                     palette: PaletteId::Turbo,
-                    value_range: ValueRange::LogCompressed,
+                    // LogCompressedClampPercentile(0.99): Sprint 2.5.H audit
+                    // showed P90/max = 0.023 on volcanic_twin 128² — 90 % of
+                    // cells cluster at raw values 1–11 out of a max of 484.
+                    // Pure LogCompressed assigns the top palette band to those
+                    // outlier main-channel cells, washing out the rest. Clamping
+                    // at P99 (raw ≈ 45) compresses the scale to the 99th
+                    // percentile and maps the top 1 % of cells to t = 1.0.
+                    value_range: ValueRange::LogCompressedClampPercentile(0.99),
                     visible: false,
                     alpha: 0.6,
                 },
@@ -558,11 +579,12 @@ mod tests {
     }
 
     #[test]
-    fn flow_accumulation_uses_log_compressed() {
+    fn flow_accumulation_uses_log_compressed_clamp_percentile() {
         let reg = OverlayRegistry::sprint_2_5_defaults();
         assert_eq!(
             reg.by_id("flow_accumulation").unwrap().value_range,
-            ValueRange::LogCompressed,
+            ValueRange::LogCompressedClampPercentile(0.99),
+            "flow_accumulation must use P99-clamped log compression (Sprint 2.5.H fix)"
         );
     }
 

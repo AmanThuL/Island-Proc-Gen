@@ -37,15 +37,17 @@ pub fn bake_overlay_to_rgba8(
         ),
     };
 
-    // Per-value transform: LogCompressed works in ln(1 + max(v, 0)) space;
-    // all other ranges use identity.
+    // Per-value transform: LogCompressed / LogCompressedClampPercentile work in
+    // ln(1 + max(v, 0)) space; all other ranges use identity.
     //
-    // `ValueRange::LogCompressed::resolve()` applies the same ln transform to
-    // the min/max internally — callers pass RAW extents. The per-pixel pass
-    // here must apply the same transform to stay consistent (no double-log).
+    // `ValueRange::resolve()` applies the same ln transform to the min/max
+    // internally — callers pass RAW extents. The per-pixel pass here must apply
+    // the same transform to stay consistent (no double-log).
     let transform = |v: f32| -> f32 {
         match desc.value_range {
-            ValueRange::LogCompressed => (1.0_f32 + v.max(0.0)).ln(),
+            ValueRange::LogCompressed | ValueRange::LogCompressedClampPercentile(_) => {
+                (1.0_f32 + v.max(0.0)).ln()
+            }
             _ => v,
         }
     };
@@ -60,6 +62,24 @@ pub fn bake_overlay_to_rgba8(
         (raw_min, raw_max)
     } else {
         (0.0, 1.0)
+    };
+
+    // For `LogCompressedClampPercentile(q)`, replace `raw_max` with the
+    // q-th percentile of the raw distribution so that outlier accumulation
+    // cells don't push the entire colour palette into the top band.
+    // Values above the clamp are mapped to t = 1.0 by the subsequent clamp().
+    let raw_max = match desc.value_range {
+        ValueRange::LogCompressedClampPercentile(q) => {
+            // Sort a copy of the values to find the percentile threshold.
+            let mut sorted = values.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let n = sorted.len();
+            // Guard: q must be in (0, 1); clamp defensively.
+            let q = q.clamp(0.0, 1.0);
+            let idx = ((n as f32 * q) as usize).min(n.saturating_sub(1));
+            sorted[idx].max(raw_min)
+        }
+        _ => raw_max,
     };
 
     let (lo, hi) = desc.value_range.resolve(raw_min, raw_max);
