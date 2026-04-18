@@ -32,6 +32,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "hero_volcanic_twin_seed42",
@@ -62,6 +63,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "hero_caldera_seed42",
@@ -92,6 +94,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "hero_volcanic_single_seed123",
@@ -122,6 +125,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "hero_volcanic_twin_seed123",
@@ -152,6 +156,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "hero_caldera_seed123",
@@ -182,6 +187,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "hero_volcanic_single_seed777",
@@ -212,6 +218,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "hero_volcanic_twin_seed777",
@@ -242,6 +249,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "hero_caldera_seed777",
@@ -272,6 +280,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
     ],
 )

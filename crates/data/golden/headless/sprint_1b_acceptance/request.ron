@@ -21,6 +21,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "s40_overlay_temperature",
@@ -40,6 +41,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "s41_overlay_precipitation",
@@ -59,6 +61,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "s42_overlay_soil_moisture",
@@ -78,6 +81,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "s43_overlay_curvature",
@@ -97,6 +101,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "s44_overlay_dominant_biome",
@@ -116,6 +121,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "s45_overlay_hex_aggregated",
@@ -135,6 +141,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "s46_overlay_precip_plus_rivers",
@@ -156,6 +163,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
         (
             id: "s70_all_overlays_on",
@@ -197,6 +205,7 @@
                 ],
                 resolution: (1280, 800),
             )),
+            preset_override: None,
         ),
     ],
 )
