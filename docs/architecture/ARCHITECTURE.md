@@ -48,7 +48,7 @@ flowchart LR
     render["<b>render</b><br/><i>wgpu pipelines,<br/>palette, overlays</i>"]
     gpu["<b>gpu</b><br/><i>wgpu device,<br/>surface, depth</i>"]
     ui["<b>ui</b><br/><i>egui panels</i>"]
-    sim["<b>sim</b><br/><i>16 pipeline stages,<br/>ValidationStage</i>"]
+    sim["<b>sim</b><br/><i>18 pipeline stages,<br/>ValidationStage</i>"]
     hex["<b>hex</b><br/><i>HexGrid,<br/>aggregation</i>"]
     data["<b>data</b><br/><i>presets,<br/>golden snapshots</i>"]
     core["<b>core</b><br/><i>WorldState,<br/>field types,<br/>SimulationPipeline,<br/>validation</i>"]
@@ -141,6 +141,8 @@ classDiagram
         +Option~ScalarField2D~u32~~ dominant_biome_per_cell
         +Option~HexGrid~ hex_grid
         +Option~HexAttrs~ hex_attrs
+        +Option~ScalarField2D~u8~~ coast_type
+        +Option~ErosionBaseline~ erosion_baseline
     }
     WorldState --> AuthoritativeFields
     WorldState --> BakedSnapshot
@@ -174,7 +176,8 @@ uses the concrete aliases above.
 ## 4. Simulation pipeline
 
 The canonical pipeline is a **19-stage pipeline (18 `StageId` variants +
-terminal `ValidationStage`)** that runs 8 invariants at the tail. `StageId` in
+terminal `ValidationStage`)** that runs 11 invariants at the tail (4 Sprint
+1A + 4 Sprint 1B + 3 Sprint 2 erosion/coast). `StageId` in
 `crates/sim/src/lib.rs` is the single source of truth for pipeline
 indices — every `SimulationPipeline::run_from` caller passes
 `StageId::X as usize`, never a literal.
@@ -191,20 +194,26 @@ flowchart TB
         S5 --> S6[6&nbsp;Basins]
         S6 --> S7[7&nbsp;RiverExtraction]
     end
-    subgraph Clim["Climate + Ecology + Hex (indices 8–15)"]
+    subgraph Erosion["Sprint 2 erosion + coast (indices 8–9)"]
         direction TB
-        S8[8&nbsp;Temperature] --> S9[9&nbsp;Precipitation]
-        S9 --> S10[10&nbsp;FogLikelihood]
-        S10 --> S11[11&nbsp;Pet]
-        S11 --> S12[12&nbsp;WaterBalance]
-        S12 --> S13[13&nbsp;SoilMoisture]
-        S13 --> S14[14&nbsp;BiomeWeights]
-        S14 --> S15[15&nbsp;HexProjection]
+        S8[8&nbsp;ErosionOuterLoop<br/><i>n_batch × n_inner SPIM+diffusion,<br/>reruns Coastal..RiverExtraction</i>] --> S9[9&nbsp;CoastType]
+    end
+    subgraph Clim["Climate + Ecology + Hex (indices 10–17)"]
+        direction TB
+        S10[10&nbsp;Temperature] --> S11[11&nbsp;Precipitation]
+        S11 --> S12[12&nbsp;FogLikelihood]
+        S12 --> S13[13&nbsp;Pet]
+        S13 --> S14[14&nbsp;WaterBalance]
+        S14 --> S15[15&nbsp;SoilMoisture]
+        S15 --> S16[16&nbsp;BiomeWeights]
+        S16 --> S17[17&nbsp;HexProjection]
     end
     S7 --> S8
-    S15 --> V[ValidationStage&nbsp;tail<br/>8 invariants]
+    S9 --> S10
+    S17 --> V[ValidationStage&nbsp;tail<br/>11 invariants]
 
-    Slider([Wind slider]) -. run_from&nbsp;StageId::Precipitation .-> S9
+    Slider([Wind slider]) -. run_from&nbsp;StageId::Precipitation .-> S11
+    ErosionSlider([Erosion sliders]) -. run_from&nbsp;StageId::ErosionOuterLoop .-> S8
 ```
 
 ### `run_from` semantics
@@ -220,10 +229,17 @@ Three canonical callers:
 
 - `run_from(0)` — a fresh world or a `SaveMode::Minimal` load.
 - `run_from(StageId::Precipitation as usize)` — slider handler for
-  a climate parameter change.
+  a climate parameter change (wind direction, etc.).
+- `run_from(StageId::ErosionOuterLoop as usize)` — slider handler
+  for Sprint 2 erosion parameters (`spim_k`, `hillslope_d`,
+  `n_batch`, `n_inner`). Reruns erosion + coast_type + the full
+  climate / ecology / hex chain so downstream state tracks the
+  newly-eroded terrain.
 - `run_from(StageId::Coastal as usize)` — `SaveMode::Full` load
   rebuilds every `derived` field from `authoritative.height`
-  without re-running `TopographyStage`.
+  without re-running `TopographyStage`. Also the default frontier
+  for any in-loop `authoritative.height` mutation (`invalidate_from`
+  contract, Sprint 1D).
 
 ### Writing a new stage
 
@@ -460,8 +476,16 @@ bit-drift in the raster is the stronger signal.
   the default-wind subset of the 16-shot
   `docs/design/sprints/sprint_1b_visual_acceptance/` PNG
   archive. The 6 wind-varying shots and the panel smoke test
-  stay as manual PNGs; migrating them needs either a schema-v2
-  `preset_override` field or a different harness entirely.
+  stay as manual PNGs; migrating them needs either a Sprint 2.5
+  harness slice or the schema-v2 `preset_override` machinery
+  Sprint 2 shipped (no parity target yet).
+- `crates/data/golden/headless/sprint_2_erosion/` — 6 shots
+  (3 presets × `pre`/`post` erosion at seed 42). `pre_*` shots
+  use `schema_version: 2` `preset_override.erosion.n_batch = 0`
+  to render the pre-Sprint-2 equivalent height field; `post_*`
+  shots run the locked 10×10 outer loop. Exercises the Sprint 2
+  thesis that visible erosion (river extension + hillslope
+  smoothing) lands in the hash tier, not just the visual tier.
 
 See [`crates/data/golden/headless/README.md`](../../crates/data/golden/headless/README.md)
 for the author workflow (regenerate / validate / prune PNGs).

@@ -26,6 +26,7 @@ harness locally.
 |---|---|---|
 | `sprint_1a_baseline/` | 9 | 3 presets × 3 golden seeds × Hero camera. Matrix locked by Sprint 1C Task 1C.9. Seeds `[42, 123, 777]` match `crates/data/golden/snapshots/` so the numeric and visual regressions share one set of pairs. |
 | `sprint_1b_acceptance/` | 9 | Migration of the default-wind subset of the 16-shot `docs/design/sprints/sprint_1b_visual_acceptance/` PNG archive. |
+| `sprint_2_erosion/` | 6 | Sprint 2 DD6 before/after erosion pairs: 3 presets × 2 (pre/post erosion) at seed 42, 128² resolution. `pre_*` shots use `schema_v2 preset_override.erosion.n_batch = 0` to make `ErosionOuterLoop` a noop; `post_*` shots run the locked 10×10 outer loop. Locked by Sprint 2 Task 2.6. |
 
 ## Regenerating a baseline (author workflow)
 

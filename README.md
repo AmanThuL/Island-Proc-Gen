@@ -30,8 +30,10 @@ and deterministic regression: `cargo run -p app -- --headless <request.ron>`
 writes an artifact tree of overlay PNGs + `SummaryMetrics` + a top-level
 `summary.ron`; `--headless-validate <run> --against <expected>` diffs two
 summaries by blake3 hash and exits with `0` / `2` / `3` for pass / pipeline-
-regression / tool-error. Two checked-in baselines live at
-`crates/data/golden/headless/{sprint_1a_baseline,sprint_1b_acceptance}/`.
+regression / tool-error. Three checked-in baselines live at
+`crates/data/golden/headless/{sprint_1a_baseline,sprint_1b_acceptance,sprint_2_erosion}/`
+(the last one carries Sprint 2's before/after erosion pairs via `schema_v2`
+`preset_override`).
 
 Nothing is stabilised yet: preset parameters, field semantics, save-file
 format, and the visual package all remain fluid. The project has no binary
@@ -68,12 +70,12 @@ Controls in the app window:
 
 | Crate | Role |
 |---|---|
-| `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`, `validation` (8 invariants), `FLOW_DIR_SINK` / `D8_OFFSETS` / neighborhood constants, `BiomeType` / `BiomeWeights`. Must compile without any graphics crate. |
-| `crates/sim` | 19-stage canonical pipeline (18 `StageId` variants: geomorph + hydro + climate + ecology + erosion + hex projection; + terminal `ValidationStage`). `StageId` enum locks pipeline indices for `SimulationPipeline::run_from`. |
+| `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`, `validation` (11 invariants after Sprint 2), `FLOW_DIR_SINK` / `D8_OFFSETS` / neighborhood constants, `BiomeType` / `BiomeWeights`, `CoastType`, `ErosionBaseline`. Must compile without any graphics crate. |
+| `crates/sim` | 19-stage canonical pipeline (18 `StageId` variants: geomorph + hydro + `ErosionOuterLoop` + `CoastType` + climate + ecology + hex projection; + terminal `ValidationStage`). `StageId` enum locks pipeline indices for `SimulationPipeline::run_from`. |
 | `crates/hex` | `HexGrid` + axis-aligned box tessellation (v1 simplification; a future pass can refit to true hexagonal Voronoi). |
-| `crates/data` | Built-in presets (`volcanic_single`, `volcanic_twin`, `caldera`), golden-seed snapshots, `SummaryMetrics` regression tiers. |
+| `crates/data` | Built-in presets (`volcanic_single`, `volcanic_twin`, `caldera`), golden-seed snapshots, `SummaryMetrics` regression tiers (1A core + 1B climate/ecology + Sprint 2 erosion/coast-type fields). |
 | `crates/gpu` | `wgpu` device/surface management, depth attachment. |
-| `crates/render` | Descriptor-based `OverlayRegistry` (12 overlays), `TerrainRenderer`, `OverlayRenderer`, `SkyRenderer`, canonical palette, camera-preset LUT math. All `&'static str` field-key dispatch confined to `overlay.rs`. |
+| `crates/render` | Descriptor-based `OverlayRegistry` (13 overlays after Sprint 2 adds `coast_type`), `TerrainRenderer`, `OverlayRenderer`, `SkyRenderer`, canonical palette (incl. `PaletteId::CoastType`), camera-preset LUT math. All `&'static str` field-key dispatch confined to `overlay.rs`. |
 | `crates/ui` | `egui` panels — overlay toggles, camera controls, preset params (with wind-direction slider), stats. |
 | `crates/app` | `winit` event loop, orbit camera, preset loading, save/load Path wrapper, slider → `run_from` wiring, and the `--headless` / `--headless-validate` harness (capture request parsing, CPU truth bake, GPU offscreen beauty, summary diff). |
 

@@ -32,7 +32,7 @@ artifacts. See `CLAUDE.local.md` for the full consent-gate list.
 | [`docs/design/island_generation_complete_roadmap.md`](docs/design/island_generation_complete_roadmap.md) | Authoritative roadmap and architectural rules |
 | [`docs/design/sprints/sprint_N_*.md`](docs/design/sprints/) | The active sprint's implementation plan and §6 acceptance checklist |
 | [`docs/papers/README.md`](docs/papers/README.md) | Paper knowledge base layering (A Core Pack / B Sprint Packs / C Case Studies / D Parking Lot) |
-| [`crates/data/golden/headless/README.md`](crates/data/golden/headless/README.md) | Sprint 1C `--headless-validate` baselines (1A 9-shot + 1B 9-shot) |
+| [`crates/data/golden/headless/README.md`](crates/data/golden/headless/README.md) | `--headless-validate` baselines (1A 9-shot + 1B 9-shot + Sprint 2 erosion 6-shot) |
 
 **Read the active sprint doc before touching code for that sprint.** The
 sprint's §6 acceptance checklist and §7 risks/invariants are the done-definition
@@ -71,12 +71,17 @@ Shell scripts `case $?` this directly; AI agents `match` on
 code or read `summary.ron.overall_status` — don't assume success just
 because the command returned.**
 
-Two checked-in baselines live under `crates/data/golden/headless/`:
+Three checked-in baselines live under `crates/data/golden/headless/`:
 - `sprint_1a_baseline/` — 3 presets × 3 golden seeds × Hero camera = 9 shots
 - `sprint_1b_acceptance/` — migration of the default-wind subset of the
-  Sprint 1B 16-shot visual acceptance (9 shots; wind-varying shots stay as
-  manual PNGs in `docs/design/sprints/sprint_1b_visual_acceptance/` because
-  the v1 `CaptureRequest` schema has no `preset_override` field)
+  Sprint 1B 16-shot visual acceptance (9 shots). The wind-varying shots
+  remain as manual PNGs in `docs/design/sprints/sprint_1b_visual_acceptance/`;
+  Sprint 2.5 is the natural slot to migrate them (schema-v2 `preset_override`
+  from Sprint 2 now unblocks it, but the Sprint 2.5 scope hasn't absorbed
+  them yet).
+- `sprint_2_erosion/` — 3 presets × pre/post erosion at seed 42 = 6 shots.
+  `pre_*` uses `preset_override.erosion.n_batch = 0` → `ErosionOuterLoop`
+  noop; `post_*` runs the locked 10×10 outer loop. Sprint 2 Task 2.6.
 
 ---
 
@@ -329,6 +334,81 @@ app ──▶ render ──▶ gpu ──┐
   `cargo run -p app -- --headless <baseline>/request.ron`
   produces them in place. Delete before `git add -A` or use the
   one-liner in `crates/data/golden/headless/README.md`.
+- **`authoritative.height` is mutable from Sprint 2 onward.** Sprint
+  1A / 1B wrote it once at `TopographyStage` and treated it as
+  read-only thereafter; Sprint 2's `StreamPowerIncisionStage` +
+  `HillslopeDiffusionStage` (called inside `ErosionOuterLoop`)
+  rewrite it in place every inner iteration. When you mutate
+  `authoritative.height` from ANY code path, follow the default
+  invalidation protocol: `invalidate_from(world, StageId::Coastal)`
+  before re-running downstream, because height mutation may cross
+  the sea_level threshold and make `coast_mask` stale.
+- **`derived.erosion_baseline` is sticky across slider reruns.**
+  `ErosionOuterLoop::run` snapshots `{max_height_pre,
+  land_cell_count_pre}` on its first invocation (gated by
+  `is_none()`). Slider-triggered reruns via
+  `run_from(StageId::ErosionOuterLoop)` do NOT re-snapshot — the
+  baseline stays the pre-first-erosion reference so
+  `erosion_no_explosion` / `erosion_no_excessive_sea_crossing`
+  compare against the true pre-erosion state, not a
+  moving-post-erosion state. `invalidate_from(Topography)` is the
+  only legitimate reset; the `ErosionOuterLoop` arm of
+  `clear_stage_outputs` is intentionally a noop so
+  `invalidate_from(Coastal)` mid-batch can't clobber the baseline.
+- **SPIM `K` is grid-size-dependent. `K=1.5e-3` is the locked
+  default.** Sprint 2.6 empirical Pareto probe showed `K=2e-3`
+  passes on 128² but fails synthetic 64² tests (volcanic_single
+  sea-crossing tips to 5.09 %, above the 5 % invariant). Any K
+  bump must verify on ALL grid sizes used by the test suite
+  (64² / 128² / 256²) before landing. Sprint doc DD1's "~18 %
+  max_z drop" projection is physically incompatible with the
+  `erosion_no_excessive_sea_crossing` 5 % invariant under uniform
+  SPIM: reaching 18 % peak drop (A≈1, S≈0.01) requires K ≈ 0.18,
+  which scales coastal erosion ~180× and shatters the invariant
+  by orders of magnitude. Larger peak erosion is a Sprint 3
+  sediment-aware (`K·g(hs)`) problem, not a K-tuning problem.
+- **CoastType thresholds tuned from spec's v1 values.** Sprint 2.6
+  observed that at the safe K calibration, max coastal slope
+  rarely exceeds 0.07 on the three stock presets, so the spec's
+  v1 `S_CLIFF_HIGH=0.30` / `S_CLIFF_MID=0.18` / `S_BEACH_LOW=0.05`
+  / `EXPOSURE_HIGH=0.30` put 100 % of cells in the Beach bin. The
+  locked constants in `crates/sim/src/geomorph/coast_type.rs` are
+  now `0.07 / 0.04 / 0.02 / 0.05`, which populates Beach + Rocky +
+  Estuary but still gives 0 Cliffs across all three presets. Cliff
+  bins lighting up is a Sprint 3 terrain-geometry problem (or a
+  coast_type v2 classifier with fetch-integral wave exposure).
+- **`Runtime` uses `sim::default_pipeline()`; no local pipeline
+  builders in `app` or `ui`.** Sprint 1A / 1B had a hand-rolled
+  `build_sprint_1b_pipeline()` in `crates/app/src/runtime.rs` that
+  silently drifted out of lockstep with `StageId` when Sprint 2.3 /
+  2.4 inserted two new variants — every slider run_from resolved
+  to the wrong stage. `sim::default_pipeline()` is the single
+  source of truth; if you need a pipeline variant for a specific
+  test (e.g. non-eroding for bit-exact invalidation round-trips),
+  define it `#[cfg(test)]` inside `crates/sim/` next to the test
+  that needs it, not in a downstream crate.
+- **`OverlayRegistry::sprint_2_defaults()` returns 13 descriptors
+  (1B 12 + Sprint 2's `coast_type`).** Do NOT add
+  `sprint_Na_defaults()` alias methods per sprint — CLAUDE.md
+  forbids backwards-compat shims. When a new sprint adds an
+  overlay, rename `sprint_N_defaults` to the latest sprint's
+  number and update every call site in the same commit.
+- **`coast_type` overlay normalises via `ValueRange::Fixed(0.0,
+  4.0)`, not `(0.0, 3.0)`.** With `Fixed(0.0, 3.0)` the
+  RockyHeadland discriminant (3) would map to `t = 1.0`,
+  `idx = 4`, out of range → transparent — silently hiding the
+  majority of coast cells. `Fixed(0.0, 4.0)` gives `t = disc/4`
+  and `idx = disc` exactly for 0..=3; the 0xFF Unknown sentinel
+  clamps to `idx = 4` → transparent as intended. Regression
+  guards in `crates/render/src/palette.rs` tests lock this.
+- **`RunSummary.schema_version` mirrors the input
+  `CaptureRequest.schema_version`, not the tool version.** v1
+  request files (Sprint 1C baselines) running under a Sprint 2+
+  v2 binary produce v1-stamped summaries that match the
+  checked-in baseline summary — the v1 baselines continue to
+  `--headless-validate` exit 0 under v2 and beyond. Do NOT stamp
+  a "current tool version" into `RunSummary.schema_version`; that
+  breaks the forward-compat contract.
 
 ---
 

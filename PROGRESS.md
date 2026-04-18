@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-18 (Sprint 1D close-out + Sprint 2 / 2.5 plans authored)
+**Last Updated:** 2026-04-18 (Sprint 2 shipped; two §10 acceptance residuals flagged for Sprint 3)
 
 ---
 
@@ -21,90 +21,159 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 1D — Pre-Sprint-2 Cleanup & Erosion Prep.
-**Closed on `dev` 2026-04-18.** Three atomic commits (5cef5c7 →
-[this commit]). Scoped cleanup before Sprint 2 starts rewriting
-`authoritative.height`: (1) `sim::invalidate_from(world, StageId)`
-free function giving erosion outer-loops an explicit "erase cache
-→ rerun" two-step, (2) doc drift audit (Sprint 1D.1) synced tracked files to
-the canonical "19-stage pipeline (18 StageId variants +
-terminal ValidationStage)" wording per Sprint 2.3/2.4, (3) `ErosionOuterLoop` design
-memo locked at scheme B (internal-iteration `SimulationStage`),
-(4) `crates/core` → `crates/ipg-core` rename **deferred** with
-re-visit triggers (see DEFERRED below).
+**Primary:** Sprint 2 — Geomorph Credibility. **Closed on `dev`
+2026-04-18** modulo two §10 acceptance residuals explicitly handed
+off to Sprint 3 (see below). 21 atomic commits (8145b38 → ab7d5b5)
+across the 11 Sprint 2 tasks (2.0–2.10) plus the retroactive
+simplifier + `superpowers:code-reviewer` audit chain per
+CLAUDE.local.md cadence. Three Critical bugs surfaced by that chain
+and fixed before close-out:
 
-**335 tests passing, 5 ignored** across 9 crates (+8 from Sprint
-1C's 327 baseline — 8 new invalidation tests). Ignored set
-unchanged (2 GPU-requiring headless-context tests + 3 GPU-
-requiring executor tests; all 5 pass locally on the Apple M4 Pro
-/ Metal baseline acceptance host). `cargo fmt --check && cargo
-clippy --workspace -- -D warnings && cargo test --workspace` is
-the hard CI gate, all green. Sprint 1A + 1B `--headless` baselines
-still exit 0 on `--headless-validate --against`, confirming no
-pipeline regression from the 1D.2 helper.
+1. **CoastType overlay transparent** — `ValueRange::Fixed(0.0, 3.0)`
+   mapped discriminant 3 (RockyHeadland, ~50 % of coast cells) to
+   idx 4 → transparent. Fixed to `Fixed(0.0, 4.0)` + 3 palette
+   regression tests.
+2. **Runtime pipeline drift** — `crates/app/src/runtime.rs` kept a
+   local `build_sprint_1b_pipeline()` that didn't track StageId
+   shifts from 2.3 / 2.4, so every slider `run_from` silently hit
+   the wrong stage (wind_dir → PetStage, erosion sliders →
+   TemperatureStage). Swapped for `sim::default_pipeline()`;
+   downstream crates now have zero local pipeline builders.
+3. **`RunSummary.schema_version` hardcoded** — broke the Sprint 1C
+   v1 baselines' forward-compat contract under v2 binaries. Now
+   mirrors `CaptureRequest.schema_version`.
 
-**Sprint 1D §4 acceptance status:**
+**385 tests passing, 5 ignored** across 9 crates (+50 from Sprint
+1D's 335 baseline). `cargo fmt --check && cargo clippy --workspace
+-- -D warnings && cargo test --workspace` is the hard CI gate, all
+green. All three `--headless` baselines (`sprint_1a_baseline/`,
+`sprint_1b_acceptance/`, `sprint_2_erosion/`) self-validate exit 0
+under the v2 binary.
 
-Functional:
-- ✓ **Task 1D.1** — doc drift audit on tracked files (README,
-  ARCHITECTURE, CLAUDE, sim rustdoc). 9 fixes landed; re-grep
-  confirms all pipeline-order claims synced to the canonical
-  "19-stage pipeline (18 StageId variants + terminal
-  ValidationStage)" wording per Sprint 2.3/2.4. Sprint docs under `docs/design/`
-  (gitignored Obsidian symlink) handled out-of-band.
-- ✓ **Task 1D.2** — `sim::invalidate_from(world, StageId)`
-  free function (NOT on `WorldState::impl` — that would force
-  `core → sim`, violating CLAUDE.md invariant #1). Clears all
-  `derived.*` / `baked.*` fields produced by stages at or after
-  `from`; does NOT touch `authoritative.*` / `seed` / `preset` /
-  `resolution`; does NOT call the pipeline. Default frontier for
-  `authoritative.height` mutation is `StageId::Coastal` — height
-  changes may cross the sea-level threshold, invalidating
-  `coast_mask`. 8 new tests including frontier-parameterized
-  bit-exact equivalence across 6 StageId variants (Coastal,
-  PitFill, DerivedGeomorph, Precipitation, BiomeWeights,
-  HexProjection).
-- ✓ **Task 1D.3** — `ErosionOuterLoop` design memo locked at
-  **scheme B** (single `StageId::ErosionOuterLoop` variant whose
-  `run` holds stage references for `Coastal..RiverExtraction` and
-  loops internally). Pseudo-code + rationale + per-iteration
-  invalidation frontier contract all inlined in the sprint plan
-  (`docs/design/sprints/sprint_1d_pre_sprint_2_cleanup.md` §3
-  Task 1D.3). Enum position (post-`RiverExtraction` vs post-
-  `DerivedGeomorph`) deferred to Sprint 2 Task 1 based on what
-  stream-power actually reads.
-- ~ **Task 1D.4** — `crates/core` → `crates/ipg-core` rename
-  **deferred** per user decision; re-visit triggers recorded in
-  DEFERRED below. Alias + `doctest = false` workaround stays.
+**Sprint 2 §10 acceptance status:**
 
-Architectural invariants:
-- ✓ `cargo tree -p core` still clean of wgpu / winit / egui / png /
-  image / tempfile / naga / sim (invariant #1). `invalidate_from`
-  living in `sim` preserves the DAG.
-- ✓ `WorldState` 3-layer structure unchanged (invariant #3).
-  `invalidate_from` operates only on `derived` and `baked`;
-  `authoritative` is world truth, not cache.
-- ✓ `ScalarField2D<T>` + 2 aliases unchanged (invariant #6).
-- ✓ Overlay descriptor system unchanged (invariants #7 / #8).
-- ✓ StageId enum + `default_pipeline` lockstep maintained;
-  `clear_stage_outputs` adds a new lockstep arm per StageId
-  variant, mechanically enforced by exhaustive `match`.
-- ✓ All 8 architectural invariants green.
+- ✓ SPIM + hillslope + `ErosionOuterLoop` (scheme B) + CoastType
+  + schema v2 + `preset_override` + erosion sliders + 3 new
+  invariants + 4 new `SummaryMetrics` fields + sprint_2 paper pack
+  + 19-stage doc sync — all §10 items green.
+- ✗ **"max_z 下降 10–30 %"** across 3 presets: measured
+  0.19 % / 1.54 % / 1.52 % at the safe K=1.5e-3 calibration. The
+  18 % projection was physically incompatible with the
+  `erosion_no_excessive_sea_crossing` 5 % invariant under uniform
+  SPIM (see Sprint 2 residual #1 below and the CLAUDE.md SPIM
+  calibration gotcha). Deferred to Sprint 3 sediment-aware
+  `K·g(hs)` modulation.
+- ✗ **CoastType "每 type 5 % 占比"** per preset × hero shot: at the
+  safe K, max coastal slope rarely exceeds 0.07, so Cliff stays at
+  0 % across all 3 presets even after threshold tuning. Estuary
+  ~2-3 % is bounded by actual river-mouth count (physical limit).
+  Beach + RockyHeadland both > 25 %. Deferred to Sprint 3
+  sediment-aware terrain (sharper cliffs form naturally) or a
+  coast_type v2 classifier with fetch-integral wave exposure.
+
+Both residuals have explicit Sprint 3 anchor points — they are
+natural fits for the next sprint's work, not Sprint 2 blockers.
 
 **Next session priorities** (see [QUICK REFERENCE](#quick-reference)):
-1. Sprint 2 — geomorph credibility. `StreamPowerIncisionStage` on
-   `authoritative.height`; per-iteration reset via
-   `sim::invalidate_from(&mut world, StageId::Coastal)` +
-   `pipeline.run_from(&mut world, StageId::Coastal as usize)` (or
-   the `ErosionOuterLoop` scheme B equivalent holding its own
-   stage refs). Use `--headless` for before/after captures rather
-   than manual window sessions.
-2. Sprint 1B paper pack (low-energy: Bruijnzeel 2005/2011, Chen
-   2023 Budyko, Core Pack #2/#3/#5/#6/#8 落地点 sections).
+1. **Sprint 2.5** — Hex UX slice + absorbed 1A/1B/2 tail items
+   (3 new archetypes, 16-shot 1B baseline migration, basin
+   partition refinement post-erosion, biome tuning, T2/T3 UI
+   polish). Doc: `docs/design/sprints/sprint_2_5_hex_ux_and_tail.md`.
+2. **Sprint 1B paper pack** (low-energy): Bruijnzeel 2005 / 2011,
+   Chen 2023 Budyko, Core Pack #2/#3/#5/#6/#8 落地点 sections.
 
 ---
 
 ## RECENTLY SHIPPED
+
+### Sprint 2 — Geomorph Credibility (2026-04-18, 21 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_2_geomorph_credibility.md`](docs/design/sprints/sprint_2_geomorph_credibility.md) (Obsidian symlink, gitignored)
+**Test delta:** 335 → 385 passing (+50 net across all 11 tasks + retroactive follow-ups), 5 ignored unchanged.
+
+Sprint 2 opens up `authoritative.height` for iterative rewrite for
+the first time (Sprint 1A/1B treated it as write-once). SPIM stream-
+power incision + hillslope diffusion alternate inside an
+`ErosionOuterLoop` composite stage for `n_batch × n_inner = 10 × 10`
+iterations, with end-of-batch cache invalidation + re-routing of the
+Coastal..RiverExtraction chain. A `CoastType` classifier produces
+per-coast-cell categorical output, and `CaptureRequest` bumped to
+schema v2 with `preset_override` for scripted pre/post erosion
+compares.
+
+| Commit | Task | What shipped |
+|---|---|---|
+| `8145b38` | 2.1 | `ErosionParams` nested preset field + `StreamPowerIncisionStage` (SPIM `Ef = K · A^m · S^n` with locked `(0.35, 1.0)` per KP17). Clamp at sea_level; non-finite → 0.0. +8 tests. |
+| `9cb0920` | 2.10 | `docs/papers/sprint_packs/sprint_2.md` + KP17 substantive write-up + 4 companion note stubs + 2 parking-lot metadata entries (Braun 2023, Yuan 2019). |
+| `7621c1f` | 2.2 | `HillslopeDiffusionStage` — explicit Euler 5-point Laplacian, `n_diff_substep` sub-steps per call, skip sea + coast + grid boundary. Double-buffer swap, no per-substep allocation. +7 tests. |
+| `a4ab31f` | 2.5 | `CaptureRequest` schema v2 + `PresetOverride::apply_to`. `Eq` dropped from `CaptureRequest` / `CaptureShot` (f32 path via override). v1 RON files continue to parse under v2 binary. +5 tests. |
+| `b97a51d` | 2.3 | `ErosionOuterLoop` scheme B at `StageId::ErosionOuterLoop = 8`. `core::world::ErosionBaseline` + `derived.erosion_baseline` sticky-snapshot. 1B variants shifted to 9..=16; `STAGE_COUNT = 17`. `non_eroding_pipeline()` test helper + `non_eroding_index` for bit-exact invalidation round-trips. `invalidate_plus_run_from_equals_fresh_run_at` rewired. +4 tests. |
+| `a0bb7d5` | 2.4+2.8 | `CoastType` enum + `CoastTypeStage` at `StageId::CoastType = 9`. 1B variants shifted to 10..=17; `STAGE_COUNT = 18`. `PaletteId::CoastType` + `COAST_TYPE_TABLE`. `OverlayRegistry::sprint_2_defaults()` = 13 descriptors. Alias methods `sprint_1a_defaults` / `sprint_1b_defaults` removed per CLAUDE.md. +12 tests. |
+| `159af24` | 2.7 | `ParamsPanel` 4 erosion sliders (Tier A live `spim_k` / `hillslope_d`; Tier B on-release `n_batch` / `n_inner`). Runtime handler mirrors Sprint 1B wind_dir pattern: sync preset → `invalidate_from(ErosionOuterLoop)` → `run_from(ErosionOuterLoop)` → overlay refresh. |
+| `f4a55b3` | 2.0 | Doc-drift audit: README / ARCHITECTURE / CLAUDE / sim rustdoc / PROGRESS synced 17-stage → 19-stage wording. Historical RECENTLY SHIPPED table rows preserved per §9. |
+| `d4002b6` | 2.9 | `coast_type_well_formed`, `erosion_no_explosion`, `erosion_no_excessive_sea_crossing` — 3 new pipeline-tail invariants. Skip-if-missing semantics preserve 1A/1B-only pipeline behaviour. Constants `EROSION_MAX_GROWTH_FACTOR = 1.05`, `EROSION_MAX_SEA_CROSSING_FRACTION = 0.05`. `full_sprint_2_pipeline_passes_all_11_invariants` integration test. +9 tests. |
+| `cfd80ee` — `75acf22` | 2.1–2.7 audit follow-ups | 6 `refactor:` / `fix:` commits from the retroactive simplifier + code-reviewer chain. Caught 3 Critical (CoastType transparency, Runtime pipeline drift, schema_version hardcoding) + 7 Important + polish items. See CURRENT FOCUS above. |
+| `f5cb6e1` | 2.6 | 3 golden-seed snapshots regenerated for post-erosion state. |
+| `f2eef1b` | 2.6 | `crates/data/golden/headless/sprint_2_erosion/` first shipped — 6 shots at seed 42 (3 presets × pre/post). |
+| `ba02975` — `f62c8c7` | 2.6A | 4 new `SummaryMetrics` fields (`erosion_relief_drop_fraction`, `coast_type_counts[4]`, `erosion_sea_crossing_count`, `coast_type_blake3`) + cascade regen of all 3 baselines. |
+| `6f3f4ba` — `ab7d5b5` | 2.6B | K calibration tune 1e-3 → 1.5e-3 (grid-size-safe empirical ceiling) + CoastType threshold tune 0.30/0.18/0.05/0.30 → 0.07/0.04/0.02/0.05 + cascade regen of all 3 baselines. |
+
+**Sprint 2 plan key decisions (locked):**
+- **SPIM `(m, n) = (0.35, 1.0)`** per KP17 safety margin (stays well
+  away from `m/n = 0.5` pathological regime). Not tunable via
+  preset because `n ≠ 1` requires implicit solver (Sprint 4).
+- **`K = 1.5e-3`** as the locked v1 default (bumped from Sprint 2.1's
+  initial 1e-3 after empirical Pareto probe). `K = 2e-3` is unsafe
+  on 64² grids (sea-crossing tips to 5.09 %); `K = 3e-3` is unsafe
+  on 128² caldera (5.19 %). Any future bump must verify on ALL
+  grid sizes in the test suite.
+- **`ErosionOuterLoop` scheme B** (single variant, internal
+  iteration, holds stage refs for the Coastal..RiverExtraction
+  re-run chain) per Sprint 1D 1D.3 memo. α-position (between
+  RiverExtraction and Temperature) so 1B climate/ecology
+  automatically reads post-erosion state.
+- **`derived.erosion_baseline` is sticky** across slider reruns —
+  only `invalidate_from(Topography)` clears it, so
+  `erosion_no_explosion` / `erosion_no_excessive_sea_crossing`
+  always compare against the true pre-erosion state.
+- **CoastType v1 cheap proxies** (slope + river_mouth +
+  shoreline_normal·wind exposure + island_age). v1 threshold
+  values `0.07/0.04/0.02/0.05` are the post-2.6B tune; spec's
+  initial `0.30/0.18/0.05/0.30` fired 0 % Cliffs because coastal
+  slopes rarely exceed 0.07 at safe K. Cliff bin still at 0 %;
+  Beach + RockyHeadland ≥ 25 % each; Estuary bounded by actual
+  river-mouth count.
+- **`CaptureRequest` schema v2** adds `preset_override` as an
+  optional (`#[serde(default)]`) field, keeping v1 request files
+  parse-compatible. `RunSummary.schema_version` mirrors the input
+  version so v1 baselines continue to exit 0 under v2 binary.
+- **Runtime uses `sim::default_pipeline()`** only; no local
+  pipeline builders allowed in `app` / `ui` (Sprint 2.7 audit
+  finding — the local `build_sprint_1b_pipeline()` had silently
+  drifted out of lockstep with StageId since 2.3 / 2.4).
+
+**Acceptance gap residuals deferred to Sprint 3** (see DEFERRED):
+
+1. §10 clause "max_z 下降 10–30 %" — measured 0.19 / 1.54 / 1.52 %
+   at K=1.5e-3. Physically incompatible with the 5 %
+   sea-crossing invariant under uniform SPIM; larger peak erosion
+   is a sediment-aware `K·g(hs)` problem (Sprint 3) or an
+   elevation-band-weighted K (out of scope for v1).
+2. §11 open #3 "CoastType 每 type 5 %" — Cliff at 0 % across all
+   3 presets because no coastal cell has "slope > 0.07 AND
+   windward exposure" simultaneously. Natural fix in Sprint 3
+   (sharper cliffs form with sediment-aware erosion) or a
+   coast_type v2 classifier with fetch-integral wave exposure.
+
+**Invariants preserved:** `cargo tree -p core` still clean (no
+`sim` / graphics deps); `WorldState` 3-layer structure unchanged
+(new fields land in `derived` only); `ScalarField2D<T>` + aliases
+unchanged; descriptor-based overlay system preserved; string keys
+still confined to `render/src/overlay.rs`; all 8 architectural
+invariants green. 11 pipeline-tail invariants now fire at
+`ValidationStage`.
+
+---
 
 ### Sprint 1D — Pre-Sprint-2 Cleanup & Erosion Prep (2026-04-18, 3 commits on `dev`)
 
@@ -265,57 +334,67 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
 
 ## DEFERRED TO LATER SPRINTS
 
-**From Sprint 1A (still pending):**
+**From Sprint 2 close-out (new — 2026-04-18):**
 
-- **Sprint 2 — flow accumulation overlay log-compression audit**
-  (Shot 13 washout). Sprint 2's stream-power erosion work is the
-  right place to exercise the accumulation distribution and validate
-  the LogCompressed bake parameters.
-- **Sprint 2 — Blue noise dither A/B visual validation** (Shots 30,
-  31). Sub-LSB amplitude is below screenshot-inspection threshold;
-  Sprint 2 will touch terrain shading and can ship a shader
-  feature-flag for cheap A/B diff.
-
-**From Sprint 1B close-out:**
-
-- **Sprint 1B-tail T2/T3** from sprint doc §11 — UI polish items
-  explicitly **not** part of the §10 close-out checklist:
-  - **T2 — Per-descriptor alpha slider** for the 12 overlays. Alpha
-    stays at the Sprint 1A hardcoded `0.6` for now.
-  - **T3 — Blue noise runtime size toggle** (64 / 128 / 256). The
-    other two PNGs sit in `assets/noise/` but nothing loads them.
-- **Sprint 1B wind-varying shots (50–53, 60–61)** — the 6 shots
-  (wind=0°/90°/180°/270° precipitation + wind=0°/180° soil moisture)
-  that need `preset_override` fields in the `CaptureRequest` schema
-  to migrate into a checked-in headless baseline. Pending schema v2
-  in Sprint 2. The pipeline-level regression guard
+- **§10 "max_z 下降 10–30 %"** across 3 presets. Measured
+  0.19 / 1.54 / 1.52 % at the safe K=1.5e-3 calibration (close to
+  the 5 % sea-crossing ceiling on caldera). Spec DD1's 18 %
+  projection was physically incompatible with the
+  `erosion_no_excessive_sea_crossing` invariant under uniform SPIM:
+  reaching 18 % peak drop requires K ≈ 0.18 (180× default), which
+  scales coastal erosion proportionally and shatters the invariant.
+  **Sprint 3 anchor point:** sediment-aware `Ef = K · A^m · S^n ·
+  g(hs)` with `g(hs) = exp(-hs/H*)` damps coastal erosion where
+  sediment pools (alluvial fans / valley floors), unlocking larger
+  peak K without breaking the invariant. Chen 2014 §4 is the
+  reference.
+- **§11 open #3 CoastType "每 type 5 % 占比"** per preset × hero
+  shot. Cliff bin at 0 % across all 3 presets after 2.6B tune to
+  `S_CLIFF_HIGH=0.07 / EXPOSURE_HIGH=0.05`. Root cause: coastal
+  slopes rarely exceed 0.07 because Sprint 2 erosion is too gentle
+  to carve steep windward faces. Estuary bounded by actual
+  river-mouth count (~3-5 per preset, physical limit). **Sprint 3
+  anchor points:** (a) sediment-aware erosion creates sharper
+  coastal cliffs naturally; (b) coast_type v2 classifier with
+  fetch-integral wave exposure (16-direction wave fetch, not a
+  single shoreline_normal dot-product) per sprint doc §11 open #2.
+- **1A tail — flow accumulation overlay log-compression audit.**
+  Deferred from Sprint 1A, not picked up in Sprint 2. Natural fit
+  for Sprint 2.5 when reviewing the wider overlay set now that the
+  erosion / coast_type work has shifted the accumulation
+  distribution.
+- **1A tail — Blue noise dither A/B visual validation.** Sub-LSB
+  amplitude still below screenshot threshold; Sprint 2's shading
+  work didn't exercise it. Defer to a future sprint that touches
+  the shader feature-flag plumbing.
+- **1B 16-shot visual acceptance full migration.** Schema v2
+  `preset_override` (shipped in 2.5) now unblocks the 6
+  wind-varying shots + panel smoke test (7 total). Sprint 2.5 is
+  the natural slot. The pipeline-level guard
   `sim::validation_stage::tests::wind_dir_rerun_propagates_through_biome_chain`
-  already locks the wind-propagation contract mechanically, so these
-  are visual-artifact captures only — no correctness risk from the
-  deferral.
-- **Sprint 2 — biome suitability parameter tuning** (previously
-  framed as "BareRockLava / DryShrub / CoastalScrub / LowlandForest
-  tuning"). The current v1 parameters collapse `volcanic_single`
-  onto Grassland + BareRockLava + RiparianVegetation (3 biomes,
-  passes §10 acceptance but leaves 5 biomes at 0 % coverage). The
-  Sprint 1B visual acceptance surfaced a second symptom of the same
-  v1-tight-parameter problem: only ~3 % of land cells flip biome
-  argmax under a 180° wind swing at 256² (measured 2026-04-17 via
-  the new regression test). Tuning directions: widen σ on
-  LowlandForest / MontaneWetForest / Grassland moisture bells so
-  argmax boundaries sit closer to typical soil_moisture values,
-  OR raise `CONDENSATION_RATE` / `RAIN_SHADOW_K` in
-  `sim::climate::precipitation` so the wind-driven moisture swing
-  reaches more cells. Task 1B.9 shipped the slider scaffold; per-
-  biome tunables are not exposed yet.
+  still locks the wind-propagation contract mechanically, so the
+  deferral is visual-artifact-only.
+- **1B tail — biome suitability parameter tuning.** `volcanic_single`
+  still collapses to 3 biomes. Task 1B.9 shipped the slider hooks;
+  per-biome tunables are not exposed yet. Natural fit for Sprint
+  2.5 tail absorption.
+- **1B tail — T2/T3 UI polish** (per-descriptor alpha slider for
+  the 13 overlays; blue-noise runtime size toggle 64/128/256).
+  Sprint 2.5 tail.
+
+**From Sprint 1B close-out (still pending):**
+
 - **Sprint 1B paper pack** — `docs/papers/sprint_packs/sprint_1b.md`
   Bruijnzeel 2005 / 2011 notes, Chen 2023 Budyko writeup, and Core
   Pack #2/#3/#5/#6/#8 "Sprint 1B 落地点" sections. Non-blocking per
   §7; tackle in a low-energy session.
-- **Slider cadence measurement.** Re-run cost is 8 stages at 256² ≈
-  100 ms theoretical, well under the 200 ms target. The 2026-04-17
-  visual acceptance session felt responsive in practice; no
-  profiling numbers captured yet.
+- **Slider cadence measurement.** Re-run cost at 256² is now larger
+  than Sprint 1B's estimate (ErosionOuterLoop adds 10×10 inner
+  iterations per re-run). The 2026-04-18 acceptance session felt
+  responsive at default n_batch/n_inner in practice; no profiling
+  numbers captured yet. Sprint 2.5 is the natural slot to measure
+  + decide whether Tier A / Tier B erosion-slider throttling (§5)
+  needs tightening.
 
 **From Sprint 1D close-out:**
 
@@ -750,16 +829,16 @@ Delivered:
 
 ## UPCOMING SPRINTS
 
-Sprints 1A, 1B, and 1C are shipped. Upcoming work starts at Sprint 2.
-Per-sprint plan docs are now written **one at a time** after the previous
-sprint closes — the roadmap carries the forward-looking vision for
-Sprints 2–5 until each sprint's doc gets authored.
+Sprints 1A, 1B, 1C, 1D, and 2 are shipped. Upcoming work starts at
+Sprint 2.5. Per-sprint plan docs are written **one at a time** after
+the previous sprint closes — the roadmap carries the forward-looking
+vision until each sprint's doc gets authored.
 
 | Sprint | Focus | Source of truth |
 |---|---|---|
-| 2 | Geomorph credibility: SPIM (`m=0.35, n=1`), hillslope diffusion, coupled `10×10` outer loop, Coast v1, Riparian biome, 3 new archetypes, `CaptureRequest` schema v2 + absorbed 1A/1B tail (log-compression audit, dither A/B, biome param tuning, T2/T3 UI polish) | Roadmap §Sprint 2 |
-| 3 | Sediment v1 + SPACE-inspired dual-equation erosion, LFPM v3 precipitation, cloud-forest inversion, Coast v2 (fetch + LavaDelta) | Roadmap §Sprint 3 |
-| 4 | `crates/gpu/` + `ComputeBackend` refactor, 5 GPU passes, CLI productization (`island-gen`), parity framework | Roadmap §Sprint 4 |
+| 2.5 | Hex UX slice (3 views toggle, projection error overlay, river crossing debug, `accessibility_cost` prototype) + absorbed 1A/1B/2 tail items (biome param tuning, T2/T3 UI polish, 1B 16-shot full migration, basin partition refinement post-erosion, 3 new archetypes) | [`sprint_2_5_hex_ux_and_tail.md`](docs/design/sprints/sprint_2_5_hex_ux_and_tail.md) (Obsidian symlink, gitignored) |
+| 3 | Sediment v1 + SPACE-inspired dual-equation erosion with `K·g(hs)` modulation (unlocks Sprint 2's deferred "max_z drop 10-30 %" + CoastType Cliff bin), LFPM v3 precipitation, cloud-forest inversion, Coast v2 (fetch integral + LavaDelta) | Roadmap §Sprint 3 |
+| 4 | `crates/gpu/` + `ComputeBackend` refactor, 5 GPU passes, CLI productization (`island-gen`), parity framework, implicit SPIM (Braun 2023) | Roadmap §Sprint 4 |
 | 5 | Four subsystems: S1 Hex, S2 Semantic (rule-based + WFC stretch), S3 Web (trunk, curated subset), S4 Demo/Article/Gallery | Roadmap §Sprint 5 |
 
 ---
@@ -772,36 +851,40 @@ Nothing paused.
 
 ## QUICK REFERENCE
 
-**High energy?** → Start Sprint 2 — geomorph credibility. The
-Sprint 1B pipeline's `precipitation`, `accumulation`, `slope`, and
-`z_filled` are exactly the four fields Sprint 2's stream-power
-incision stage reads, so the first task is a new
-`sim::geomorph::StreamPowerIncisionStage` that mutates
-`authoritative.height` via an explicit Euler step. Touches
-`crates/sim/src/geomorph/` and adds a 9th `StageId` ordinal after
-`RiverExtraction`. Sprint 1C's `--headless` harness means erosion
-before/after comparisons can be driven entirely by request files
-rather than manual window sessions. Sprint 2 doc:
-`docs/design/sprints/sprint_2_geomorph_credibility.md`.
-**Medium energy?** → Sprint 1B-tail T2/T3 polish items (alpha
-slider per overlay, blue-noise size toggle). Or sit with the
-running app and measure actual `run_from` + `refresh` wall-clock
-in `Runtime::tick` — the 2026-04-17 acceptance session felt
-responsive but no ms numbers were captured. Compare to the 200 ms
-§10 target.
-**Low energy?** → Sprint 1B paper pack (Sprint 1C was pure
-engineering; no paper pack). Create
-`docs/papers/sprint_packs/sprint_1b.md` per sprint doc §7: Bruijnzeel
-2005 / 2011 TMCF notes, Chen 2023 Budyko readthrough, and Core Pack
-#2/#3/#5/#6/#8 "Sprint 1B 落地点" sections pointing back at DD2 / DD4
-/ DD6 anchor points. Also fill the Sprint 1A Chen 2014 / Génevaux
-2013 deep reads still outstanding at `docs/papers/core_pack/`.
+**High energy?** → Start Sprint 2.5. The Hex UX slice gives the
+clearest visible payoff — `HexOnly` / `HexOverlay` / `Continuous`
+view toggle + the `coast_type` and `dominant_biome` overlays both
+gain a hex-tile render path. The `preset_override` schema v2 from
+Sprint 2 now unblocks migrating the 6 wind-varying shots of the
+1B 16-shot visual acceptance into `crates/data/golden/headless/`,
+and the 3 new archetypes (`volcanic_caldera_young`,
+`volcanic_twin_old`, `volcanic_eroded_ridge`) exercise the Sprint
+2 erosion system on more varied terrain than the existing 3
+stock presets. Sprint 2.5 doc:
+`docs/design/sprints/sprint_2_5_hex_ux_and_tail.md`.
+
+**Medium energy?** → Sprint 1B / 2 tail UI polish: T2
+per-descriptor alpha slider for the 13 overlays, T3 blue-noise
+runtime size toggle. Or a biome suitability tuning pass to unlock
+more than 3 biomes on `volcanic_single` (Task 1B.9 has the slider
+hooks). Or measure `run_from(ErosionOuterLoop)` wall-clock under
+the Sprint 2 erosion sliders — the 2026-04-18 acceptance felt
+responsive but no ms numbers captured.
+
+**Low energy?** → Sprint 1B paper pack. Create
+`docs/papers/sprint_packs/sprint_1b.md` per sprint doc §7:
+Bruijnzeel 2005 / 2011 TMCF notes, Chen 2023 Budyko readthrough,
+and Core Pack #2/#3/#5/#6/#8 "Sprint 1B 落地点" sections pointing
+back at DD2 / DD4 / DD6 anchor points. Also fill the Sprint 1A
+Chen 2014 / Génevaux 2013 deep reads still outstanding at
+`docs/papers/core_pack/`.
+
 **Quick win?** → Tune `suitability.rs` parameters so more than 3
 biomes appear in `volcanic_single`. Current output collapses onto
 Grassland / BareRockLava / Riparian. Widen the σ on LowlandForest
-and MontaneWetForest bells, or lower the `soil_moisture` thresholds
-— Task 1B.9 added the slider hooks; the `--headless` harness now
-makes parameter sweeps scriptable without opening a window.
+and MontaneWetForest bells, or lower the `soil_moisture`
+thresholds. Task 1B.9 added the slider hooks; the `--headless`
+harness now makes parameter sweeps scriptable.
 
 ---
 
