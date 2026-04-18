@@ -689,13 +689,16 @@ Delivered:
 ## UPCOMING SPRINTS
 
 Sprints 1A, 1B, and 1C are shipped. Upcoming work starts at Sprint 2.
+Per-sprint plan docs are now written **one at a time** after the previous
+sprint closes — the roadmap carries the forward-looking vision for
+Sprints 2–5 until each sprint's doc gets authored.
 
-| Sprint | Focus | Plan doc |
+| Sprint | Focus | Source of truth |
 |---|---|---|
-| 2 | Geomorphology credibility (SPIM tuning, golden seed snapshots, reference metrics) | `docs/design/sprints/sprint_2_geomorph_credibility.md` |
-| 3 | Sediment + advanced climate (SPACE-style coupled water/sediment) | `docs/design/sprints/sprint_3_sediment_advanced_climate.md` |
-| 4 | GPU compute shaders + CLI headless batch + PNG gallery export | `docs/design/sprints/sprint_4_gpu_compute.md` |
-| 5 | Hex aggregation finalization + semantic web (wasm) export | `docs/design/sprints/sprint_5_hex_semantic_web.md` |
+| 2 | Geomorph credibility: SPIM (`m=0.35, n=1`), hillslope diffusion, coupled `10×10` outer loop, Coast v1, Riparian biome, 3 new archetypes, `CaptureRequest` schema v2 + absorbed 1A/1B tail (log-compression audit, dither A/B, biome param tuning, T2/T3 UI polish) | Roadmap §Sprint 2 |
+| 3 | Sediment v1 + SPACE-inspired dual-equation erosion, LFPM v3 precipitation, cloud-forest inversion, Coast v2 (fetch + LavaDelta) | Roadmap §Sprint 3 |
+| 4 | `crates/gpu/` + `ComputeBackend` refactor, 5 GPU passes, CLI productization (`island-gen`), parity framework | Roadmap §Sprint 4 |
+| 5 | Four subsystems: S1 Hex, S2 Semantic (rule-based + WFC stretch), S3 Web (trunk, curated subset), S4 Demo/Article/Gallery | Roadmap §Sprint 5 |
 
 ---
 
