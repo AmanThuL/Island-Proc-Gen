@@ -173,8 +173,8 @@ uses the concrete aliases above.
 
 ## 4. Simulation pipeline
 
-The canonical pipeline is 16 real stages plus a tail
-`ValidationStage` that runs 8 invariants. `StageId` in
+The canonical pipeline is a **17-stage pipeline (16 `StageId` variants +
+terminal `ValidationStage`)** that runs 8 invariants at the tail. `StageId` in
 `crates/sim/src/lib.rs` is the single source of truth for pipeline
 indices — every `SimulationPipeline::run_from` caller passes
 `StageId::X as usize`, never a literal.
@@ -238,8 +238,8 @@ Three canonical callers:
    `baked`, or `derived`) and add the field inside that struct
    in `core::world`.
 3. Add a new variant to `StageId`; update `stage_id_indices_are_dense_and_canonical`.
-4. Push the stage in the pipeline builder in `crates/app/src/runtime.rs`
-   at the right index.
+4. Push the stage in the pipeline builder `sim::default_pipeline()` in
+   `crates/sim/src/lib.rs` at the right index.
 5. If the new stage produces a validation-checkable output, add
    an invariant to `core::validation` and wire it into
    `sim::ValidationStage`.
@@ -271,7 +271,7 @@ sequenceDiagram
     alt slider moved
         R->>R: world.preset = self.preset.clone()
         R->>P: run_from(StageId::X)
-        P->>P: re-run stages [X..15] + ValidationStage
+        P->>P: re-run stages [X..=15] + ValidationStage
         R->>O: refresh(gpu, world, registry)
         O->>G: re-upload affected overlay textures
     end
@@ -528,7 +528,7 @@ Island-Proc-Gen/
 │       └── hero.png           # README preview
 ├── crates/
 │   ├── core/                  # field types, WorldState, pipeline trait, validation
-│   ├── sim/                   # 16 canonical stages + tail ValidationStage
+│   ├── sim/                   # 17-stage canonical pipeline (16 StageId variants + terminal ValidationStage)
 │   │   ├── geomorph/
 │   │   ├── hydro/
 │   │   ├── climate/

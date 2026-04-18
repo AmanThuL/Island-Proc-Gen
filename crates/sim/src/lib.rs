@@ -39,8 +39,9 @@ use island_core::pipeline::SimulationPipeline;
 
 /// Build the canonical Sprint 1A + Sprint 1B [`SimulationPipeline`].
 ///
-/// Push order is identical to [`StageId`]'s discriminant order; the tail
-/// [`ValidationStage`] runs after the 16 "real" stages.
+/// Push order is identical to [`StageId`]'s discriminant order, forming the
+/// 17-stage canonical pipeline (16 [`StageId`] variants + terminal
+/// [`ValidationStage`]).
 ///
 /// Both the interactive runtime ([`app::runtime::Runtime`]), the golden-seed
 /// regression tests, and the Sprint 1C headless executor build from this
@@ -85,8 +86,9 @@ pub fn default_pipeline() -> SimulationPipeline {
 
 // ─── StageId ──────────────────────────────────────────────────────────────────
 
-/// Symbolic identifier for every stage in the canonical linear pipeline.
+/// Symbolic identifier for every stage in the 17-stage canonical pipeline.
 ///
+/// There are exactly **16 variants** (`Topography = 0` … `HexProjection = 15`).
 /// The discriminant is the stage's index in the `run()` push order, so
 /// `pipeline.run_from(world, StageId::Precipitation as usize)` is the
 /// correct call for a slider that touches `PrecipitationStage`. Any
@@ -95,8 +97,8 @@ pub fn default_pipeline() -> SimulationPipeline {
 /// the single source of truth for stage indices.
 ///
 /// `ValidationStage` is intentionally **not** a `StageId` variant: it is
-/// a tail hook that runs invariants after the "real" pipeline finishes,
-/// not a stage that any slider should ever target with `run_from`.
+/// the terminal tail hook that runs invariants after the 16 `StageId` stages
+/// finish, and is never a `run_from` target.
 #[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StageId {

@@ -317,8 +317,8 @@ app ──▶ render ──▶ gpu ──┐
   `InternalErrorKind::Other` carries `#[serde(other)]` so
   Sprint 4's new kinds parse cleanly on a 1C binary.
 - **`sim::default_pipeline()`** is the single source of truth for
-  the 17-stage canonical pipeline (16 real + `ValidationStage`
-  tail). Both `crates/data/tests/golden_seed_regression.rs` and
+  the 17-stage canonical pipeline (16 `StageId` variants + terminal
+  `ValidationStage`). Both `crates/data/tests/golden_seed_regression.rs` and
   `app::headless::executor` consume it. If you add a stage,
   update `default_pipeline` and bump the `StageId` enum in
   lockstep (the `stage_id_indices_are_dense_and_canonical` test

@@ -16,10 +16,11 @@ is stable.
 
 ## Status
 
-A 16-stage canonical simulation pipeline runs at app startup, populating
-continuous 2D fields for terrain height, slope, flow routing, drainage basins,
-rivers, temperature, precipitation, fog, potential evapotranspiration, soil
-moisture, biome weights, and hex aggregation on a 256×256 grid. Twelve live
+A 17-stage canonical simulation pipeline (16 `StageId` variants + terminal
+`ValidationStage`) runs at app startup, populating continuous 2D fields for
+terrain height, slope, flow routing, drainage basins, rivers, temperature,
+precipitation, fog, potential evapotranspiration, soil moisture, biome weights,
+and hex aggregation on a 256×256 grid. Twelve live
 overlays toggle in the egui panel; a wind-direction slider re-runs the
 climate-ecology chain end-to-end and refreshes overlay textures on the same
 frame. `cargo run -p app` opens a working window on macOS / Metal.
@@ -68,7 +69,7 @@ Controls in the app window:
 | Crate | Role |
 |---|---|
 | `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`, `validation` (8 invariants), `FLOW_DIR_SINK` / `D8_OFFSETS` / neighborhood constants, `BiomeType` / `BiomeWeights`. Must compile without any graphics crate. |
-| `crates/sim` | 16 canonical pipeline stages (geomorph + hydro + climate + ecology + hex projection) plus a tail `ValidationStage`. `StageId` enum locks pipeline indices for `SimulationPipeline::run_from`. |
+| `crates/sim` | 17-stage canonical pipeline (16 `StageId` variants: geomorph + hydro + climate + ecology + hex projection; + terminal `ValidationStage`). `StageId` enum locks pipeline indices for `SimulationPipeline::run_from`. |
 | `crates/hex` | `HexGrid` + axis-aligned box tessellation (v1 simplification; a future pass can refit to true hexagonal Voronoi). |
 | `crates/data` | Built-in presets (`volcanic_single`, `volcanic_twin`, `caldera`), golden-seed snapshots, `SummaryMetrics` regression tiers. |
 | `crates/gpu` | `wgpu` device/surface management, depth attachment. |
