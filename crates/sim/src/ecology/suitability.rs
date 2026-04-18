@@ -38,44 +38,46 @@ pub struct EnvSample {
 // ── suitability kernels (see DD6 §256 for the shape rationale) ────────────────
 
 pub fn coastal_scrub(env: EnvSample) -> f32 {
-    let f_z = bell(env.z_norm, 0.03, 0.05);
-    let f_coast = smoothstep(0.3, 0.9, env.coast_proximity);
-    let f_dry = smoothstep(0.15, 0.55, 1.0 - env.soil_moisture);
+    let f_z = bell(env.z_norm, 0.05, 0.08);
+    let f_coast = smoothstep(0.15, 0.80, env.coast_proximity);
+    let f_dry = smoothstep(0.10, 0.50, 1.0 - env.soil_moisture);
     f_z * f_coast * f_dry
 }
 
 pub fn lowland_forest(env: EnvSample) -> f32 {
-    let f_t = bell(env.temperature_c, 24.0, 4.0);
-    let f_theta = smoothstep(0.35, 0.75, env.soil_moisture);
-    let f_z = bell(env.z_norm, 0.15, 0.12);
+    let f_t = bell(env.temperature_c, 24.0, 6.0);
+    let f_theta = smoothstep(0.20, 0.60, env.soil_moisture);
+    let f_z = bell(env.z_norm, 0.15, 0.15);
     f_t * f_theta * f_z
 }
 
 pub fn montane_wet_forest(env: EnvSample) -> f32 {
     let f_t = bell(env.temperature_c, 18.0, 4.0);
-    let f_theta = smoothstep(0.5, 0.9, env.soil_moisture);
-    let f_z = bell(env.z_norm, 0.4, 0.15);
+    let f_theta = smoothstep(0.25, 0.65, env.soil_moisture);
+    let f_z = bell(env.z_norm, 0.4, 0.17);
     f_t * f_theta * f_z
 }
 
 pub fn cloud_forest(env: EnvSample) -> f32 {
     let f_t = bell(env.temperature_c, 15.0, 4.0);
-    let f_theta = smoothstep(0.6, 0.95, env.soil_moisture);
-    let f_z = bell(env.z_norm, 0.55, 0.18);
-    let f_fog = smoothstep(0.4, 0.95, env.fog_likelihood);
+    let f_theta = smoothstep(0.30, 0.75, env.soil_moisture);
+    // z-bell is intentionally tighter than montane_wet_forest (0.15 vs 0.17)
+    // to keep the two biomes from overlapping in elevation space.
+    let f_z = bell(env.z_norm, 0.60, 0.15);
+    let f_fog = smoothstep(0.20, 0.60, env.fog_likelihood);
     f_t * f_theta * f_z * f_fog
 }
 
 pub fn dry_shrub(env: EnvSample) -> f32 {
-    let f_z = bell(env.z_norm, 0.1, 0.1);
-    let f_dry = smoothstep(0.4, 0.9, 1.0 - env.soil_moisture);
+    let f_z = bell(env.z_norm, 0.15, 0.18);
+    let f_dry = smoothstep(0.35, 0.85, 1.0 - env.soil_moisture);
     let f_warm = smoothstep(18.0, 24.0, env.temperature_c);
     f_z * f_dry * f_warm
 }
 
 pub fn grassland(env: EnvSample) -> f32 {
     let f_z = bell(env.z_norm, 0.3, 0.15);
-    let f_mid = bell(env.soil_moisture, 0.45, 0.2);
+    let f_mid = bell(env.soil_moisture, 0.40, 0.15);
     let f_warm = smoothstep(10.0, 22.0, env.temperature_c);
     f_z * f_mid * f_warm
 }

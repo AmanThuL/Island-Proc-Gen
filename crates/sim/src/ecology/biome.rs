@@ -427,4 +427,82 @@ mod tests {
             seen
         );
     }
+
+    /// Regression guard for Task 2.5.Ja: biome diversity on volcanic_single.
+    ///
+    /// Runs the full Sprint 2 canonical pipeline on the real
+    /// `volcanic_single`-equivalent preset at 128² seed 42 and asserts
+    /// that at least 5 distinct biomes each achieve ≥ 3 % coverage of
+    /// land cells as argmax dominant biome.
+    ///
+    /// Runs at 128² rather than the spec's 256² so the test stays fast; the
+    /// 3 % bar still reflects the spec acceptance. If this test fails, the
+    /// suitability curves have regressed toward the pre-2.5.Ja state where
+    /// `volcanic_single` collapsed to only 3 dominant biomes.
+    #[test]
+    fn volcanic_single_biome_diversity_at_least_5_at_3pct() {
+        use island_core::preset::{IslandAge, IslandArchetypePreset};
+
+        let preset = IslandArchetypePreset {
+            name: "volcanic_single".into(),
+            island_radius: 0.55,
+            max_relief: 0.85,
+            volcanic_center_count: 1,
+            island_age: IslandAge::Young,
+            prevailing_wind_dir: std::f32::consts::FRAC_PI_2,
+            marine_moisture_strength: 0.75,
+            sea_level: 0.30,
+            erosion: Default::default(),
+        };
+
+        let mut world = WorldState::new(Seed(42), preset, Resolution::new(128, 128));
+        let pipeline = crate::default_pipeline();
+        pipeline
+            .run(&mut world)
+            .expect("Sprint 2 pipeline must succeed on volcanic_single");
+
+        let bw = world
+            .baked
+            .biome_weights
+            .as_ref()
+            .expect("biome_weights must be populated after full pipeline");
+        let coast = world
+            .derived
+            .coast_mask
+            .as_ref()
+            .expect("coast_mask must be populated");
+
+        let mut counts = [0_u32; BiomeType::COUNT];
+        let mut land_n = 0_u32;
+        for iy in 0..bw.height {
+            for ix in 0..bw.width {
+                if coast.is_land.get(ix, iy) != 1 {
+                    continue;
+                }
+                land_n += 1;
+                counts[bw.dominant_biome_at(ix, iy) as usize] += 1;
+            }
+        }
+
+        let threshold_pct = 3.0_f32;
+        let qualifying: Vec<(BiomeType, f32)> = BiomeType::ALL
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &b)| {
+                let pct = counts[i] as f32 * 100.0 / land_n.max(1) as f32;
+                if pct >= threshold_pct {
+                    Some((b, pct))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert!(
+            qualifying.len() >= 5,
+            "expected ≥ 5 biomes with ≥ {threshold_pct} % coverage on \
+             volcanic_single 128² seed 42, got {} biomes: {qualifying:?}",
+            qualifying.len(),
+        );
+    }
 }
