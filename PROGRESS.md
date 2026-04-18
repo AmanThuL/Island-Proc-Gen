@@ -21,70 +21,111 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 1C — Headless Validation & Offscreen Capture.
-**Closed on `dev` 2026-04-17.** 10 atomic commits (ab0828c →
-dc70e18). `cargo run -p app -- --headless <req>` and
-`cargo run -p app -- --headless-validate <dir> --against <dir>`
-are both live on macOS Metal. Determinism verified via AD5 hash
-comparison; AD8 GPU-bootstrap fallback tested via
-`IPG_FORCE_HEADLESS_GPU_FAIL`; AD10 baseline-acceptance host is
-Apple Silicon + macOS Metal (portability to other hosts follows
-the AD8 soft-fail path).
+**Primary:** Sprint 1D — Pre-Sprint-2 Cleanup & Erosion Prep.
+**Closed on `dev` 2026-04-18.** Three atomic commits (5cef5c7 →
+[this commit]). Scoped cleanup before Sprint 2 starts rewriting
+`authoritative.height`: (1) `sim::invalidate_from(world, StageId)`
+free function giving erosion outer-loops an explicit "erase cache
+→ rerun" two-step, (2) doc drift audit syncing tracked files to
+the canonical "17-stage canonical pipeline (16 StageId variants +
+terminal ValidationStage)" wording, (3) `ErosionOuterLoop` design
+memo locked at scheme B (internal-iteration `SimulationStage`),
+(4) `crates/core` → `crates/ipg-core` rename **deferred** with
+re-visit triggers (see DEFERRED below).
 
-**327 tests passing, 5 ignored** across 8 crates (+57 from Sprint
-1B's 270 baseline). Ignored: 2 GPU-requiring headless-context tests
-+ 3 GPU-requiring executor tests; all 5 pass locally on the Apple
-M4 Pro / Metal baseline acceptance host. `cargo fmt --check &&
-cargo clippy --workspace -- -D warnings && cargo test --workspace`
-is the hard CI gate, all green.
+**335 tests passing, 5 ignored** across 9 crates (+8 from Sprint
+1C's 327 baseline — 8 new invalidation tests). Ignored set
+unchanged (2 GPU-requiring headless-context tests + 3 GPU-
+requiring executor tests; all 5 pass locally on the Apple M4 Pro
+/ Metal baseline acceptance host). `cargo fmt --check && cargo
+clippy --workspace -- -D warnings && cargo test --workspace` is
+the hard CI gate, all green. Sprint 1A + 1B `--headless` baselines
+still exit 0 on `--headless-validate --against`, confirming no
+pipeline regression from the 1D.2 helper.
 
-**Sprint 1C §6 acceptance checklist status:**
+**Sprint 1D §4 acceptance status:**
 
 Functional:
-- ✓ `--headless <req.ron>` runs full pipeline + bakes requested
-  overlays + writes `summary.ron` + PNGs to `RunLayout` output dir
-- ✓ `--headless-validate <run> --against <expected>` performs AD5
-  three-step diff (shape → truth hash → beauty artifact-only) and
-  exits with the AD9 code (0 pass / 2 truth-fail / 3 internal-error)
-- ✓ Determinism: same request on same host produces identical
-  overlay hashes across runs
-- ✓ AD8 GPU-bootstrap fallback tested via env hook; `summary.ron`
-  written on every code path including mid-shot `InternalError`
-- ✓ Baseline sets checked in at `crates/data/golden/headless/`:
-  `sprint_1a_baseline/` (9 shots — 3 presets × 3 seeds × Hero) and
-  `sprint_1b_acceptance/` (9 shots — default-wind subset of the
-  Sprint 1B visual acceptance INDEX). PNGs not committed
-  (`.gitignore` guards `**/*.png` under that tree).
-- ✓ CI workflow adds non-blocking (`continue-on-error: true`) steps
-  that run `--headless` + `--headless-validate` against both
-  baselines on `macos-latest`
+- ✓ **Task 1D.1** — doc drift audit on tracked files (README,
+  ARCHITECTURE, CLAUDE, sim rustdoc). 9 fixes landed; re-grep
+  confirms all pipeline-order claims synced to the canonical
+  "17-stage canonical pipeline (16 StageId variants + terminal
+  ValidationStage)" wording. Sprint docs under `docs/design/`
+  (gitignored Obsidian symlink) handled out-of-band.
+- ✓ **Task 1D.2** — `sim::invalidate_from(world, StageId)`
+  free function (NOT on `WorldState::impl` — that would force
+  `core → sim`, violating CLAUDE.md invariant #1). Clears all
+  `derived.*` / `baked.*` fields produced by stages at or after
+  `from`; does NOT touch `authoritative.*` / `seed` / `preset` /
+  `resolution`; does NOT call the pipeline. Default frontier for
+  `authoritative.height` mutation is `StageId::Coastal` — height
+  changes may cross the sea-level threshold, invalidating
+  `coast_mask`. 8 new tests including frontier-parameterized
+  bit-exact equivalence across 6 StageId variants (Coastal,
+  PitFill, DerivedGeomorph, Precipitation, BiomeWeights,
+  HexProjection).
+- ✓ **Task 1D.3** — `ErosionOuterLoop` design memo locked at
+  **scheme B** (single `StageId::ErosionOuterLoop` variant whose
+  `run` holds stage references for `Coastal..RiverExtraction` and
+  loops internally). Pseudo-code + rationale + per-iteration
+  invalidation frontier contract all inlined in the sprint plan
+  (`docs/design/sprints/sprint_1d_pre_sprint_2_cleanup.md` §3
+  Task 1D.3). Enum position (post-`RiverExtraction` vs post-
+  `DerivedGeomorph`) deferred to Sprint 2 Task 1 based on what
+  stream-power actually reads.
+- ~ **Task 1D.4** — `crates/core` → `crates/ipg-core` rename
+  **deferred** per user decision; re-visit triggers recorded in
+  DEFERRED below. Alias + `doctest = false` workaround stays.
 
 Architectural invariants:
 - ✓ `cargo tree -p core` still clean of wgpu / winit / egui / png /
-  image / tempfile / naga (invariant #1)
-- ✓ Descriptors-not-closures preserved — `bake_overlay_to_rgba8`
-  takes `&OverlayDescriptor` (invariant #7)
-- ✓ String keys still confined to `render/src/overlay.rs`
-  (invariant #8)
-- ✓ `SaveMode` + `core::save` untouched — `CaptureRequest` harness
-  and save-codec are separate code paths per §0.5
-- ✓ All 8 architectural invariants green
-
-Deferred from §6 scope:
-- 7 of 16 Sprint 1B visual shots (wind-varying: 50–53, 60–61; plus
-  1 preset variant) stay as manual PNGs pending `preset_override`
-  schema v2 in Sprint 2 (see DEFERRED below)
+  image / tempfile / naga / sim (invariant #1). `invalidate_from`
+  living in `sim` preserves the DAG.
+- ✓ `WorldState` 3-layer structure unchanged (invariant #3).
+  `invalidate_from` operates only on `derived` and `baked`;
+  `authoritative` is world truth, not cache.
+- ✓ `ScalarField2D<T>` + 2 aliases unchanged (invariant #6).
+- ✓ Overlay descriptor system unchanged (invariants #7 / #8).
+- ✓ StageId enum + `default_pipeline` lockstep maintained;
+  `clear_stage_outputs` adds a new lockstep arm per StageId
+  variant, mechanically enforced by exhaustive `match`.
+- ✓ All 8 architectural invariants green.
 
 **Next session priorities** (see [QUICK REFERENCE](#quick-reference)):
-1. Sprint 2 — geomorph credibility. `StreamPowerIncisionStage`
-   on `authoritative.height`; use `--headless` for erosion
-   before/after capture instead of manual window sessions.
+1. Sprint 2 — geomorph credibility. `StreamPowerIncisionStage` on
+   `authoritative.height`; per-iteration reset via
+   `sim::invalidate_from(&mut world, StageId::Coastal)` +
+   `pipeline.run_from(&mut world, StageId::Coastal as usize)` (or
+   the `ErosionOuterLoop` scheme B equivalent holding its own
+   stage refs). Use `--headless` for before/after captures rather
+   than manual window sessions.
 2. Sprint 1B paper pack (low-energy: Bruijnzeel 2005/2011, Chen
    2023 Budyko, Core Pack #2/#3/#5/#6/#8 落地点 sections).
 
 ---
 
 ## RECENTLY SHIPPED
+
+### Sprint 1D — Pre-Sprint-2 Cleanup & Erosion Prep (2026-04-18, 3 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_1d_pre_sprint_2_cleanup.md`](docs/design/sprints/sprint_1d_pre_sprint_2_cleanup.md) (Obsidian symlink, gitignored)
+**Test delta:** 327 → 335 passing (+8 new invalidation tests), 5 ignored unchanged.
+
+| Commit | Task | What shipped |
+|---|---|---|
+| `5cef5c7` | 1D.2 | `sim::invalidate_from(world, StageId)` free function in `crates/sim/src/invalidation.rs`. Per-`StageId` match over `clear_stage_outputs` lockstep (adding a new StageId variant forces adding an arm). Default frontier `StageId::Coastal` for `authoritative.height` mutation. +8 tests: Topography full-wipe, Accumulation upstream-preservation, and frontier-parameterized bit-exact equivalence across Coastal / PitFill / DerivedGeomorph / Precipitation / BiomeWeights / HexProjection. |
+| `b2fc274` | 1D.1 | Doc-drift audit: 9 fixes across README, ARCHITECTURE, CLAUDE, sim rustdoc. Canonical wording "17-stage canonical pipeline (16 StageId variants + terminal ValidationStage)" applied uniformly. ARCHITECTURE.md §4 builder-location factual fix (`app/runtime.rs` → `sim::default_pipeline()`). |
+| [this commit] | 1D.3 + 1D.4 + close-out | `ErosionOuterLoop` scheme B memo locked in sprint plan §3 Task 1D.3 (no code). `crates/core → crates/ipg-core` rename deferred with 3 re-visit triggers recorded in PROGRESS DEFERRED. CURRENT FOCUS rolled to Sprint 1D. |
+
+**Sprint 1D plan key decisions (locked):**
+- **`invalidate_from` crate location:** `sim`, not `core`. `StageId` is a sim enum; the `StageId → derived/baked fields` mapping is pipeline policy. Putting the helper on `impl WorldState` would require `core → sim` reverse dep (violates Sprint 0 crate DAG).
+- **Default invalidation frontier for `authoritative.height` mutation:** `StageId::Coastal`. Height mutations may move cells across the `sea_level` threshold, so `coast_mask` / `shoreline_normal` and every downstream stage (PitFill's `z_filled`, DerivedGeomorph's slope/curvature, the whole hydro + climate + ecology + hex chain) are potentially stale. Optimising to `StageId::PitFill` requires empirical proof that a specific mutation doesn't cross sea level — explicitly out of scope for Sprint 1D and Sprint 2, earliest reconsidered at Sprint 3 sediment.
+- **`ErosionOuterLoop` form:** scheme B (single `StageId::ErosionOuterLoop` variant, internal iteration, holds stage refs for the Coastal..RiverExtraction re-run chain). Scheme A (flat StageId expansion of 10×10) rejected — loses preset-driven `N_batch` tunability. Scheme C (separate `IterationDriver`) rejected — doubles executor complexity for visibility that Sprint 2 doesn't need. Enum insertion position (post-RiverExtraction vs post-DerivedGeomorph) deferred to Sprint 2 Task 1 based on what stream-power actually reads.
+- **`crates/core` rename:** deferred. Re-visit on (a) Sprint 4 introducing more core-crate splits that amplify alias churn, (b) any crates.io publishing decision, (c) a broader cross-crate refactor where bundling the rename is cheaper than doing it standalone.
+
+**Invariants preserved:** `cargo tree -p core` clean (no `sim` edge); `WorldState` 3-layer structure untouched; `authoritative.*` / `seed` / `preset` / `resolution` never mutated by `invalidate_from`; all 8 architectural invariants green. Sprint 1A + 1B `--headless` baselines still exit 0 on `--headless-validate --against`, confirming no pipeline regression.
+
+---
 
 ### Sprint 1C — Headless Validation & Offscreen Capture (2026-04-17, 10 commits on `dev`)
 
@@ -275,6 +316,27 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
   100 ms theoretical, well under the 200 ms target. The 2026-04-17
   visual acceptance session felt responsive in practice; no
   profiling numbers captured yet.
+
+**From Sprint 1D close-out:**
+
+- **`crates/core` → `crates/ipg-core` rename (Task 1D.4).**
+  Considered during Sprint 1D pre-work cleanup, **explicitly
+  deferred**. The rename would eliminate the `::core` stdlib
+  shadowing that forces downstream crates to use
+  `island_core = { path = "../core", package = "core" }` aliases
+  and keeps `[lib] doctest = false` on `crates/core/Cargo.toml`.
+  It is zero-risk refactoring (pure rename, CI gate catches any
+  missed alias) but cross-cuts ~8 `Cargo.toml` files + ~30-50
+  `use island_core::` sites. Re-visit triggers:
+  1. Sprint 4 adds more `crates/core`-splits (e.g. `core::save`
+     spun out) and the alias churn compounds.
+  2. Any decision to publish to crates.io (rename becomes
+     mandatory then).
+  3. A cross-crate refactor with enough scope that bundling the
+     rename in is cheaper than doing it standalone.
+  Until one of those fires, the alias + `doctest = false`
+  workaround stays. CLAUDE.md Gotchas already documents the
+  shadowing trap so new contributors don't walk into it.
 
 ---
 
