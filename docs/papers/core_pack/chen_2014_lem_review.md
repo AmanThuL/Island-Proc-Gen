@@ -34,8 +34,8 @@ The `volcanic_base + ridge_mask - coastal_falloff` synthetic DEM is this project
 **Sprint 1A — `crates/sim/src/hydro/flow_routing.rs` (Task 1A.3) and `crates/sim/src/hydro/accumulation.rs` (Task 1A.4):**
 The D8 flow routing + topological accumulation implements the discrete equivalent of Chen's water runoff PDE. The paper's treatment of water transport is the theoretical justification for pit-filling before routing (§D7 Planchon-Darboux) and the ε-jitter tie-breaking in §D6.
 
-**Sprint 2 — `crates/sim/src/geomorph/` erosion stages:**
-When Sprint 2 implements `Ef = K A^m S^n`, Chen 2014 is the primary equation-selection reference. The paper's argument that `m/n ≈ 0.45` corresponds to real concavity indices justifies the Sprint 2 default `m=0.35, n=1.0` (conservative, per sprint_2 §RD1). Must re-read §3 (three-equation model) before deciding whether Sprint 3 adds the sediment variable.
+**Sprint 2 — `crates/sim/src/geomorph/` erosion stages (DD1 + DD2):**
+When Sprint 2 implements `Ef = K A^m S^n`, Chen 2014 is the primary equation-selection reference. The paper's argument that `m/n ≈ 0.45` corresponds to real concavity indices justifies the Sprint 2 default `m=0.35, n=1.0` (conservative, per sprint_2 §RD1). The DD1 + DD2 "carve → smooth" sequencing (stream-power incision first, then hillslope diffusion per iteration) is directly supported by Chen 2014 §3's erosion-diffusion coupling analysis. The alternation avoids over-diffusion at steep ravines while permitting local smoothing proportional to local slope. Must re-read §3 (three-equation model) before deciding whether Sprint 3 adds the sediment variable.
 
 **Sprint 3 — Sediment transport:**
 Chen 2014 §4 (four-equation model with regolith) is the reading assignment for Sprint 3's sediment budget work. The `authoritative.sediment` field in `crates/core/src/world.rs` is the `WorldState` slot reserved for this.

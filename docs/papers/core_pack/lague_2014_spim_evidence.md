@@ -30,7 +30,9 @@ The stream power incision model (SPIM) is a cornerstone of quantitative geomorph
 
 ## 对本项目的落地点
 
-- TODO (Sprint 1A first read)
+**Sprint 2 — `crates/sim/src/geomorph/stream_power.rs` (DD1):**
+Lague 2014 provides empirical field-data compilation grounding the Sprint 2 choice of `(m, n) = (0.35, 1.0)`. The paper systematically reviews published measurements of stream-power exponents across diverse field sites and geological contexts, showing `m` clustered around 0.3–0.5 and `n` approaching 1.0 in steady-state reach data away from knickpoints. Sprint 2's constant-K forward-Euler integration with `n=1.0` (linear slope dependence) follows the knickpoint-propagation approximation Lague identifies as locally valid. The `K = 1e-3` scalar in `SPIM_K_DEFAULT` (see `crates/sim/src/geomorph/stream_power.rs`) is calibrated to produce visible relief decay within 100 iterations at the v1 resolution (256²), consistent with Lague's framework for interpreting K as a composite lithology + runoff + threshold parameter.
+
 - `crates/sim/src/geomorph/` (Sprint 2) — SPIM erosion implementation; Lague 2014 is the primary validation reference for parameter plausibility
 - `sprint_2_geomorph_credibility.md §RD1` selects `m=0.35, n=1.0` with explicit reference to the "safe zone away from Kwang & Parker instability"
 - `sprint_2_geomorph_credibility.md §RD2` — K calibration uses Lague's framework for what K physically represents (composite of lithology + runoff + threshold)

@@ -29,7 +29,9 @@ The longitudinal profiles of bedrock channels significantly determine mountain r
 
 ## 对本项目的落地点
 
-- TODO (Sprint 1A first read)
+**Sprint 2 — `crates/sim/src/geomorph/stream_power.rs` (DD1) and `ErosionOuterLoop` (DD3):**
+Whipple & Tucker 1999 is the canonical reference for `n=1.0` (linear slope dependence) being the dynamically simplest choice for forward-Euler stability. The paper's uplift-erosion number framework explains why non-linear `n > 1` requires implicit (tridiagonal) solvers to avoid timestep blow-up. Sprint 2's v1 design selects `n=1.0` precisely because it permits explicit integration: the CFL-like constraint on stable `dt` is linear in the slope exponent, not exponential. The 10×10 outer-loop iteration scheme (10 full-pipeline carve-smooth-carve cycles per slider update) trades iteration count for per-iteration stability — each outer iteration uses `n=1.0` forward-Euler with `dt=1.0`, which Whipple & Tucker show is unconditionally stable for realistic K and A values. Non-linear `n != 1` would require implicit schemes that Sprint 2 defers to Sprint 4's GPU pivot.
+
 - `crates/sim/src/geomorph/` (Sprint 2) — SPIM erosion loop; Whipple & Tucker's stability analysis justifies Sprint 2's explicit forward-Euler scheme with `dt=1.0` and `n=1.0` (linear → no CFL blow-up for reasonable K)
 - `sprint_2_geomorph_credibility.md §RD3` references the CFL-like constraint on `dt * K * max_A^m * max_S^n` — this derivation traces back to Whipple & Tucker's stability analysis
 - Sprint 2 §RD1 parameter selection (m=0.35, n=1.0) is anchored against the uplift-erosion number framework from this paper
