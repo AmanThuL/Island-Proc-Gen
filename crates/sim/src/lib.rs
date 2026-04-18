@@ -5,6 +5,9 @@
 //! [`StageId`] enum names every stage by symbolic id so
 //! [`island_core::SimulationPipeline::run_from`] callers (slider rerun,
 //! load-time rebuild) never hardcode raw indices.
+//!
+//! Sprint 1A + 1B + 2 together form the **19-stage canonical pipeline**
+//! (18 [`StageId`] variants + terminal [`ValidationStage`]).
 
 pub mod climate;
 pub mod ecology;
@@ -19,6 +22,7 @@ pub use climate::PrecipitationStage;
 pub use climate::TemperatureStage;
 pub use ecology::BiomeWeightsStage;
 pub use geomorph::CoastMaskStage;
+pub use geomorph::CoastTypeStage;
 pub use geomorph::DerivedGeomorphStage;
 pub use geomorph::ErosionOuterLoop;
 pub use geomorph::HillslopeDiffusionStage;
@@ -43,7 +47,7 @@ use island_core::pipeline::SimulationPipeline;
 /// Build the canonical Sprint 1A + Sprint 1B + Sprint 2 [`SimulationPipeline`].
 ///
 /// Push order is identical to [`StageId`]'s discriminant order, forming the
-/// 18-stage canonical pipeline (17 [`StageId`] variants + terminal
+/// 19-stage canonical pipeline (18 [`StageId`] variants + terminal
 /// [`ValidationStage`]).
 ///
 /// Both the interactive runtime ([`app::runtime::Runtime`]), the golden-seed
@@ -77,8 +81,11 @@ pub fn default_pipeline() -> SimulationPipeline {
     // SPIM + hillslope iteration plus end-of-batch Coastal..RiverExtraction
     // re-run, so `default_pipeline` sees it as one opaque stage.
     pipeline.push(Box::new(ErosionOuterLoop::default()));
-    // Sprint 1B (indices 9..=16) — shifted down by 1 in Sprint 2 Task 2.3
-    // to make room for `ErosionOuterLoop`.
+    // Sprint 2 (index 9) — CoastTypeStage classifies each coast cell into
+    // one of four geomorphic categories after erosion has settled the terrain.
+    pipeline.push(Box::new(CoastTypeStage));
+    // Sprint 1B (indices 10..=17) — shifted down by 2 in Sprint 2 Tasks
+    // 2.3+2.4 to make room for ErosionOuterLoop and CoastTypeStage.
     pipeline.push(Box::new(TemperatureStage));
     pipeline.push(Box::new(PrecipitationStage));
     pipeline.push(Box::new(FogLikelihoodStage));
@@ -94,9 +101,9 @@ pub fn default_pipeline() -> SimulationPipeline {
 
 // ─── StageId ──────────────────────────────────────────────────────────────────
 
-/// Symbolic identifier for every stage in the 18-stage canonical pipeline.
+/// Symbolic identifier for every stage in the 19-stage canonical pipeline.
 ///
-/// There are exactly **17 variants** (`Topography = 0` … `HexProjection = 16`).
+/// There are exactly **18 variants** (`Topography = 0` … `HexProjection = 17`).
 /// The discriminant is the stage's index in the `run()` push order, so
 /// `pipeline.run_from(world, StageId::Precipitation as usize)` is the
 /// correct call for a slider that touches `PrecipitationStage`. Any
@@ -106,12 +113,12 @@ pub fn default_pipeline() -> SimulationPipeline {
 ///
 /// Sprint 2 Task 2.3 inserted `ErosionOuterLoop = 8` between
 /// `RiverExtraction` and `Temperature`, shifting every Sprint 1B variant
-/// down by 1. Sprint 2 Task 2.4 will later insert `CoastType = 9` between
+/// down by 1. Sprint 2 Task 2.4 inserted `CoastType = 9` between
 /// `ErosionOuterLoop` and `Temperature`, shifting 1B variants down by a
-/// further slot — not in scope for Task 2.3.
+/// further slot (now `Temperature = 10` … `HexProjection = 17`).
 ///
 /// `ValidationStage` is intentionally **not** a `StageId` variant: it is
-/// the terminal tail hook that runs invariants after the 17 `StageId` stages
+/// the terminal tail hook that runs invariants after the 18 `StageId` stages
 /// finish, and is never a `run_from` target.
 #[repr(usize)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -125,14 +132,15 @@ pub enum StageId {
     Basins = 6,
     RiverExtraction = 7,
     ErosionOuterLoop = 8,
-    Temperature = 9,
-    Precipitation = 10,
-    FogLikelihood = 11,
-    Pet = 12,
-    WaterBalance = 13,
-    SoilMoisture = 14,
-    BiomeWeights = 15,
-    HexProjection = 16,
+    CoastType = 9,
+    Temperature = 10,
+    Precipitation = 11,
+    FogLikelihood = 12,
+    Pet = 13,
+    WaterBalance = 14,
+    SoilMoisture = 15,
+    BiomeWeights = 16,
+    HexProjection = 17,
 }
 
 impl StageId {
@@ -168,6 +176,7 @@ mod stage_id_tests {
             Basins,
             RiverExtraction,
             ErosionOuterLoop,
+            CoastType,
             Temperature,
             Precipitation,
             FogLikelihood,
@@ -183,8 +192,8 @@ mod stage_id_tests {
         assert_eq!(ordered.len(), StageId::STAGE_COUNT);
         assert_eq!(
             StageId::STAGE_COUNT,
-            17,
-            "Sprint 2 Task 2.3 locks STAGE_COUNT == 17 until Task 2.4 adds CoastType"
+            18,
+            "Sprint 2 Task 2.4 locks STAGE_COUNT == 18 (CoastType = 9 inserted)"
         );
     }
 }

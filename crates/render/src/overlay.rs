@@ -107,9 +107,9 @@ pub struct OverlayRegistry {
 }
 
 impl OverlayRegistry {
-    /// Return the Sprint 1B overlay registry — 6 Sprint 1A geomorph
-    /// overlays + 6 Sprint 1B climate / ecology / hex overlays, total
-    /// 12 (matching roadmap §"第一批必须做的 debug overlay" exactly).
+    /// Return the Sprint 2 overlay registry — 6 Sprint 1A geomorph
+    /// overlays + 6 Sprint 1B climate / ecology / hex overlays + 1 Sprint 2
+    /// coastal geomorphology overlay, total 13.
     ///
     /// `final_elevation` reads `z_filled` (not `height`) —
     /// `authoritative.height` stores `z_raw` pre-pit-fill; the render
@@ -117,7 +117,7 @@ impl OverlayRegistry {
     /// `final_elevation` is visible by default; everything else is
     /// hidden so the user can toggle overlays without fighting alpha
     /// stacking.
-    pub fn sprint_1b_defaults() -> Self {
+    pub fn sprint_2_defaults() -> Self {
         Self {
             entries: vec![
                 // ── Sprint 1A (geomorph + hydro) ──────────────────────
@@ -218,14 +218,19 @@ impl OverlayRegistry {
                     value_range: ValueRange::Fixed(0.0, 7.0),
                     visible: false,
                 },
+                // ── Sprint 2 (coastal geomorphology) ──────────────────
+                // String key "coast_type" confined to this file (invariant #8).
+                // Unknown sentinel (0xFF) renders transparent via PaletteId::CoastType.
+                OverlayDescriptor {
+                    id: "coast_type",
+                    label: "Coast type",
+                    source: OverlaySource::ScalarDerived("coast_type"),
+                    palette: PaletteId::CoastType,
+                    value_range: ValueRange::Fixed(0.0, 3.0),
+                    visible: false,
+                },
             ],
         }
-    }
-
-    /// Backwards-compatible alias used by tests and the existing app
-    /// runtime. Returns the Sprint 1B registry.
-    pub fn sprint_1a_defaults() -> Self {
-        Self::sprint_1b_defaults()
     }
 
     /// Return a slice of all registered descriptors.
@@ -259,7 +264,7 @@ impl OverlayRegistry {
 
 impl Default for OverlayRegistry {
     fn default() -> Self {
-        Self::sprint_1a_defaults()
+        Self::sprint_2_defaults()
     }
 }
 
@@ -319,6 +324,16 @@ pub(crate) fn resolve_scalar_source<'w>(
             .as_ref()
             .map(ResolvedField::U32),
 
+        // Sprint 2 derived scalars.
+        // `coast_type` is `ScalarField2D<u8>` — same layout as `MaskField2D`
+        // (which is a type alias for `ScalarField2D<u8>`), so the `Mask`
+        // variant carries it without a new `ResolvedField` variant.
+        // The renderer must check `PaletteId::CoastType` and use
+        // `palette::sample_coast_type_by_index` for correct transparent
+        // Unknown-sentinel handling. Invariant #8: string key "coast_type"
+        // appears only in this file.
+        ScalarDerived("coast_type") => world.derived.coast_type.as_ref().map(ResolvedField::Mask),
+
         // Unknown / not-yet-populated sources silently return None so
         // the renderer skips rather than panicking on a missing field.
         _ => None,
@@ -332,13 +347,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_12_sprint_1b_defaults() {
-        assert_eq!(OverlayRegistry::sprint_1b_defaults().all().len(), 12);
+    fn registry_has_13_sprint_2_defaults() {
+        assert_eq!(OverlayRegistry::sprint_2_defaults().all().len(), 13);
+    }
+
+    #[test]
+    fn coast_type_descriptor_is_correct() {
+        let reg = OverlayRegistry::sprint_2_defaults();
+        let d = reg
+            .by_id("coast_type")
+            .expect("coast_type overlay must exist");
+        assert_eq!(
+            d.source,
+            OverlaySource::ScalarDerived("coast_type"),
+            "coast_type source must be ScalarDerived(\"coast_type\")"
+        );
+        assert_eq!(
+            d.palette,
+            PaletteId::CoastType,
+            "coast_type palette must be PaletteId::CoastType"
+        );
+        assert!(!d.visible, "coast_type must default to hidden");
     }
 
     #[test]
     fn by_id_queries_all_sprint_1a_defaults() {
-        let reg = OverlayRegistry::sprint_1a_defaults();
+        let reg = OverlayRegistry::sprint_2_defaults();
         assert!(reg.by_id("initial_uplift").is_some());
         assert!(reg.by_id("final_elevation").is_some());
         assert!(reg.by_id("slope").is_some());
@@ -349,7 +383,7 @@ mod tests {
 
     #[test]
     fn by_id_queries_all_sprint_1b_defaults() {
-        let reg = OverlayRegistry::sprint_1b_defaults();
+        let reg = OverlayRegistry::sprint_2_defaults();
         assert!(reg.by_id("precipitation").is_some());
         assert!(reg.by_id("temperature").is_some());
         assert!(reg.by_id("soil_moisture").is_some());
@@ -360,13 +394,13 @@ mod tests {
 
     #[test]
     fn by_id_unknown_returns_none() {
-        let reg = OverlayRegistry::sprint_1a_defaults();
+        let reg = OverlayRegistry::sprint_2_defaults();
         assert!(reg.by_id("nope").is_none());
     }
 
     #[test]
     fn set_visibility_changes_flag() {
-        let mut reg = OverlayRegistry::sprint_1a_defaults();
+        let mut reg = OverlayRegistry::sprint_2_defaults();
         assert!(!reg.by_id("initial_uplift").unwrap().visible);
         reg.set_visibility("initial_uplift", true);
         assert!(reg.by_id("initial_uplift").unwrap().visible);
@@ -375,13 +409,13 @@ mod tests {
     // Sprint 1A defaults: only final_elevation is visible → count == 1.
     #[test]
     fn visible_entries_filters() {
-        let reg = OverlayRegistry::sprint_1a_defaults();
+        let reg = OverlayRegistry::sprint_2_defaults();
         assert_eq!(reg.visible_entries().count(), 1);
     }
 
     #[test]
     fn source_field_keys_match_sprint_1a_plan() {
-        let reg = OverlayRegistry::sprint_1a_defaults();
+        let reg = OverlayRegistry::sprint_2_defaults();
 
         assert_eq!(
             reg.by_id("initial_uplift").unwrap().source,
@@ -413,7 +447,7 @@ mod tests {
     // Dedicated guard: future refactorers must not silently revert to height.
     #[test]
     fn final_elevation_not_authoritative_height() {
-        let reg = OverlayRegistry::sprint_1a_defaults();
+        let reg = OverlayRegistry::sprint_2_defaults();
         let d = reg.by_id("final_elevation").unwrap();
         assert_ne!(d.source, OverlaySource::ScalarAuthoritative("height"));
         assert_eq!(d.source, OverlaySource::ScalarDerived("z_filled"));
@@ -421,7 +455,7 @@ mod tests {
 
     #[test]
     fn flow_accumulation_uses_log_compressed() {
-        let reg = OverlayRegistry::sprint_1a_defaults();
+        let reg = OverlayRegistry::sprint_2_defaults();
         assert_eq!(
             reg.by_id("flow_accumulation").unwrap().value_range,
             ValueRange::LogCompressed,
@@ -430,7 +464,7 @@ mod tests {
 
     #[test]
     fn river_network_uses_binary_blue() {
-        let reg = OverlayRegistry::sprint_1a_defaults();
+        let reg = OverlayRegistry::sprint_2_defaults();
         let d = reg.by_id("river_network").unwrap();
         assert_eq!(d.palette, PaletteId::BinaryBlue);
         assert_eq!(d.source, OverlaySource::Mask("river_mask"));

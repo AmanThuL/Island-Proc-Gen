@@ -50,6 +50,29 @@ pub const SKY_ZENITH: [f32; 4] = hex_rgba(0x1C2C44);
 
 // ─── PaletteId ───────────────────────────────────────────────────────────────
 
+// ─── Sprint 2 CoastType palette ──────────────────────────────────────────────
+//
+// NOT pixel-sampled from `palette_reference.jpg` — these are new Sprint 2
+// colours with no reference panel. Marked "Sprint 2 v1, not pixel-sampled".
+// Index mapping: Cliff=0, Beach=1, Estuary=2, RockyHeadland=3.
+// Out-of-range indices (including 0xFF for Unknown) → transparent [0.0; 4].
+
+/// Sprint 2 v1 coastal geomorphology palette — not pixel-sampled.
+///
+/// RGBA sRGB colours for the four [`CoastType`] variants (index = discriminant):
+/// * `0` Cliff: dark warm grey
+/// * `1` Beach: sand
+/// * `2` Estuary: teal
+/// * `3` RockyHeadland: medium grey
+///
+/// [`CoastType`]: island_core::world::CoastType
+pub const COAST_TYPE_TABLE: [[f32; 4]; 4] = [
+    [0.35, 0.32, 0.28, 1.0], // Cliff: dark warm grey
+    [0.90, 0.85, 0.70, 1.0], // Beach: sand
+    [0.30, 0.65, 0.70, 1.0], // Estuary: teal
+    [0.55, 0.50, 0.45, 1.0], // RockyHeadland: medium grey
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PaletteId {
     Grayscale,
@@ -60,6 +83,9 @@ pub enum PaletteId {
     TerrainHeight,
     /// Sprint 1A binary-blue mask: transparent for `t < 0.5`, RIVER colour for `t ≥ 0.5`.
     BinaryBlue,
+    /// Sprint 2 coastal geomorphology categorical: index `0..=3` → COAST_TYPE_TABLE;
+    /// index `0xFF` (Unknown sentinel) and any other out-of-range value → transparent.
+    CoastType,
 }
 
 // ─── Convenience converters ──────────────────────────────────────────────────
@@ -229,6 +255,22 @@ pub fn sample_f32(palette: PaletteId, t: f32) -> [f32; 4] {
                 [0.0, 0.0, 0.0, 0.0]
             }
         }
+
+        // `CoastType` is indexed by raw `u8` value cast through `u32`. The
+        // normalised `t` maps to `value = round(t * max)`, but the overlay
+        // renderer calls `sample_coast_type_by_index` directly for u8 fields.
+        // `sample_f32` for CoastType interprets `t` as a direct index fraction
+        // over 4 entries (0..=3); Unknown sentinel (0xFF → t = 1.0+ after
+        // normalisation) always falls outside and is returned as transparent.
+        // In practice the render path uses `sample_coast_type_by_index` below.
+        PaletteId::CoastType => {
+            let idx = (t * 4.0) as usize;
+            if idx < 4 {
+                COAST_TYPE_TABLE[idx]
+            } else {
+                [0.0, 0.0, 0.0, 0.0] // transparent for Unknown and out-of-range
+            }
+        }
     }
 }
 
@@ -236,6 +278,22 @@ pub fn sample_f32(palette: PaletteId, t: f32) -> [f32; 4] {
 
 pub fn sample(palette: PaletteId, t: f32) -> [u8; 4] {
     rgba_to_u8(sample_f32(palette, t))
+}
+
+/// Sample the [`PaletteId::CoastType`] palette by raw `u8` index.
+///
+/// * `0..=3` → `COAST_TYPE_TABLE[index]` (Cliff, Beach, Estuary, RockyHeadland).
+/// * `0xFF` (Unknown sentinel) and any other value → `[0.0, 0.0, 0.0, 0.0]` (transparent).
+///
+/// Use this instead of `sample_f32(PaletteId::CoastType, t)` wherever the
+/// raw `ScalarField2D<u8>` value is available, to avoid float precision loss
+/// on the `u8 → f32 → usize` round-trip.
+pub fn sample_coast_type_by_index(index: u8) -> [f32; 4] {
+    if (index as usize) < 4 {
+        COAST_TYPE_TABLE[index as usize]
+    } else {
+        [0.0, 0.0, 0.0, 0.0]
+    }
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────────

@@ -4,8 +4,10 @@
 //! Task 1A.3 `PitFillStage`, Task 1A.4 `DerivedGeomorphStage`.
 //! Sprint 2: Task 2.1 `StreamPowerIncisionStage`,
 //!           Task 2.2 `HillslopeDiffusionStage`,
-//!           Task 2.3 `ErosionOuterLoop`.
+//!           Task 2.3 `ErosionOuterLoop`,
+//!           Task 2.4 `CoastTypeStage`.
 
+mod coast_type;
 mod coastal;
 mod derived_geomorph;
 mod erosion_outer_loop;
@@ -14,6 +16,7 @@ mod pit_fill;
 mod stream_power;
 mod topography;
 
+pub use coast_type::CoastTypeStage;
 pub use coastal::CoastMaskStage;
 pub use derived_geomorph::DerivedGeomorphStage;
 pub use erosion_outer_loop::ErosionOuterLoop;

@@ -69,9 +69,9 @@ pub fn invalidate_from(world: &mut WorldState, from: StageId) {
     // express this mapping — each StageId writes a different set of
     // derived/baked fields — so we iterate with an explicit match.
     //
-    // `StageId` is `#[repr(usize)]` with contiguous discriminants 0..=16,
+    // `StageId` is `#[repr(usize)]` with contiguous discriminants 0..=17,
     // locked by `stage_id_indices_are_dense_and_canonical`. The `idx` range
-    // is bounded by `StageId::HexProjection as usize = 16`.
+    // is bounded by `StageId::HexProjection as usize = 17`.
     let start = from as usize;
     let end = StageId::HexProjection as usize;
     for idx in start..=end {
@@ -85,15 +85,16 @@ pub fn invalidate_from(world: &mut WorldState, from: StageId) {
             6 => StageId::Basins,
             7 => StageId::RiverExtraction,
             8 => StageId::ErosionOuterLoop,
-            9 => StageId::Temperature,
-            10 => StageId::Precipitation,
-            11 => StageId::FogLikelihood,
-            12 => StageId::Pet,
-            13 => StageId::WaterBalance,
-            14 => StageId::SoilMoisture,
-            15 => StageId::BiomeWeights,
-            16 => StageId::HexProjection,
-            _ => unreachable!("idx is bounded by HexProjection = 16"),
+            9 => StageId::CoastType,
+            10 => StageId::Temperature,
+            11 => StageId::Precipitation,
+            12 => StageId::FogLikelihood,
+            13 => StageId::Pet,
+            14 => StageId::WaterBalance,
+            15 => StageId::SoilMoisture,
+            16 => StageId::BiomeWeights,
+            17 => StageId::HexProjection,
+            _ => unreachable!("idx is bounded by HexProjection = 17"),
         };
         clear_stage_outputs(world, stage);
     }
@@ -179,6 +180,11 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
         // `Coastal..=RiverExtraction` reroute.
         StageId::ErosionOuterLoop => {
             // deliberately empty — see module-level comment + docstring.
+        }
+
+        // CoastTypeStage: writes derived.coast_type.
+        StageId::CoastType => {
+            world.derived.coast_type = None;
         }
 
         // TemperatureStage: writes baked.temperature.
@@ -272,6 +278,11 @@ mod tests {
         // Sanity: authoritative fields were populated by TopographyStage.
         assert!(world.authoritative.height.is_some());
         assert!(world.authoritative.sediment.is_some());
+        // Sanity: CoastTypeStage (9) ran and produced a coast_type field.
+        assert!(
+            world.derived.coast_type.is_some(),
+            "derived.coast_type must be Some after a full pipeline run"
+        );
         let orig_seed = world.seed;
         let orig_preset = world.preset.clone();
         let orig_resolution = world.resolution;
@@ -300,6 +311,7 @@ mod tests {
         assert!(world.derived.initial_uplift.is_none(), "initial_uplift");
         assert!(world.derived.coast_mask.is_none(), "coast_mask");
         assert!(world.derived.shoreline_normal.is_none(), "shoreline_normal");
+        assert!(world.derived.coast_type.is_none(), "coast_type");
         assert!(world.derived.z_filled.is_none(), "z_filled");
         assert!(world.derived.slope.is_none(), "slope");
         assert!(world.derived.curvature.is_none(), "curvature");
@@ -398,32 +410,37 @@ mod tests {
             world.derived.erosion_baseline.is_some(),
             "erosion_baseline must be preserved (sticky, only Topography frontier clears it)"
         );
-        // Temperature (9)
+        // CoastType (9) — downstream of Accumulation, must be cleared.
+        assert!(
+            world.derived.coast_type.is_none(),
+            "coast_type must be None (downstream of Accumulation)"
+        );
+        // Temperature (10)
         assert!(
             world.baked.temperature.is_none(),
             "baked.temperature must be None"
         );
-        // Precipitation (10)
+        // Precipitation (11)
         assert!(
             world.baked.precipitation.is_none(),
             "baked.precipitation must be None"
         );
-        // FogLikelihood (11)
+        // FogLikelihood (12)
         assert!(
             world.derived.fog_likelihood.is_none(),
             "fog_likelihood must be None"
         );
-        // Pet (12)
+        // Pet (13)
         assert!(world.derived.pet.is_none(), "pet must be None");
-        // WaterBalance (13)
+        // WaterBalance (14)
         assert!(world.derived.et.is_none(), "et must be None");
         assert!(world.derived.runoff.is_none(), "runoff must be None");
-        // SoilMoisture (14)
+        // SoilMoisture (15)
         assert!(
             world.baked.soil_moisture.is_none(),
             "baked.soil_moisture must be None"
         );
-        // BiomeWeights (15)
+        // BiomeWeights (16)
         assert!(
             world.baked.biome_weights.is_none(),
             "baked.biome_weights must be None"
@@ -432,7 +449,7 @@ mod tests {
             world.derived.dominant_biome_per_cell.is_none(),
             "dominant_biome_per_cell must be None"
         );
-        // HexProjection (16)
+        // HexProjection (17)
         assert!(world.derived.hex_grid.is_none(), "hex_grid must be None");
         assert!(world.derived.hex_attrs.is_none(), "hex_attrs must be None");
         assert!(
@@ -526,6 +543,7 @@ mod tests {
             &world.derived.basin_id.as_ref().expect("basin_id").data,
         );
         hasher.update(&world.derived.river_mask.as_ref().expect("river_mask").data);
+        hasher.update(&world.derived.coast_type.as_ref().expect("coast_type").data);
         hash_f32(
             &mut hasher,
             &world
@@ -637,7 +655,7 @@ mod tests {
     /// `TopographyStage`.
     fn non_eroding_pipeline() -> island_core::pipeline::SimulationPipeline {
         use crate::{
-            AccumulationStage, BasinsStage, BiomeWeightsStage, CoastMaskStage,
+            AccumulationStage, BasinsStage, BiomeWeightsStage, CoastMaskStage, CoastTypeStage,
             DerivedGeomorphStage, FlowRoutingStage, FogLikelihoodStage, HexProjectionStage,
             PetStage, PitFillStage, PrecipitationStage, RiverExtractionStage, SoilMoistureStage,
             TemperatureStage, TopographyStage, ValidationStage, WaterBalanceStage,
@@ -652,6 +670,7 @@ mod tests {
         pipeline.push(Box::new(BasinsStage));
         pipeline.push(Box::new(RiverExtractionStage));
         // ErosionOuterLoop intentionally omitted — see docstring above.
+        pipeline.push(Box::new(CoastTypeStage));
         pipeline.push(Box::new(TemperatureStage));
         pipeline.push(Box::new(PrecipitationStage));
         pipeline.push(Box::new(FogLikelihoodStage));

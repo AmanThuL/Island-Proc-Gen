@@ -301,6 +301,25 @@ pub struct ErosionBaseline {
     pub land_cell_count_pre: u32,
 }
 
+/// Sprint 2 DD4: coarse coastal geomorphology classification per coast cell.
+///
+/// v1 uses cheap proxies (slope + river_mouth + shoreline_normal · wind
+/// exposure + island_age) since no lithology or wave-fetch field exists
+/// yet. Sprint 3 will add `LavaDelta = 4` behind the existing `0..=3` range.
+/// `Unknown = 0xFF` is the sentinel for non-coast cells; the
+/// `coast_type_well_formed` invariant (Task 2.9) enforces that every
+/// `is_coast == 1` cell carries a `0..=3` value and every non-coast cell
+/// carries `0xFF`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum CoastType {
+    Cliff = 0,
+    Beach = 1,
+    Estuary = 2,
+    RockyHeadland = 3,
+    Unknown = 0xFF,
+}
+
 /// Land / sea / coast classification produced by `CoastMaskStage`.
 ///
 /// `land_cell_count` is cached so downstream stages avoid re-popcounting
@@ -386,6 +405,12 @@ pub struct DerivedCaches {
 
     /// Sprint 1A CoastMaskStage: per-coast-cell outward shoreline normal.
     pub shoreline_normal: Option<VectorField2D>,
+
+    /// Sprint 2 DD4 CoastTypeStage: per-cell coastal geomorphology
+    /// classification (`CoastType as u8`). Coast cells carry `0..=3`;
+    /// non-coast cells carry `CoastType::Unknown = 0xFF`.
+    /// `None` until `CoastTypeStage` has run.
+    pub coast_type: Option<ScalarField2D<u8>>,
 
     /// Sprint 1A FlowRoutingStage: D8 downstream direction code
     /// (see `FlowDir` constants; 0xFF = sink / no downstream).

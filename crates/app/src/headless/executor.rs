@@ -260,7 +260,7 @@ pub fn run_shot(
     let pipeline_ms = elapsed_ms(pipeline_start);
 
     // ── Truth path: overlay bakes ───────────────────────────────────────────
-    let registry = OverlayRegistry::sprint_1b_defaults();
+    let registry = OverlayRegistry::sprint_2_defaults();
     let bake_start = Instant::now();
     let mut overlay_hashes: BTreeMap<String, String> = BTreeMap::new();
     for overlay_id in &shot.truth.overlays {
@@ -370,7 +370,7 @@ fn render_beauty_shot(
     // only the requested overlays draw. Unknown ids bail — better to surface a
     // user typo here than to silently produce a beauty PNG with a missing
     // overlay.
-    let mut registry = OverlayRegistry::sprint_1b_defaults();
+    let mut registry = OverlayRegistry::sprint_2_defaults();
     // Snapshot the ids of entries that start visible, then clear them via
     // `set_visibility`. Collect first so the immutable borrow in `all()` ends
     // before the mutable `set_visibility` call.
