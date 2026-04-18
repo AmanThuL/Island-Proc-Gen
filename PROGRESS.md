@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-18 (Sprint 2 shipped; two §10 acceptance residuals flagged for Sprint 3)
+**Last Updated:** 2026-04-18 (Sprint 2.5 shipped; Sprint 2 residuals still pending Sprint 3)
 
 ---
 
@@ -21,13 +21,23 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 2 — Geomorph Credibility. **Closed on `dev`
-2026-04-18** modulo two §10 acceptance residuals explicitly handed
-off to Sprint 3 (see below). 21 atomic commits (8145b38 → ab7d5b5)
-across the 11 Sprint 2 tasks (2.0–2.10) plus the retroactive
-simplifier + `superpowers:code-reviewer` audit chain per
-CLAUDE.local.md cadence. Three Critical bugs surfaced by that chain
-and fixed before close-out:
+**Primary:** Sprint 2.5 — Hex UX Slice + Sprint 2 Tail Absorption.
+**Closed on `dev` 2026-04-18** with 10 atomic commits (26ff9a5 →
+4dc75ed) across 11 of the 12 planned sub-tasks. 2.5.I (blue-noise
+dither A/B) + 2.5.L (blue-noise size toggle) are explicitly deferred
+to a later sprint that has a live display for the visual A/B step —
+the dither path stays in place untouched, per the audit memo. Test
+delta: 385 → 405 passing (+20), 5 ignored unchanged. Every
+non-mechanical commit used the CLAUDE.local.md simplifier + reviewer
+cadence; one reviewer-surfaced Important finding fixed in-place
+(ViewMode snapshot semantic).
+
+**Secondary:** Sprint 2 Geomorph Credibility — **still closed on
+`dev` 2026-04-18** (close-out commits ab7d5b5 ← 8145b38). Two §10
+acceptance residuals remain handed off to Sprint 3; see
+"Sprint 2 acceptance status" below for details. Close-out chain
+surfaced 3 Critical bugs + 7 Important items during the retroactive
+simplifier + `superpowers:code-reviewer` pass:
 
 1. **CoastType overlay transparent** — `ValueRange::Fixed(0.0, 3.0)`
    mapped discriminant 3 (RockyHeadland, ~50 % of coast cells) to
@@ -43,14 +53,77 @@ and fixed before close-out:
    v1 baselines' forward-compat contract under v2 binaries. Now
    mirrors `CaptureRequest.schema_version`.
 
-**385 tests passing, 5 ignored** across 9 crates (+50 from Sprint
-1D's 335 baseline). `cargo fmt --check && cargo clippy --workspace
--- -D warnings && cargo test --workspace` is the hard CI gate, all
-green. All three `--headless` baselines (`sprint_1a_baseline/`,
-`sprint_1b_acceptance/`, `sprint_2_erosion/`) self-validate exit 0
-under the v2 binary.
+**405 tests passing, 5 ignored** across 9 crates (+20 net over Sprint
+2's 385). `cargo fmt --check && cargo clippy --workspace -- -D warnings
+&& cargo test --workspace` is the hard CI gate, all green. All three
+`--headless` baselines self-validate exit 0:
 
-**Sprint 2 §10 acceptance status:**
+- `sprint_1a_baseline/`: 9 shots (Sprint 1C first-shipped + 2.5.H
+  flow_accum clamp-percentile regen + 2.5.Ja biome tuning regen)
+- `sprint_1b_acceptance/`: 15 shots (Sprint 1C 9 default-wind +
+  Sprint 2.5.E 6 wind-varying; shot `01_baseline_camera_overlays_panels`
+  permanently manual — UI state non-serialisable)
+- `sprint_2_erosion/`: 6 shots (3 presets × pre/post erosion; Sprint
+  2.5 regens for biome + flow_accum)
+
+**Sprint 2.5 acceptance status:**
+
+- ✓ **2.5.F — 3 new archetypes**: `volcanic_caldera_young` /
+  `volcanic_twin_old` / `volcanic_eroded_ridge`. Sprint 3 sediment
+  work has 5 archetypes to validate on instead of 3. Deviation
+  logged: `volcanic_twin_old` ships with default `n_batch=10`, not
+  the spec's 15 (fired the 5 % sea-crossing invariant at safe K).
+- ✓ **2.5.G — basin CC promotion**: post-process Von4 connected-
+  component labelling with `MIN_INTERNAL_LAKE_CELLS=8` threshold +
+  new `basin_partition_post_erosion_well_formed` invariant. On real
+  terrain the pass is currently vacuous (PitFill re-runs inside
+  ErosionOuterLoop eliminate interior depressions); Sprint 3
+  sediment-aware SPACE-lite may leave intentional deposition lakes
+  for the CC promotion to pick up.
+- ✓ **2.5.Ja — ecology tuning**: `volcanic_single @ 128² seed 42
+  post-erosion` now shows 5 biomes ≥ 3 % coverage (MontaneWet 8 /
+  DryShrub 18 / Grassland 43 / BareRockLava 26 / Riparian 5; pre-
+  tune was 3 at ≥ 3 %). Wind 180° swing drives ~14 % argmax flip,
+  well above the ≥ 6 % spec target. CoastalScrub + CloudForest
+  stay at 0 % on this archetype (dry interior / no fog) — tuned
+  bells can still produce them on wetter archetypes.
+- ✓ **2.5.B/C/D — hex UX slice**: `HexDebugAttributes` sibling
+  struct (slope_variance + river_crossing + accessibility_cost)
+  alongside `HexAttributes` (still 8 fields). 3 new overlays
+  (`hex_projection_error`, `hex_river_crossing`, `hex_accessibility`)
+  plug into the existing `OverlaySource::ScalarDerived` + `Mask`
+  pipelines — no new wgpu pipeline. `HexRiverCrossing` uses 4 box
+  edges (not spec's 6 hex edges) because the hex tessellation is
+  axis-aligned boxes; Sprint 5 S1 does the real-hex rework.
+- ✓ **2.5.A — ViewMode toggle**: `Continuous` / `HexOverlay` /
+  `HexOnly` via Camera-panel ComboBox. `saved_visibility` holds
+  the Continuous baseline while `view_mode != Continuous` so
+  any round-trip back to Continuous restores the user's original
+  state, regardless of HexOverlay/HexOnly hops.
+- ✓ **2.5.E — 1B baseline migration**: 9 → 15 shots on
+  `sprint_1b_acceptance/`; `schema_version` bumped 1 → 2 to use
+  `preset_override.prevailing_wind_dir`. Distinct byte-level
+  `soil_moisture` hashes confirm wind propagation end-to-end.
+- ✓ **2.5.H — flow_accumulation audit**: distribution measured
+  (P90/max = 0.023, clear washout); `ValueRange::LogCompressedClampPercentile(0.99)`
+  variant added + `flow_accumulation` descriptor switched.
+- ✓ **2.5.K — per-descriptor alpha**: `OverlayDescriptor.alpha`
+  field + OverlayPanel iterates `registry.entries_mut()` to render
+  `[checkbox][slider][label]` per row. Row count = registry size,
+  not hardcoded. `OverlayRenderer::draw` writes per-frame alpha
+  uniforms (`registry.len() × 4 bytes` cost).
+- ⏳ **2.5.I — dither A/B**: deferred. The ±½ LSB dither stays in
+  `terrain.wgsl`; the banding A/B test requires interactive display
+  (headless PNG readback loses the subpixel gamma-corrected
+  rendering that would reveal or hide the dither). No `DITHER_ON`
+  toggle added — that would be scope creep for a deferred decision.
+  Audit memo in `docs/design/sprints/sprint_2_5_visual_acceptance/`
+  (Obsidian symlink, local-only).
+- ⏳ **2.5.L — blue-noise size toggle**: gated on 2.5.I. Since 2.5.I
+  is deferred, 2.5.L cannot start per the spec's decision tree.
+  Re-opens when 2.5.I resolves.
+
+**Sprint 2 §10 acceptance status (unchanged from Sprint 2 close-out):**
 
 - ✓ SPIM + hillslope + `ErosionOuterLoop` (scheme B) + CoastType
   + schema v2 + `preset_override` + erosion sliders + 3 new
@@ -75,16 +148,104 @@ Both residuals have explicit Sprint 3 anchor points — they are
 natural fits for the next sprint's work, not Sprint 2 blockers.
 
 **Next session priorities** (see [QUICK REFERENCE](#quick-reference)):
-1. **Sprint 2.5** — Hex UX slice + absorbed 1A/1B/2 tail items
-   (3 new archetypes, 16-shot 1B baseline migration, basin
-   partition refinement post-erosion, biome tuning, T2/T3 UI
-   polish). Doc: `docs/design/sprints/sprint_2_5_hex_ux_and_tail.md`.
+1. **Sprint 3** — Sediment + Advanced Climate. SPACE-lite sediment-
+   aware erosion (`K · g(hs)`), LFPM v3 precipitation, cloud forest
+   belt + fog hydrology, Coast type v2 (fetch integral + LavaDelta),
+   riparian biome alluvial-fan-aware upgrade, optional DualSeason
+   wind. Inherits Sprint 2's two deferred §10 clauses (max_z drop
+   range, Cliff coverage) as natural targets. Sprint 2.5's 5 new
+   archetypes, 15-shot 1B baseline, tuned biome bells, and hex
+   debug overlays provide the new starting baseline.
+   Doc: `docs/design/sprints/sprint_3_sediment_advanced_climate.md` (TBD).
 2. **Sprint 1B paper pack** (low-energy): Bruijnzeel 2005 / 2011,
    Chen 2023 Budyko, Core Pack #2/#3/#5/#6/#8 落地点 sections.
+3. **Sprint 2.5.I + 2.5.L tail** (opportunistic): blue-noise dither
+   A/B visual test + conditional size toggle. Requires interactive
+   display session; can be bundled into any future in-window work.
 
 ---
 
 ## RECENTLY SHIPPED
+
+### Sprint 2.5 — Hex UX Slice + Sprint 2 Tail Absorption (2026-04-18, 10 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_2_5_hex_ux_and_tail.md`](docs/design/sprints/sprint_2_5_hex_ux_and_tail.md) (Obsidian symlink, gitignored)
+**Test delta:** 385 → 405 passing (+20 across A/B/C/D/E/F/G/H/Ja/K), 5 ignored unchanged.
+
+Sprint 2.5 lands the "continuous → hex aggregation" thesis's first
+visual evidence (three hex debug overlays + ViewMode toggle) while
+absorbing all Sprint 1A / 1B / 2 polish tail items that aren't
+scope-appropriate for Sprint 3's science work. Sprint 3 now starts
+from a polished, hex-validated, 5-archetype, biome-diverse baseline.
+
+| Commit | Task | What shipped |
+|---|---|---|
+| `26ff9a5` | 2.5.F | 3 new archetype RON files — `volcanic_caldera_young`, `volcanic_twin_old`, `volcanic_eroded_ridge` — + 3 round-trip serde tests + `list_builtin()` extension. `volcanic_twin_old` ships with default `n_batch=10` (spec wanted 15 but it fires the 5 % sea-crossing invariant at safe K). |
+| `c419415` | 2.5.G | Basin post-process CC labelling — `MIN_INTERNAL_LAKE_CELLS=8` Von4 + `basin_partition_post_erosion_well_formed` invariant. Defensive on real terrain today (PitFill fills all interior depressions); ready for Sprint 3 SPACE-lite deposition lakes. +3 tests. |
+| `93f7c5b` | 2.5.Ja | 6 biome suitability bells widened (`suitability.rs` only, zero `climate/` changes per 2.5.Jb scope split). `volcanic_single` collapses 3 biomes → 5 biomes ≥ 3 % coverage. Wind 180° swing → ~14 % argmax flip. Golden-seed snapshots regen. +1 diversity regression test. |
+| `e186756` | 2.5.Ja regen | Cascade regen of all 3 `--headless` baselines for `dominant_biome` + `hex_aggregated` hash drift. Non-biome truth hashes bit-identical. |
+| `10c77d1` | 2.5.B + D | `HexDebugAttributes` sibling struct (2 fields initially: `slope_variance` + `accessibility_cost`) + 2 per-cell broadcast caches + 2 new overlays (`hex_projection_error`, `hex_accessibility`). `OverlayRegistry::sprint_2_defaults → sprint_2_5_defaults` rename (no compat shim). `W_SLOPE / W_RIVER / W_CLIFF = 3.0 / 2.0 / 5.0` locked constants. +6 tests. |
+| `c8730dd` | 2.5.A + C | `ViewMode` enum (`Continuous` / `HexOverlay` / `HexOnly`) + Camera-panel ComboBox + `saved_visibility` baseline snapshot that survives intermediate hops. `HexRiverCrossing` type (4 box edges, not 6 hex — real-hex rework is Sprint 5 S1) as `HexDebugAttributes` 3rd field + per-hex entry/exit argmin/argmax accumulation + Bresenham mask rasterisation + new `hex_river_crossing` mask overlay. No new wgpu pipeline. +5 tests. |
+| `554f4f7` | 2.5.E | Sprint 1B baseline 9 → 15 shots. `schema_version` 1 → 2. 6 new wind-varying shots exercising `preset_override.prevailing_wind_dir`. Byte-level `soil_moisture` hash divergence confirmed on opposing wind directions. Permanent-manual exclusion of `01_baseline_camera_overlays_panels` documented in new README. |
+| `1073f4e` | 2.5.K | `OverlayDescriptor.alpha: f32` (default 0.6) + OverlayPanel `[checkbox][slider][label]` per descriptor row, iterating `registry.entries_mut()` — zero hardcoded overlay counts. `OverlayRenderer::draw` writes per-frame alpha uniforms. Beauty PNG bit-identical. +1 test. |
+| `4dc75ed` | 2.5.H | `ValueRange::LogCompressedClampPercentile(f32)` variant — computes p-quantile of `ln(1+value)` at bake time instead of clamping on max. `flow_accumulation` descriptor switches to `LogCompressedClampPercentile(0.99)`; `volcanic_twin` distribution P90/max = 0.023 established the washout mathematically. Cascade regen of `flow_accumulation` hash across all 3 baselines; other overlays bit-identical. |
+
+**Deferred within Sprint 2.5:**
+
+- **2.5.I — dither A/B audit**: needs interactive display for the
+  ±½ LSB banding comparison; headless PNG readback loses the
+  subpixel rendering that would reveal the banding. Memo in
+  `docs/design/sprints/sprint_2_5_visual_acceptance/dither_ab_audit.md`
+  (local-only). No code change — the dither stays in `terrain.wgsl`.
+- **2.5.L — blue-noise size toggle**: dependency-gated on 2.5.I per
+  the spec decision tree. Re-opens when 2.5.I resolves.
+
+**Sprint 2.5 plan key decisions (locked):**
+
+- **Hex tessellation is boxes, not hexes**: `crates/hex/src/lib.rs`
+  builds an axis-aligned rectangular tiling per Sprint 1B. Sprint 2.5
+  `HexRiverCrossing` uses 4 box edges (0=top, 1=right, 2=bottom,
+  3=left); Sprint 5 S1 does the real-hex rework and will expand to
+  6 edges. `HexRiverCrossing` lives inside `HexDebugAttributes` (not
+  `HexAttributes`) precisely to isolate that future expansion.
+- **`HexAttributes` stays at 8 fields** (§2 不做 #7 + roadmap §Sprint
+  2.5 line 1712). All Sprint 2.5 hex debug data lives in
+  `HexDebugAttributes` sibling struct. Sprint 3 / 4 don't read it;
+  Sprint 5 S2 settlement consumers can redesign it freely.
+- **`OverlayRegistry::sprint_2_5_defaults` = 16 descriptors**: 13
+  from Sprint 2 + 3 new from Sprint 2.5 (`hex_projection_error`,
+  `hex_accessibility`, `hex_river_crossing`). No `sprint_2_defaults`
+  backwards-compat alias — call sites updated directly per CLAUDE.md.
+- **ViewMode snapshot policy**: `saved_visibility` holds the
+  Continuous baseline whenever `view_mode != Continuous`. Snapshot
+  taken on first departure from Continuous, cleared on return. So
+  `Continuous → HexOverlay → HexOnly → Continuous` restores the
+  user's original state exactly, instead of carrying HexOverlay's
+  `hex_aggregated=true` side-effect into the restore.
+- **Accessibility cost formula**: `1 + 3·mean_slope + 2·river_penalty
+  + 5·cliff_penalty`, with cliff_penalty = fraction of sim cells in
+  hex (including sea) that are `CoastType::Cliff`. Sprint 5 S2
+  settlement is the real consumer; 2.5.D just makes the formula
+  observable in the debug overlay.
+- **Ecology tuning is `ecology/` only**: Sprint 2.5.Jb (climate
+  constants) explicitly deferred to Sprint 3 LFPM v3. A broader
+  `CONDENSATION_RATE` / `RAIN_SHADOW_K` re-tune would have been
+  throwaway work ahead of the LFPM v3 precipitation model.
+- **Flow accumulation fix via percentile-clamp, not palette change**:
+  Turbo is Sprint 1A spec-locked. The washout is in the `ln(1+max)`
+  tail-driven ceiling, not in the palette. `LogCompressedClampPercentile(0.99)`
+  is the minimal change — generic enough to re-use on any future
+  long-tail overlay.
+
+**Invariants preserved:** `cargo tree -p core` still clean;
+`WorldState` 3-layer structure unchanged (new fields in `derived`
+only); `ScalarField2D<T>` + aliases unchanged; descriptor-based
+overlay system preserved (`alpha: f32` is a descriptor field, not
+a closure); string keys still confined to `render/src/overlay.rs`;
+all 8 architectural invariants green. `HexAttributes` still 8
+fields. `StageId` enum unchanged (no new stages this sprint).
+
+---
 
 ### Sprint 2 — Geomorph Credibility (2026-04-18, 21 commits on `dev`)
 
