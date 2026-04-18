@@ -1,0 +1,647 @@
+//! Stage-output cache invalidation helper.
+//!
+//! [`invalidate_from`] is the single call site for clearing `derived.*` and
+//! `baked.*` fields produced by stages at or after a given [`StageId`]
+//! frontier. The caller is expected to follow up with
+//! [`island_core::pipeline::SimulationPipeline::run_from`] to rebuild them.
+
+use crate::StageId;
+use island_core::world::WorldState;
+
+/// Clear all `derived.*` and `baked.*` fields produced by stages at or
+/// after `from`. Caller is expected to follow up with
+/// `SimulationPipeline::run_from(&mut world, from as usize)` to rebuild
+/// them.
+///
+/// Does NOT mutate `authoritative.*` — those are world truth and belong to
+/// whichever code path just wrote them (e.g. `StreamPowerIncisionStage`
+/// writing back to `authoritative.height` in Sprint 2).
+///
+/// Does NOT call the pipeline. The name is `invalidate_from`, not
+/// `rerun_from` — keep the two actions separate so the caller can batch
+/// multiple mutations before one rerun.
+///
+/// Lives in `sim`, not `core`: the mapping "`StageId::X` → which
+/// `derived`/`baked` fields X produces" is pipeline policy, and
+/// `StageId` itself is defined in `sim`. Putting this on
+/// `WorldState::impl` would force `core → sim` reverse dep (violates
+/// the Sprint 0 crate DAG / CLAUDE.md invariant #1).
+///
+/// Default frontier for `authoritative.height` mutation (Sprint 2
+/// erosion and any future edit path) is `StageId::Coastal` — conservative
+/// because height mutation may move cells across the sea-level threshold
+/// and invalidate `coast_mask`. Advancing to `PitFill` requires a proof
+/// (empirical test) that no cell crosses sea level; that optimisation is
+/// NOT in scope for Sprint 1D or Sprint 2.
+///
+/// # Example
+///
+/// ```
+/// use island_core::{seed::Seed, world::{Resolution, WorldState}};
+/// use island_core::preset::{IslandAge, IslandArchetypePreset};
+/// use sim::{default_pipeline, StageId, invalidate_from};
+///
+/// let preset = IslandArchetypePreset {
+///     name: "example".into(),
+///     island_radius: 0.5,
+///     max_relief: 0.5,
+///     volcanic_center_count: 1,
+///     island_age: IslandAge::Young,
+///     prevailing_wind_dir: 0.0,
+///     marine_moisture_strength: 0.5,
+///     sea_level: 0.3,
+/// };
+/// let mut world = WorldState::new(Seed(42), preset, Resolution::new(32, 32));
+/// let pipeline = default_pipeline();
+/// pipeline.run(&mut world).expect("pipeline");
+///
+/// // Mutate a preset parameter that affects precipitation onward.
+/// world.preset.prevailing_wind_dir = std::f32::consts::PI;
+/// invalidate_from(&mut world, StageId::Precipitation);
+/// pipeline
+///     .run_from(&mut world, StageId::Precipitation as usize)
+///     .expect("run_from");
+/// ```
+pub fn invalidate_from(world: &mut WorldState, from: StageId) {
+    // Walk every stage from `from` to `HexProjection` (inclusive) and clear
+    // the outputs that stage is responsible for. A raw numeric loop cannot
+    // express this mapping — each StageId writes a different set of
+    // derived/baked fields — so we iterate with an explicit match.
+    //
+    // `StageId` is `#[repr(usize)]` with contiguous discriminants 0..=15,
+    // locked by `stage_id_indices_are_dense_and_canonical`. The `idx` range
+    // is bounded by `StageId::HexProjection as usize = 15`.
+    let start = from as usize;
+    let end = StageId::HexProjection as usize;
+    for idx in start..=end {
+        let stage = match idx {
+            0 => StageId::Topography,
+            1 => StageId::Coastal,
+            2 => StageId::PitFill,
+            3 => StageId::DerivedGeomorph,
+            4 => StageId::FlowRouting,
+            5 => StageId::Accumulation,
+            6 => StageId::Basins,
+            7 => StageId::RiverExtraction,
+            8 => StageId::Temperature,
+            9 => StageId::Precipitation,
+            10 => StageId::FogLikelihood,
+            11 => StageId::Pet,
+            12 => StageId::WaterBalance,
+            13 => StageId::SoilMoisture,
+            14 => StageId::BiomeWeights,
+            15 => StageId::HexProjection,
+            _ => unreachable!("idx is bounded by HexProjection = 15"),
+        };
+        clear_stage_outputs(world, stage);
+    }
+}
+
+/// Clear only the `derived.*` / `baked.*` fields that `stage` is
+/// responsible for writing.
+///
+/// Every arm lists exactly the fields that the corresponding `SimulationStage`
+/// assigns in its `run` method. Adding a new `StageId` variant requires a
+/// matching arm here — the `stage_id_indices_are_dense_and_canonical` test
+/// enforces the enum is dense, which makes a missing arm a compile-time
+/// exhaustive-match error.
+fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
+    match stage {
+        // TopographyStage: writes derived.initial_uplift.
+        // (authoritative.height + authoritative.sediment are NOT cleared —
+        //  they are world truth, not caches.)
+        StageId::Topography => {
+            world.derived.initial_uplift = None;
+        }
+
+        // CoastMaskStage: writes derived.coast_mask + derived.shoreline_normal.
+        StageId::Coastal => {
+            world.derived.coast_mask = None;
+            world.derived.shoreline_normal = None;
+        }
+
+        // PitFillStage: writes derived.z_filled.
+        StageId::PitFill => {
+            world.derived.z_filled = None;
+        }
+
+        // DerivedGeomorphStage: writes derived.slope + derived.curvature.
+        StageId::DerivedGeomorph => {
+            world.derived.slope = None;
+            world.derived.curvature = None;
+        }
+
+        // FlowRoutingStage: writes derived.flow_dir.
+        StageId::FlowRouting => {
+            world.derived.flow_dir = None;
+        }
+
+        // AccumulationStage: writes derived.accumulation.
+        StageId::Accumulation => {
+            world.derived.accumulation = None;
+        }
+
+        // BasinsStage: writes derived.basin_id.
+        StageId::Basins => {
+            world.derived.basin_id = None;
+        }
+
+        // RiverExtractionStage: writes derived.river_mask and backfills
+        // derived.coast_mask.river_mouth_mask in place.
+        StageId::RiverExtraction => {
+            world.derived.river_mask = None;
+            if let Some(cm) = world.derived.coast_mask.as_mut() {
+                cm.river_mouth_mask = None;
+            }
+        }
+
+        // TemperatureStage: writes baked.temperature.
+        StageId::Temperature => {
+            world.baked.temperature = None;
+        }
+
+        // PrecipitationStage: writes baked.precipitation.
+        StageId::Precipitation => {
+            world.baked.precipitation = None;
+        }
+
+        // FogLikelihoodStage: writes derived.fog_likelihood.
+        StageId::FogLikelihood => {
+            world.derived.fog_likelihood = None;
+        }
+
+        // PetStage: writes derived.pet.
+        StageId::Pet => {
+            world.derived.pet = None;
+        }
+
+        // WaterBalanceStage: writes derived.et + derived.runoff.
+        StageId::WaterBalance => {
+            world.derived.et = None;
+            world.derived.runoff = None;
+        }
+
+        // SoilMoistureStage: writes baked.soil_moisture.
+        StageId::SoilMoisture => {
+            world.baked.soil_moisture = None;
+        }
+
+        // BiomeWeightsStage: writes baked.biome_weights + derived.dominant_biome_per_cell.
+        StageId::BiomeWeights => {
+            world.baked.biome_weights = None;
+            world.derived.dominant_biome_per_cell = None;
+        }
+
+        // HexProjectionStage: writes derived.hex_grid + derived.hex_attrs
+        // + derived.hex_dominant_per_cell.
+        StageId::HexProjection => {
+            world.derived.hex_grid = None;
+            world.derived.hex_attrs = None;
+            world.derived.hex_dominant_per_cell = None;
+        }
+    }
+}
+
+// ─── tests ────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use island_core::preset::{IslandAge, IslandArchetypePreset};
+    use island_core::seed::Seed;
+    use island_core::world::{Resolution, WorldState};
+
+    fn test_preset() -> IslandArchetypePreset {
+        IslandArchetypePreset {
+            name: "invalidation_test".into(),
+            island_radius: 0.5,
+            max_relief: 0.5,
+            volcanic_center_count: 1,
+            island_age: IslandAge::Young,
+            prevailing_wind_dir: 0.0,
+            marine_moisture_strength: 0.5,
+            sea_level: 0.3,
+        }
+    }
+
+    /// Run the full canonical pipeline on a fresh 64×64 world.
+    fn run_full(seed: u64) -> WorldState {
+        let mut world = WorldState::new(Seed(seed), test_preset(), Resolution::new(64, 64));
+        crate::default_pipeline()
+            .run(&mut world)
+            .expect("default_pipeline run");
+        world
+    }
+
+    // ── Test 1: invalidate_from(Topography) wipes every derived and baked field ─
+
+    /// After a full pipeline run, `invalidate_from(Topography)` must set every
+    /// `derived.*` and `baked.*` Option field to `None`. `seed`, `preset`,
+    /// `resolution`, and `authoritative.*` must be unchanged.
+    #[test]
+    fn invalidate_from_topography_clears_every_derived_and_baked_field() {
+        let mut world = run_full(42);
+
+        // Sanity: authoritative fields were populated by TopographyStage.
+        assert!(world.authoritative.height.is_some());
+        assert!(world.authoritative.sediment.is_some());
+        let orig_seed = world.seed;
+        let orig_preset = world.preset.clone();
+        let orig_resolution = world.resolution;
+        // Capture authoritative bytes to prove they are untouched.
+        let height_bytes = world.authoritative.height.as_ref().unwrap().data.clone();
+        let sediment_bytes = world.authoritative.sediment.as_ref().unwrap().data.clone();
+
+        invalidate_from(&mut world, StageId::Topography);
+
+        // ── authoritative is UNCHANGED ────────────────────────────────────────
+        assert_eq!(world.seed, orig_seed);
+        assert_eq!(world.preset, orig_preset);
+        assert_eq!(world.resolution, orig_resolution);
+        assert_eq!(
+            world.authoritative.height.as_ref().unwrap().data,
+            height_bytes,
+            "authoritative.height must not be touched by invalidate_from"
+        );
+        assert_eq!(
+            world.authoritative.sediment.as_ref().unwrap().data,
+            sediment_bytes,
+            "authoritative.sediment must not be touched by invalidate_from"
+        );
+
+        // ── every derived.* field is None ─────────────────────────────────────
+        assert!(world.derived.initial_uplift.is_none(), "initial_uplift");
+        assert!(world.derived.coast_mask.is_none(), "coast_mask");
+        assert!(world.derived.shoreline_normal.is_none(), "shoreline_normal");
+        assert!(world.derived.z_filled.is_none(), "z_filled");
+        assert!(world.derived.slope.is_none(), "slope");
+        assert!(world.derived.curvature.is_none(), "curvature");
+        assert!(world.derived.flow_dir.is_none(), "flow_dir");
+        assert!(world.derived.accumulation.is_none(), "accumulation");
+        assert!(world.derived.basin_id.is_none(), "basin_id");
+        assert!(world.derived.river_mask.is_none(), "river_mask");
+        assert!(world.derived.fog_likelihood.is_none(), "fog_likelihood");
+        assert!(world.derived.pet.is_none(), "pet");
+        assert!(world.derived.et.is_none(), "et");
+        assert!(world.derived.runoff.is_none(), "runoff");
+        assert!(world.derived.hex_grid.is_none(), "hex_grid");
+        assert!(world.derived.hex_attrs.is_none(), "hex_attrs");
+        assert!(
+            world.derived.dominant_biome_per_cell.is_none(),
+            "dominant_biome_per_cell"
+        );
+        assert!(
+            world.derived.hex_dominant_per_cell.is_none(),
+            "hex_dominant_per_cell"
+        );
+
+        // ── every baked.* field is None ───────────────────────────────────────
+        assert!(world.baked.temperature.is_none(), "baked.temperature");
+        assert!(world.baked.precipitation.is_none(), "baked.precipitation");
+        assert!(world.baked.soil_moisture.is_none(), "baked.soil_moisture");
+        assert!(world.baked.biome_weights.is_none(), "baked.biome_weights");
+    }
+
+    // ── Test 2: mid-pipeline invalidation preserves upstream caches ───────────
+
+    /// After `invalidate_from(Accumulation)`, all stages before `Accumulation`
+    /// must still have their outputs populated; `Accumulation` and every
+    /// downstream stage must have their outputs cleared.
+    #[test]
+    fn invalidate_from_accumulation_preserves_upstream_preserves_flow_dir_and_z_filled() {
+        let mut world = run_full(42);
+
+        invalidate_from(&mut world, StageId::Accumulation);
+
+        // ── Stages 0..=4 outputs remain populated (upstream of Accumulation) ──
+        // Topography (0)
+        assert!(
+            world.derived.initial_uplift.is_some(),
+            "initial_uplift must be preserved (upstream of Accumulation)"
+        );
+        // Coastal (1)
+        assert!(
+            world.derived.coast_mask.is_some(),
+            "coast_mask must be preserved"
+        );
+        assert!(
+            world.derived.shoreline_normal.is_some(),
+            "shoreline_normal must be preserved"
+        );
+        // PitFill (2)
+        assert!(
+            world.derived.z_filled.is_some(),
+            "z_filled must be preserved"
+        );
+        // DerivedGeomorph (3)
+        assert!(world.derived.slope.is_some(), "slope must be preserved");
+        assert!(
+            world.derived.curvature.is_some(),
+            "curvature must be preserved"
+        );
+        // FlowRouting (4)
+        assert!(
+            world.derived.flow_dir.is_some(),
+            "flow_dir must be preserved (directly upstream of Accumulation)"
+        );
+
+        // ── Accumulation (5) output is cleared ────────────────────────────────
+        assert!(
+            world.derived.accumulation.is_none(),
+            "accumulation must be None (invalidated)"
+        );
+
+        // ── All downstream stage outputs are also cleared ──────────────────────
+        // Basins (6)
+        assert!(world.derived.basin_id.is_none(), "basin_id must be None");
+        // RiverExtraction (7)
+        assert!(
+            world.derived.river_mask.is_none(),
+            "river_mask must be None"
+        );
+        // Temperature (8)
+        assert!(
+            world.baked.temperature.is_none(),
+            "baked.temperature must be None"
+        );
+        // Precipitation (9)
+        assert!(
+            world.baked.precipitation.is_none(),
+            "baked.precipitation must be None"
+        );
+        // FogLikelihood (10)
+        assert!(
+            world.derived.fog_likelihood.is_none(),
+            "fog_likelihood must be None"
+        );
+        // Pet (11)
+        assert!(world.derived.pet.is_none(), "pet must be None");
+        // WaterBalance (12)
+        assert!(world.derived.et.is_none(), "et must be None");
+        assert!(world.derived.runoff.is_none(), "runoff must be None");
+        // SoilMoisture (13)
+        assert!(
+            world.baked.soil_moisture.is_none(),
+            "baked.soil_moisture must be None"
+        );
+        // BiomeWeights (14)
+        assert!(
+            world.baked.biome_weights.is_none(),
+            "baked.biome_weights must be None"
+        );
+        assert!(
+            world.derived.dominant_biome_per_cell.is_none(),
+            "dominant_biome_per_cell must be None"
+        );
+        // HexProjection (15)
+        assert!(world.derived.hex_grid.is_none(), "hex_grid must be None");
+        assert!(world.derived.hex_attrs.is_none(), "hex_attrs must be None");
+        assert!(
+            world.derived.hex_dominant_per_cell.is_none(),
+            "hex_dominant_per_cell must be None"
+        );
+    }
+
+    // ── Test 3: invalidate + run_from == fresh full run ───────────────────────
+
+    /// Compute a deterministic composite hash over every `derived` and `baked`
+    /// field that the full pipeline populates. Used to assert bit-exact
+    /// equivalence between two world states after running the same pipeline.
+    ///
+    /// Uses blake3 directly so `data` does not need to be a dev-dep.
+    fn world_cache_hash(world: &WorldState) -> [u8; 32] {
+        let mut hasher = blake3::Hasher::new();
+
+        // Helper closures to feed typed slice data into the hasher using
+        // explicit little-endian byte encoding, consistent with the per-field
+        // `.to_le_bytes()` calls used for `shoreline_normal` and `hex_attrs`.
+        let hash_f32 = |h: &mut blake3::Hasher, data: &[f32]| {
+            for v in data {
+                h.update(&v.to_le_bytes());
+            }
+        };
+        let hash_u32 = |h: &mut blake3::Hasher, data: &[u32]| {
+            for v in data {
+                h.update(&v.to_le_bytes());
+            }
+        };
+
+        // ── derived fields ─────────────────────────────────────────────────────
+        hash_f32(
+            &mut hasher,
+            &world
+                .derived
+                .initial_uplift
+                .as_ref()
+                .expect("initial_uplift")
+                .data,
+        );
+
+        {
+            let cm = world.derived.coast_mask.as_ref().expect("coast_mask");
+            hasher.update(&cm.is_land.data);
+            hasher.update(&cm.is_sea.data);
+            hasher.update(&cm.is_coast.data);
+            if let Some(rmm) = &cm.river_mouth_mask {
+                hasher.update(&rmm.data);
+            }
+        }
+
+        {
+            let sn = world
+                .derived
+                .shoreline_normal
+                .as_ref()
+                .expect("shoreline_normal");
+            // VectorField2D = ScalarField2D<[f32;2]>; each element is [f32;2].
+            for pair in &sn.data {
+                hasher.update(&pair[0].to_le_bytes());
+                hasher.update(&pair[1].to_le_bytes());
+            }
+        }
+
+        hash_f32(
+            &mut hasher,
+            &world.derived.z_filled.as_ref().expect("z_filled").data,
+        );
+        hash_f32(
+            &mut hasher,
+            &world.derived.slope.as_ref().expect("slope").data,
+        );
+        hash_f32(
+            &mut hasher,
+            &world.derived.curvature.as_ref().expect("curvature").data,
+        );
+        hasher.update(&world.derived.flow_dir.as_ref().expect("flow_dir").data);
+        hash_f32(
+            &mut hasher,
+            &world
+                .derived
+                .accumulation
+                .as_ref()
+                .expect("accumulation")
+                .data,
+        );
+        hash_u32(
+            &mut hasher,
+            &world.derived.basin_id.as_ref().expect("basin_id").data,
+        );
+        hasher.update(&world.derived.river_mask.as_ref().expect("river_mask").data);
+        hash_f32(
+            &mut hasher,
+            &world
+                .derived
+                .fog_likelihood
+                .as_ref()
+                .expect("fog_likelihood")
+                .data,
+        );
+        hash_f32(&mut hasher, &world.derived.pet.as_ref().expect("pet").data);
+        hash_f32(&mut hasher, &world.derived.et.as_ref().expect("et").data);
+        hash_f32(
+            &mut hasher,
+            &world.derived.runoff.as_ref().expect("runoff").data,
+        );
+        hash_u32(
+            &mut hasher,
+            &world
+                .derived
+                .dominant_biome_per_cell
+                .as_ref()
+                .expect("dominant_biome_per_cell")
+                .data,
+        );
+        hash_u32(
+            &mut hasher,
+            &world
+                .derived
+                .hex_dominant_per_cell
+                .as_ref()
+                .expect("hex_dominant_per_cell")
+                .data,
+        );
+
+        {
+            let hg = world.derived.hex_grid.as_ref().expect("hex_grid");
+            hash_u32(&mut hasher, &hg.hex_id_of_cell.data);
+        }
+
+        {
+            let ha = world.derived.hex_attrs.as_ref().expect("hex_attrs");
+            for attr in &ha.attrs {
+                hasher.update(&attr.elevation.to_le_bytes());
+                hasher.update(&attr.slope.to_le_bytes());
+                hasher.update(&attr.rainfall.to_le_bytes());
+                hasher.update(&attr.temperature.to_le_bytes());
+                hasher.update(&attr.moisture.to_le_bytes());
+                for w in &attr.biome_weights {
+                    hasher.update(&w.to_le_bytes());
+                }
+            }
+        }
+
+        // ── baked fields ───────────────────────────────────────────────────────
+        hash_f32(
+            &mut hasher,
+            &world
+                .baked
+                .temperature
+                .as_ref()
+                .expect("baked.temperature")
+                .data,
+        );
+        hash_f32(
+            &mut hasher,
+            &world
+                .baked
+                .precipitation
+                .as_ref()
+                .expect("baked.precipitation")
+                .data,
+        );
+        hash_f32(
+            &mut hasher,
+            &world
+                .baked
+                .soil_moisture
+                .as_ref()
+                .expect("baked.soil_moisture")
+                .data,
+        );
+
+        {
+            let bw = world
+                .baked
+                .biome_weights
+                .as_ref()
+                .expect("baked.biome_weights");
+            for row in &bw.weights {
+                hash_f32(&mut hasher, row.as_slice());
+            }
+        }
+
+        *hasher.finalize().as_bytes()
+    }
+
+    /// Core of Test 3: build two identical worlds, run full pipeline on world_b
+    /// as reference, then run full + invalidate_from(frontier) + run_from on
+    /// world_a, and assert bit-exact equality of all derived/baked caches.
+    fn invalidate_plus_run_from_equals_fresh_run_at(frontier: StageId) {
+        let preset = test_preset();
+        let seed = Seed(42);
+        let res = Resolution::new(64, 64);
+
+        // world_a: full run, then invalidate + run_from
+        let mut world_a = WorldState::new(seed, preset.clone(), res);
+        let pipeline = crate::default_pipeline();
+        pipeline
+            .run(&mut world_a)
+            .expect("world_a initial full run");
+        invalidate_from(&mut world_a, frontier);
+        pipeline
+            .run_from(&mut world_a, frontier as usize)
+            .expect("world_a run_from");
+
+        // world_b: single clean full run (reference)
+        let mut world_b = WorldState::new(seed, preset, res);
+        pipeline.run(&mut world_b).expect("world_b full run");
+
+        let hash_a = world_cache_hash(&world_a);
+        let hash_b = world_cache_hash(&world_b);
+
+        assert_eq!(
+            hash_a, hash_b,
+            "invalidate_from({frontier:?}) + run_from must produce bit-exact output matching a fresh full run"
+        );
+    }
+
+    #[test]
+    fn invalidate_plus_run_from_equals_fresh_run_coastal() {
+        invalidate_plus_run_from_equals_fresh_run_at(StageId::Coastal);
+    }
+
+    #[test]
+    fn invalidate_plus_run_from_equals_fresh_run_pit_fill() {
+        invalidate_plus_run_from_equals_fresh_run_at(StageId::PitFill);
+    }
+
+    #[test]
+    fn invalidate_plus_run_from_equals_fresh_run_derived_geomorph() {
+        invalidate_plus_run_from_equals_fresh_run_at(StageId::DerivedGeomorph);
+    }
+
+    #[test]
+    fn invalidate_plus_run_from_equals_fresh_run_precipitation() {
+        invalidate_plus_run_from_equals_fresh_run_at(StageId::Precipitation);
+    }
+
+    #[test]
+    fn invalidate_plus_run_from_equals_fresh_run_biome_weights() {
+        invalidate_plus_run_from_equals_fresh_run_at(StageId::BiomeWeights);
+    }
+
+    #[test]
+    fn invalidate_plus_run_from_equals_fresh_run_hex_projection() {
+        invalidate_plus_run_from_equals_fresh_run_at(StageId::HexProjection);
+    }
+}

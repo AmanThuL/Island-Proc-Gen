@@ -11,6 +11,7 @@ pub mod ecology;
 pub mod geomorph;
 pub mod hex_projection;
 pub mod hydro;
+pub mod invalidation;
 pub mod validation_stage;
 
 pub use climate::FogLikelihoodStage;
@@ -29,6 +30,7 @@ pub use hydro::PetStage;
 pub use hydro::RiverExtractionStage;
 pub use hydro::SoilMoistureStage;
 pub use hydro::WaterBalanceStage;
+pub use invalidation::invalidate_from;
 pub use validation_stage::ValidationStage;
 
 use island_core::pipeline::SimulationPipeline;
