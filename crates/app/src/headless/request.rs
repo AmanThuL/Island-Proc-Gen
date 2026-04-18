@@ -63,7 +63,7 @@ impl PresetOverride {
         if let Some(v) = self.sea_level {
             preset.sea_level = v;
         }
-        if let Some(ref v) = self.erosion {
+        if let Some(v) = &self.erosion {
             preset.erosion = v.clone();
         }
     }
@@ -159,7 +159,7 @@ pub struct CaptureShot {
 /// Specification for the deterministic CPU truth path.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct TruthSpec {
-    /// Overlay IDs to export; each must exist in the 12-descriptor registry.
+    /// Overlay IDs to export; each must exist in the Sprint 2 13-descriptor registry.
     pub overlays: Vec<String>,
 
     /// When `true` (default), write a `metrics.ron` alongside the overlay PNGs.

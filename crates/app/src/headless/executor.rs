@@ -195,8 +195,14 @@ pub fn run_request(request_path: &Path) -> Result<OverallStatus> {
     };
 
     // ── Build summary + write ────────────────────────────────────────────────
+    // Propagate the request's schema_version into the output so that
+    // `--headless-validate` against a Sprint 1C v1 baseline continues to
+    // exit 0 under a v2 binary: the checked-in summary.ron is stamped
+    // `schema_version: 1`, and a re-run of the v1 request writes a fresh
+    // summary also stamped `schema_version: 1`, letting `compare.rs`'s
+    // SchemaVersionMismatch check pass.
     let summary = RunSummary {
-        schema_version: 1,
+        schema_version: req.schema_version,
         run_id,
         request_fingerprint: fingerprint,
         timestamp_utc: timestamp,
@@ -265,7 +271,7 @@ pub fn run_shot(
     let mut overlay_hashes: BTreeMap<String, String> = BTreeMap::new();
     for overlay_id in &shot.truth.overlays {
         let Some(desc) = registry.by_id(overlay_id) else {
-            bail!("overlay id {overlay_id:?} is not registered in the Sprint 1B overlay registry");
+            bail!("overlay id {overlay_id:?} is not registered in the overlay registry");
         };
         let Some((rgba, w, h)) = bake_overlay_to_rgba8(desc, &world) else {
             bail!(
@@ -386,7 +392,7 @@ fn render_beauty_shot(
     for id in &beauty.overlay_stack {
         if registry.by_id(id).is_none() {
             bail!(
-                "beauty overlay_stack references unknown overlay id {id:?}; it is not in the Sprint 1B registry"
+                "beauty overlay_stack references unknown overlay id {id:?}; it is not in the overlay registry"
             );
         }
         registry.set_visibility(id, true);

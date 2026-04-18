@@ -25,7 +25,11 @@ use crate::headless::request::CaptureRequest;
 /// Top-level summary written to `<run_dir>/summary.ron` after a headless run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSummary {
-    /// Always `1` for Sprint 1C.
+    /// Mirrors `CaptureRequest.schema_version` — the output summary
+    /// declares the same schema its request did. Sprint 1C shipped v1;
+    /// Sprint 2 added v2 (for `CaptureShot.preset_override`). A v1 request
+    /// file against a v1 baseline continues to exit 0 under a v2 binary
+    /// because the summary's `schema_version` echoes the request's.
     pub schema_version: u32,
     /// Stable identifier for this run (first 16 hex chars of the request
     /// fingerprint when not explicitly supplied).
