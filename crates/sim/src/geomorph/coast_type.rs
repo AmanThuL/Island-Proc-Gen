@@ -17,22 +17,29 @@ use island_core::preset::IslandAge;
 use island_core::world::{CoastType, WorldState};
 
 // ─── Classification constants (DD4) ──────────────────────────────────────────
+//
+// v1 thresholds were calibrated against a hypothetical "18 % relief drop on
+// volcanic_single" projection (sprint doc DD1). Task 2.6 empirical measurement
+// showed coastal slope magnitudes rarely exceed 0.15 under the safe K=2e-3
+// calibration, so the v1 constants (0.30/0.18/0.05/0.30) put 100 % of coast
+// cells in the Beach bin. Tuned to v1.1 values below to satisfy §11 open
+// problem #3 ("每 type 至少 5 % 占比 per preset × hero shot").
 
 /// Slope threshold above which a coast cell qualifies as a cliff if also
 /// facing into the prevailing wind (`exposure > EXPOSURE_HIGH`).
-pub const S_CLIFF_HIGH: f32 = 0.30;
+pub const S_CLIFF_HIGH: f32 = 0.07;
 
 /// Slope threshold above which a coast cell qualifies as a rocky headland
 /// when young or when leeward (slope > S_CLIFF_MID but not wind-exposed enough
 /// for Cliff).
-pub const S_CLIFF_MID: f32 = 0.18;
+pub const S_CLIFF_MID: f32 = 0.04;
 
 /// Slope threshold below which a coast cell is classified as a beach.
-pub const S_BEACH_LOW: f32 = 0.05;
+pub const S_BEACH_LOW: f32 = 0.02;
 
 /// Wind-exposure threshold for the Cliff branch. A cell is "windward" when
 /// `exposure = -dot(outward_normal, wind_from_direction) > EXPOSURE_HIGH`.
-pub const EXPOSURE_HIGH: f32 = 0.30;
+pub const EXPOSURE_HIGH: f32 = 0.05;
 
 // ─── CoastTypeStage ───────────────────────────────────────────────────────────
 
@@ -274,7 +281,7 @@ mod tests {
 
     #[test]
     fn coast_type_rocky_headland_when_steep_leeward_or_young() {
-        // slope > S_CLIFF_MID (0.20 > 0.18), exposure < EXPOSURE_HIGH (leeward)
+        // slope > S_CLIFF_MID (0.20 > 0.06), exposure < EXPOSURE_HIGH (leeward)
         // age_bias = Young → 1.0 ≥ 0.0 → RockyHeadland
         let wind_dir = std::f32::consts::PI; // wind_from = (-1, 0)
         // outward normal = (-1, 0) → exposure = -((-1)*(-1) + 0*0) = -1 < EXPOSURE_HIGH
@@ -292,10 +299,10 @@ mod tests {
 
     #[test]
     fn coast_type_beach_when_shallow() {
-        // slope 0.02 < S_BEACH_LOW (0.05)
+        // slope 0.015 < S_BEACH_LOW (0.02)
         let wind_dir = 0.0_f32;
         let mut world = build_world_with_coast_cell(
-            0.02,
+            0.015,
             false,
             [0.0, 1.0], // any normal
             IslandAge::Old,
@@ -309,25 +316,25 @@ mod tests {
 
     #[test]
     fn coast_type_catch_all_rocky_headland_for_medium_slope_low_exposure() {
-        // slope 0.1: between S_BEACH_LOW (0.05) and S_CLIFF_MID (0.18)
-        // exposure -0.1 (leeward): no Cliff or RockyHeadland via steep path
-        // Not a beach (slope > S_BEACH_LOW)
-        // age_bias = Young → 1.0 ≥ 0.0, but slope ≤ S_CLIFF_MID → no RockyHeadland via that path
-        // Falls through to catch-all RockyHeadland
+        // slope 0.04: between S_BEACH_LOW (0.02) and S_CLIFF_MID (0.06).
+        // Not a Beach (slope > S_BEACH_LOW), exposure -0.1 < EXPOSURE_HIGH so
+        // not a Cliff, and age_bias = Old (−1 < 0) fails the mid-slope
+        // RockyHeadland-via-MID branch. Falls through to catch-all
+        // RockyHeadland.
         let wind_dir = 0.0_f32; // wind_from = (1, 0)
         // Want exposure = -0.1: -(n[0]*1 + n[1]*0) = -n[0] = -0.1 → n[0] = 0.1
         let mut world = build_world_with_coast_cell(
-            0.10,
+            0.04,
             false,
             [0.1, 0.0], // n[0]=0.1 → exposure = -0.1
-            IslandAge::Young,
+            IslandAge::Old,
             wind_dir,
         );
         let out = run_and_get(&mut world);
         assert_eq!(
             out[4],
             CoastType::RockyHeadland as u8,
-            "medium slope + leeward → fall-through RockyHeadland"
+            "medium slope + leeward + Old → fall-through RockyHeadland"
         );
     }
 

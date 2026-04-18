@@ -100,7 +100,15 @@ pub struct ErosionParams {
 }
 
 fn default_spim_k() -> f32 {
-    1.0e-3
+    // Calibrated for Sprint 2.6 Follow-up B. v1's 1e-3 produced only
+    // ~0.16–2 % max_z drop across presets (far below the sprint doc DD1
+    // "~18 %" projection). Empirical Pareto search on 128² showed 2e-3 was
+    // the next safe step — but that fails on 64² (small-grid tests trip the
+    // 5 % sea-crossing invariant because absolute sea-cell counts ≈ 30 on
+    // volcanic_single synthetic 64² out of ~600 land cells). 1.5e-3 is
+    // the largest K that is safe across all grid sizes tested (64²/128²/
+    // 256²) for the three stock presets.
+    1.5e-3
 }
 fn default_spim_m() -> f32 {
     0.35
@@ -221,7 +229,7 @@ mod tests {
     #[test]
     fn erosion_params_defaults_match_locked_constants() {
         let ep = ErosionParams::default();
-        assert_eq!(ep.spim_k, 1.0e-3, "spim_k");
+        assert_eq!(ep.spim_k, 1.5e-3, "spim_k");
         assert_eq!(ep.spim_m, 0.35, "spim_m");
         assert_eq!(ep.spim_n, 1.0, "spim_n");
         assert_eq!(ep.hillslope_d, 1.0e-3, "hillslope_d");
