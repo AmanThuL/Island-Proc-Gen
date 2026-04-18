@@ -38,7 +38,7 @@ use island_core::world::WorldState;
 ///
 /// ```
 /// use island_core::{seed::Seed, world::{Resolution, WorldState}};
-/// use island_core::preset::{IslandAge, IslandArchetypePreset};
+/// use island_core::preset::{ErosionParams, IslandAge, IslandArchetypePreset};
 /// use sim::{default_pipeline, StageId, invalidate_from};
 ///
 /// let preset = IslandArchetypePreset {
@@ -50,7 +50,9 @@ use island_core::world::WorldState;
 ///     prevailing_wind_dir: 0.0,
 ///     marine_moisture_strength: 0.5,
 ///     sea_level: 0.3,
-///     erosion: Default::default(),
+///     // n_batch = 0: ErosionOuterLoop becomes a no-op so this small
+///     // synthetic grid doesn't trigger the sea-crossing invariant.
+///     erosion: ErosionParams { n_batch: 0, ..Default::default() },
 /// };
 /// let mut world = WorldState::new(Seed(42), preset, Resolution::new(32, 32));
 /// let pipeline = default_pipeline();

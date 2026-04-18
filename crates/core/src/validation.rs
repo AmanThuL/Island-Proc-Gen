@@ -69,6 +69,47 @@ pub enum ValidationError {
 
     #[error("validation: missing precondition field '{field}' (stage must have run first)")]
     MissingPrecondition { field: &'static str },
+
+    // ── Sprint 2 invariant errors ────────────────────────────────────────────
+    /// A coast cell (is_coast == 1) carries a `coast_type` value outside the
+    /// `0..=3` range defined by [`crate::world::CoastType`].
+    #[error(
+        "coast_type: coast cell at flat index {cell_index} has out-of-range type value {value} (expected 0..=3)"
+    )]
+    CoastTypeOutOfRange { cell_index: usize, value: u8 },
+
+    /// A non-coast cell carries a `coast_type` value other than the sentinel
+    /// `0xFF` (`CoastType::Unknown`).
+    #[error(
+        "coast_type: non-coast cell at flat index {cell_index} has value {value:#04x} (expected 0xFF)"
+    )]
+    NonCoastCellNotUnknown { cell_index: usize, value: u8 },
+
+    /// A height value became non-finite (NaN or ±∞) during erosion.
+    #[error("erosion: height at flat index {cell_index} is non-finite ({value})")]
+    ErosionHeightNonFinite { cell_index: usize, value: f32 },
+
+    /// The post-erosion height maximum grew beyond the pre-erosion ceiling times
+    /// [`EROSION_MAX_GROWTH_FACTOR`].
+    #[error(
+        "erosion: post-erosion max height {max_post} exceeds pre-erosion max {max_pre} * {factor} growth factor"
+    )]
+    ErosionExplosion {
+        max_pre: f32,
+        max_post: f32,
+        factor: f32,
+    },
+
+    /// More than [`EROSION_MAX_SEA_CROSSING_FRACTION`] of the pre-erosion
+    /// land cells crossed the sea-level threshold during erosion.
+    #[error(
+        "erosion: land-cell count changed from {pre_land} to {post_land} ({fraction} fractional delta exceeds 0.05 limit)"
+    )]
+    ErosionExcessiveSeaCrossing {
+        pre_land: u32,
+        post_land: u32,
+        fraction: f32,
+    },
 }
 
 // ─── public validators ────────────────────────────────────────────────────────
@@ -483,6 +524,140 @@ pub fn hex_attrs_present(world: &WorldState) -> Result<(), ValidationError> {
             });
         }
     }
+    Ok(())
+}
+
+// ─── Sprint 2 invariants ──────────────────────────────────────────────────────
+
+/// Maximum ratio by which the post-erosion height ceiling may exceed the
+/// pre-erosion ceiling before `erosion_no_explosion` fires.
+///
+/// Sprint 2 §8: SPIM is a net-transport operator — sediment leaves peaks and
+/// deposits downstream or at the coast. A 5 % growth allowance absorbs
+/// floating-point accumulation rounding across many inner iterations while
+/// still catching genuine numerical blow-up.
+pub const EROSION_MAX_GROWTH_FACTOR: f32 = 1.05;
+
+/// Maximum fraction of pre-erosion land cells that may cross the sea-level
+/// threshold (land → sea) during a single full erosion run before
+/// `erosion_no_excessive_sea_crossing` fires.
+///
+/// Sprint 2 §8: a 5 % sea-crossing limit bounds the worst-case island
+/// shrinkage caused by mis-tuned erosion strength or duration parameters.
+pub const EROSION_MAX_SEA_CROSSING_FRACTION: f32 = 0.05;
+
+/// Every coast cell's `coast_type` byte must be in `0..=3`; every non-coast
+/// cell must carry the sentinel `0xFF` (`CoastType::Unknown`).
+///
+/// Returns `Ok(())` immediately if either `derived.coast_mask` or
+/// `derived.coast_type` is `None` (stage hasn't run yet — skip rather than
+/// error).
+pub fn coast_type_well_formed(world: &WorldState) -> Result<(), ValidationError> {
+    let coast_mask = match world.derived.coast_mask.as_ref() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+    let coast_type = match world.derived.coast_type.as_ref() {
+        Some(ct) => ct,
+        None => return Ok(()),
+    };
+
+    for (i, (&is_coast, &ct_value)) in coast_mask
+        .is_coast
+        .data
+        .iter()
+        .zip(coast_type.data.iter())
+        .enumerate()
+    {
+        if is_coast == 1 && ct_value > 3 {
+            return Err(ValidationError::CoastTypeOutOfRange {
+                cell_index: i,
+                value: ct_value,
+            });
+        } else if is_coast != 1 && ct_value != 0xFF {
+            return Err(ValidationError::NonCoastCellNotUnknown {
+                cell_index: i,
+                value: ct_value,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+/// Post-erosion height field must be finite everywhere, and the new maximum
+/// must not exceed `baseline.max_height_pre * EROSION_MAX_GROWTH_FACTOR`.
+///
+/// Returns `Ok(())` immediately if `authoritative.height` or
+/// `derived.erosion_baseline` is `None` (skip).
+pub fn erosion_no_explosion(world: &WorldState) -> Result<(), ValidationError> {
+    let height = match world.authoritative.height.as_ref() {
+        Some(h) => h,
+        None => return Ok(()),
+    };
+    let baseline = match world.derived.erosion_baseline.as_ref() {
+        Some(b) => b,
+        None => return Ok(()),
+    };
+
+    let mut max_now = f32::NEG_INFINITY;
+    for (i, &v) in height.data.iter().enumerate() {
+        if !v.is_finite() {
+            return Err(ValidationError::ErosionHeightNonFinite {
+                cell_index: i,
+                value: v,
+            });
+        }
+        if v > max_now {
+            max_now = v;
+        }
+    }
+
+    let ceiling = baseline.max_height_pre * EROSION_MAX_GROWTH_FACTOR;
+    if max_now > ceiling {
+        return Err(ValidationError::ErosionExplosion {
+            max_pre: baseline.max_height_pre,
+            max_post: max_now,
+            factor: EROSION_MAX_GROWTH_FACTOR,
+        });
+    }
+
+    Ok(())
+}
+
+/// The fraction of land cells that crossed the sea-level threshold during
+/// erosion must not exceed `EROSION_MAX_SEA_CROSSING_FRACTION`.
+///
+/// Returns `Ok(())` immediately if `derived.coast_mask` or
+/// `derived.erosion_baseline` is `None`, or if `baseline.land_cell_count_pre
+/// == 0` (all-sea preset; skip).
+pub fn erosion_no_excessive_sea_crossing(world: &WorldState) -> Result<(), ValidationError> {
+    let coast_mask = match world.derived.coast_mask.as_ref() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+    let baseline = match world.derived.erosion_baseline.as_ref() {
+        Some(b) => b,
+        None => return Ok(()),
+    };
+
+    let pre = baseline.land_cell_count_pre;
+    if pre == 0 {
+        return Ok(());
+    }
+
+    let post = coast_mask.land_cell_count;
+    let delta = (pre as i64 - post as i64).unsigned_abs() as f32;
+    let fraction = delta / pre as f32;
+
+    if fraction > EROSION_MAX_SEA_CROSSING_FRACTION {
+        return Err(ValidationError::ErosionExcessiveSeaCrossing {
+            pre_land: pre,
+            post_land: post,
+            fraction,
+        });
+    }
+
     Ok(())
 }
 
@@ -1009,5 +1184,224 @@ mod tests {
             err,
             ValidationError::HexBiomeWeightsLengthMismatch { col: 1, row: 1, .. }
         ));
+    }
+
+    // ── Sprint 2 invariant tests ─────────────────────────────────────────────
+
+    use crate::world::ErosionBaseline;
+
+    // Helper: build a WorldState with coast_mask + coast_type for well-formed checks.
+    fn make_coast_type_world(
+        w: u32,
+        h: u32,
+        is_coast_data: Vec<u8>,
+        coast_type_data: Vec<u8>,
+    ) -> WorldState {
+        let n = (w * h) as usize;
+        let is_land: Vec<u8> = is_coast_data.to_vec();
+        let is_sea = vec![0u8; n];
+        let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(w, h));
+        world.derived.coast_mask = Some(make_coast_mask(w, h, is_land, is_sea, is_coast_data));
+        let mut ct = ScalarField2D::<u8>::new(w, h);
+        ct.data = coast_type_data;
+        world.derived.coast_type = Some(ct);
+        world
+    }
+
+    // ── 11: coast_type_well_formed — happy path ───────────────────────────────
+    //
+    // 4 coast cells with types 0/1/2/3 respectively. All valid.
+    #[test]
+    fn coast_type_well_formed_passes_when_coast_cells_have_valid_types() {
+        let world = make_coast_type_world(4, 1, vec![1, 1, 1, 1], vec![0, 1, 2, 3]);
+        assert!(
+            coast_type_well_formed(&world).is_ok(),
+            "expected Ok for coast types 0..=3"
+        );
+    }
+
+    // ── 12: coast_type_well_formed — failure: coast cell with 0xFF ────────────
+    //
+    // Coast cell at index 2 has 0xFF (Unknown sentinel), which is invalid for
+    // a coast cell.
+    #[test]
+    fn coast_type_well_formed_fails_on_coast_cell_with_0xff() {
+        let world = make_coast_type_world(4, 1, vec![1, 1, 1, 0], vec![0, 1, 0xFF, 0xFF]);
+        let err = coast_type_well_formed(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::CoastTypeOutOfRange {
+                    cell_index: 2,
+                    value: 0xFF
+                }
+            ),
+            "expected CoastTypeOutOfRange at index 2, got: {err}"
+        );
+    }
+
+    // ── 12b: coast_type_well_formed — failure: non-coast cell with valid variant ─
+    //
+    // Non-coast cell at index 2 has 0x01 (Beach) instead of the Unknown sentinel.
+    // Guards against a classifier that forgets to initialise non-coast cells.
+    #[test]
+    fn coast_type_well_formed_fails_on_non_coast_cell_with_valid_variant() {
+        let world = make_coast_type_world(4, 1, vec![1, 0, 0, 0], vec![0, 0xFF, 0x01, 0xFF]);
+        let err = coast_type_well_formed(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::NonCoastCellNotUnknown {
+                    cell_index: 2,
+                    value: 0x01
+                }
+            ),
+            "expected NonCoastCellNotUnknown at index 2, got: {err}"
+        );
+    }
+
+    // Helper: build a WorldState with height + erosion_baseline.
+    fn make_erosion_world(
+        w: u32,
+        h: u32,
+        height_data: Vec<f32>,
+        baseline: ErosionBaseline,
+    ) -> WorldState {
+        let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(w, h));
+        let mut height = ScalarField2D::<f32>::new(w, h);
+        height.data = height_data;
+        world.authoritative.height = Some(height);
+        world.derived.erosion_baseline = Some(baseline);
+        world
+    }
+
+    // ── 13: erosion_no_explosion — passes when max is within 1.05x ───────────
+    #[test]
+    fn erosion_no_explosion_passes_at_baseline() {
+        // baseline.max_height_pre = 1.0, current max = 0.95: within 1.05x ceiling.
+        let world = make_erosion_world(
+            2,
+            1,
+            vec![0.95, 0.8],
+            ErosionBaseline {
+                max_height_pre: 1.0,
+                land_cell_count_pre: 2,
+            },
+        );
+        assert!(
+            erosion_no_explosion(&world).is_ok(),
+            "expected Ok when max is below 1.05x baseline"
+        );
+    }
+
+    // ── 14: erosion_no_explosion — fails when max exceeds 1.05x ──────────────
+    #[test]
+    fn erosion_no_explosion_fails_beyond_factor() {
+        // baseline.max_height_pre = 1.0, current max = 1.10: exceeds 1.05x ceiling.
+        let world = make_erosion_world(
+            2,
+            1,
+            vec![1.10, 0.5],
+            ErosionBaseline {
+                max_height_pre: 1.0,
+                land_cell_count_pre: 2,
+            },
+        );
+        let err = erosion_no_explosion(&world).unwrap_err();
+        assert!(
+            matches!(err, ValidationError::ErosionExplosion { .. }),
+            "expected ErosionExplosion, got: {err}"
+        );
+    }
+
+    // Helper: build a WorldState with coast_mask + erosion_baseline for
+    // sea-crossing checks (height not needed).
+    fn make_sea_crossing_world(pre_land: u32, post_land: u32) -> WorldState {
+        let total = pre_land.max(post_land).max(1);
+        let w = total;
+        let h = 1;
+        let n = total as usize;
+
+        let is_land: Vec<u8> = (0..n)
+            .map(|i| if i < post_land as usize { 1 } else { 0 })
+            .collect();
+        let is_sea: Vec<u8> = is_land.iter().map(|&v| 1 - v).collect();
+        let is_coast = vec![0u8; n];
+
+        let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(w, h));
+        world.derived.coast_mask = Some(make_coast_mask(w, h, is_land, is_sea, is_coast));
+        world.derived.erosion_baseline = Some(ErosionBaseline {
+            max_height_pre: 1.0,
+            land_cell_count_pre: pre_land,
+        });
+        world
+    }
+
+    // ── 15: erosion_no_excessive_sea_crossing — passes at 3 % ────────────────
+    //
+    // pre = 1000, post = 970 → 3.0 % delta, below the 5 % limit.
+    #[test]
+    fn erosion_no_excessive_sea_crossing_passes_at_3_percent() {
+        let world = make_sea_crossing_world(1000, 970);
+        assert!(
+            erosion_no_excessive_sea_crossing(&world).is_ok(),
+            "expected Ok for 3% sea crossing"
+        );
+    }
+
+    // ── 16: erosion_no_excessive_sea_crossing — fails at 7 % ─────────────────
+    //
+    // pre = 1000, post = 930 → 7.0 % delta, above the 5 % limit.
+    #[test]
+    fn erosion_no_excessive_sea_crossing_fails_at_7_percent() {
+        let world = make_sea_crossing_world(1000, 930);
+        let err = erosion_no_excessive_sea_crossing(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::ErosionExcessiveSeaCrossing {
+                    pre_land: 1000,
+                    post_land: 930,
+                    ..
+                }
+            ),
+            "expected ErosionExcessiveSeaCrossing, got: {err}"
+        );
+    }
+
+    // ── bonus: skip when erosion_baseline is None ─────────────────────────────
+    #[test]
+    fn erosion_no_explosion_skips_when_baseline_missing() {
+        // height is present but erosion_baseline is None — should skip (Ok).
+        let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(2, 1));
+        let mut h = ScalarField2D::<f32>::new(2, 1);
+        h.data = vec![5.0, 5.0]; // would be "explosive" if baseline were 1.0
+        world.authoritative.height = Some(h);
+        assert!(
+            erosion_no_explosion(&world).is_ok(),
+            "expected Ok when baseline is missing (ErosionOuterLoop not yet run)"
+        );
+    }
+
+    // ── bonus: NaN in height triggers ErosionHeightNonFinite ─────────────────
+    #[test]
+    fn erosion_no_explosion_detects_nan_height() {
+        let world = make_erosion_world(
+            2,
+            1,
+            vec![f32::NAN, 0.5],
+            ErosionBaseline {
+                max_height_pre: 1.0,
+                land_cell_count_pre: 2,
+            },
+        );
+        let err = erosion_no_explosion(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::ErosionHeightNonFinite { cell_index: 0, .. }
+            ),
+            "expected ErosionHeightNonFinite at cell 0, got: {err}"
+        );
     }
 }

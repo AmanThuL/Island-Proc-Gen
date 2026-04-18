@@ -328,9 +328,18 @@ mod tests {
     /// runs — once set, subsequent calls do not overwrite it. This prevents
     /// Task 2.7 erosion sliders from resetting "pre" to post-erosion when
     /// `run_from(ErosionOuterLoop)` fires on parameter change.
+    ///
+    /// Uses `n_batch = 0` so the outer-loop body is a noop and no cells
+    /// cross the sea-level threshold between the two runs. This isolates the
+    /// stickiness property from the `erosion_no_excessive_sea_crossing`
+    /// invariant (Task 2.9), which would fire on two consecutive full-erosion
+    /// runs because the cumulative land loss relative to the sticky baseline
+    /// can exceed the 5 % threshold.
     #[test]
     fn erosion_outer_loop_baseline_is_sticky_across_reruns() {
-        let mut world = WorldState::new(Seed(42), volcanic_preset(), Resolution::new(64, 64));
+        let mut preset = volcanic_preset();
+        preset.erosion.n_batch = 0; // noop erosion — tests stickiness only
+        let mut world = WorldState::new(Seed(42), preset, Resolution::new(64, 64));
 
         crate::default_pipeline()
             .run(&mut world)
