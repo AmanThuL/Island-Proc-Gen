@@ -1,0 +1,10 @@
+IslandArchetypePreset(
+    name: "volcanic_twin_old",
+    island_radius: 0.65,
+    max_relief: 0.40,
+    volcanic_center_count: 2,
+    island_age: Old,
+    prevailing_wind_dir: 1.5708,
+    marine_moisture_strength: 0.70,
+    sea_level: 0.32,
+)

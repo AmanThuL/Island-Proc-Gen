@@ -1,0 +1,10 @@
+IslandArchetypePreset(
+    name: "volcanic_caldera_young",
+    island_radius: 0.50,
+    max_relief: 0.70,
+    volcanic_center_count: 1,
+    island_age: Young,
+    prevailing_wind_dir: 1.5708,
+    marine_moisture_strength: 0.75,
+    sea_level: 0.30,
+)

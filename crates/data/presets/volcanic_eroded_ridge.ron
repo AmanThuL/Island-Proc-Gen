@@ -1,0 +1,13 @@
+IslandArchetypePreset(
+    name: "volcanic_eroded_ridge",
+    island_radius: 0.60,
+    max_relief: 0.55,
+    volcanic_center_count: 1,
+    island_age: Mature,
+    prevailing_wind_dir: 1.5708,
+    marine_moisture_strength: 0.72,
+    sea_level: 0.30,
+    erosion: (
+        n_batch: 12,
+    ),
+)

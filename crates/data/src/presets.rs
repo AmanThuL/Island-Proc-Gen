@@ -54,7 +54,14 @@ pub enum PresetLoadError {
 ///
 /// Sprint 4 CLI can call this to populate a `--preset` argument's choices.
 pub fn list_builtin() -> Vec<&'static str> {
-    vec!["volcanic_single", "volcanic_twin", "caldera"]
+    vec![
+        "volcanic_single",
+        "volcanic_twin",
+        "caldera",
+        "volcanic_caldera_young",
+        "volcanic_twin_old",
+        "volcanic_eroded_ridge",
+    ]
 }
 
 // ─── public API ───────────────────────────────────────────────────────────────
@@ -212,5 +219,62 @@ mod tests {
             matches!(result, Err(PresetLoadError::Parse { .. })),
             "expected Parse error, got {result:?}"
         );
+    }
+
+    // 8. volcanic_caldera_young loads and matches expected values
+    #[test]
+    fn load_volcanic_caldera_young_matches_expected() {
+        let p = load_preset("volcanic_caldera_young").expect("should load volcanic_caldera_young");
+        let expected = IslandArchetypePreset {
+            name: "volcanic_caldera_young".to_string(),
+            island_radius: 0.50,
+            max_relief: 0.70,
+            volcanic_center_count: 1,
+            island_age: IslandAge::Young,
+            prevailing_wind_dir: 1.5708,
+            marine_moisture_strength: 0.75,
+            sea_level: 0.30,
+            erosion: Default::default(),
+        };
+        assert_eq!(p, expected);
+    }
+
+    // 9. volcanic_twin_old loads and matches expected values
+    #[test]
+    fn load_volcanic_twin_old_matches_expected() {
+        let p = load_preset("volcanic_twin_old").expect("should load volcanic_twin_old");
+        let expected = IslandArchetypePreset {
+            name: "volcanic_twin_old".to_string(),
+            island_radius: 0.65,
+            max_relief: 0.40,
+            volcanic_center_count: 2,
+            island_age: IslandAge::Old,
+            prevailing_wind_dir: 1.5708,
+            marine_moisture_strength: 0.70,
+            sea_level: 0.32,
+            erosion: Default::default(),
+        };
+        assert_eq!(p, expected);
+    }
+
+    // 10. volcanic_eroded_ridge loads and matches expected values
+    #[test]
+    fn load_volcanic_eroded_ridge_matches_expected() {
+        let p = load_preset("volcanic_eroded_ridge").expect("should load volcanic_eroded_ridge");
+        let expected = IslandArchetypePreset {
+            name: "volcanic_eroded_ridge".to_string(),
+            island_radius: 0.60,
+            max_relief: 0.55,
+            volcanic_center_count: 1,
+            island_age: IslandAge::Mature,
+            prevailing_wind_dir: 1.5708,
+            marine_moisture_strength: 0.72,
+            sea_level: 0.30,
+            erosion: island_core::preset::ErosionParams {
+                n_batch: 12,
+                ..Default::default()
+            },
+        };
+        assert_eq!(p, expected);
     }
 }
