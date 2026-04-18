@@ -220,10 +220,10 @@ pub fn run_request(request_path: &Path) -> Result<OverallStatus> {
 
 // ─── run_shot ────────────────────────────────────────────────────────────────
 
-/// Execute a single [`CaptureShot`]: run the canonical 17-stage pipeline,
-/// bake every truth overlay, write metrics, and (when a GPU is available and
-/// a [`BeautySpec`](crate::headless::request::BeautySpec) was supplied) render
-/// the beauty shot via [`GpuContext::capture_offscreen_rgba8`].
+/// Execute a single [`CaptureShot`]: run the canonical 19-stage pipeline
+/// (18 `StageId` variants + terminal `ValidationStage`), bake every truth overlay,
+/// write metrics, and (when a GPU is available and a [`BeautySpec`](crate::headless::request::BeautySpec)
+/// was supplied) render the beauty shot via [`GpuContext::capture_offscreen_rgba8`].
 ///
 /// Returns an [`anyhow::Error`] on unrecoverable per-shot failures;
 /// [`run_request`] classifies those via [`classify_shot_error`] and returns

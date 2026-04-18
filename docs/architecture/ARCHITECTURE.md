@@ -173,7 +173,7 @@ uses the concrete aliases above.
 
 ## 4. Simulation pipeline
 
-The canonical pipeline is a **17-stage pipeline (16 `StageId` variants +
+The canonical pipeline is a **19-stage pipeline (18 `StageId` variants +
 terminal `ValidationStage`)** that runs 8 invariants at the tail. `StageId` in
 `crates/sim/src/lib.rs` is the single source of truth for pipeline
 indices — every `SimulationPipeline::run_from` caller passes
@@ -528,7 +528,7 @@ Island-Proc-Gen/
 │       └── hero.png           # README preview
 ├── crates/
 │   ├── core/                  # field types, WorldState, pipeline trait, validation
-│   ├── sim/                   # 17-stage canonical pipeline (16 StageId variants + terminal ValidationStage)
+│   ├── sim/                   # 19-stage canonical pipeline (18 StageId variants + terminal ValidationStage)
 │   │   ├── geomorph/
 │   │   ├── hydro/
 │   │   ├── climate/

@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-17
+**Last Updated:** 2026-04-18 (Sprint 1D close-out + Sprint 2 / 2.5 plans authored)
 
 ---
 
@@ -26,9 +26,9 @@ Three questions this file must always answer:
 [this commit]). Scoped cleanup before Sprint 2 starts rewriting
 `authoritative.height`: (1) `sim::invalidate_from(world, StageId)`
 free function giving erosion outer-loops an explicit "erase cache
-→ rerun" two-step, (2) doc drift audit syncing tracked files to
-the canonical "17-stage canonical pipeline (16 StageId variants +
-terminal ValidationStage)" wording, (3) `ErosionOuterLoop` design
+→ rerun" two-step, (2) doc drift audit (Sprint 1D.1) synced tracked files to
+the canonical "19-stage pipeline (18 StageId variants +
+terminal ValidationStage)" wording per Sprint 2.3/2.4, (3) `ErosionOuterLoop` design
 memo locked at scheme B (internal-iteration `SimulationStage`),
 (4) `crates/core` → `crates/ipg-core` rename **deferred** with
 re-visit triggers (see DEFERRED below).
@@ -49,8 +49,8 @@ Functional:
 - ✓ **Task 1D.1** — doc drift audit on tracked files (README,
   ARCHITECTURE, CLAUDE, sim rustdoc). 9 fixes landed; re-grep
   confirms all pipeline-order claims synced to the canonical
-  "17-stage canonical pipeline (16 StageId variants + terminal
-  ValidationStage)" wording. Sprint docs under `docs/design/`
+  "19-stage pipeline (18 StageId variants + terminal
+  ValidationStage)" wording per Sprint 2.3/2.4. Sprint docs under `docs/design/`
   (gitignored Obsidian symlink) handled out-of-band.
 - ✓ **Task 1D.2** — `sim::invalidate_from(world, StageId)`
   free function (NOT on `WorldState::impl` — that would force
@@ -202,7 +202,7 @@ assertion, so future `run_from` breakage fires at the test
 boundary rather than via human-eyeballed screenshots.
 
 **StageId enum is the single source of truth** for pipeline indices.
-The 16-variant enum (`Topography = 0` … `HexProjection = 15`) is
+The 18-variant enum (`Topography = 0` … `HexProjection = 17`) is
 locked by `stage_id_indices_are_dense_and_canonical` in
 `crates/sim/src/lib.rs`, and every `run_from` caller (
 `app::Runtime`, slider handler, golden regen) passes `StageId::X as usize`
@@ -243,8 +243,8 @@ slider target.
   sea cells excluded from per-hex means.
 
 **Integration test** `full_sprint_1b_pipeline_passes_all_invariants`
-in `sim::validation_stage::tests` builds the complete 17-stage
-pipeline (16 real + tail ValidationStage) on a `volcanic_preset` at
+in `sim::validation_stage::tests` builds the complete 19-stage
+pipeline (18 StageId variants + tail ValidationStage) on a `volcanic_preset` at
 64² and asserts every Sprint 1B output field (`curvature`,
 `temperature`, `precipitation`, `fog_likelihood`, `pet`, `et`,
 `runoff`, `soil_moisture`, `biome_weights`, `hex_grid`, `hex_attrs`)

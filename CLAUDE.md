@@ -233,7 +233,7 @@ app ──▶ render ──▶ gpu ──┐
 - **`StageId` is the single source of truth for pipeline indices.**
   Every `run_from` caller (app::Runtime slider handler, golden
   regen, tests) passes `StageId::X as usize` — never a literal
-  index. The 16-variant enum in `crates/sim/src/lib.rs` is locked by
+  index. The 18-variant enum in `crates/sim/src/lib.rs` is locked by
   `stage_id_indices_are_dense_and_canonical`; reordering it requires
   auditing every consumer in lockstep. `ValidationStage` is
   intentionally NOT a variant (it's a tail hook, not a slider
@@ -317,7 +317,7 @@ app ──▶ render ──▶ gpu ──┐
   `InternalErrorKind::Other` carries `#[serde(other)]` so
   Sprint 4's new kinds parse cleanly on a 1C binary.
 - **`sim::default_pipeline()`** is the single source of truth for
-  the 17-stage canonical pipeline (16 `StageId` variants + terminal
+  the 19-stage canonical pipeline (18 `StageId` variants + terminal
   `ValidationStage`). Both `crates/data/tests/golden_seed_regression.rs` and
   `app::headless::executor` consume it. If you add a stage,
   update `default_pipeline` and bump the `StageId` enum in
