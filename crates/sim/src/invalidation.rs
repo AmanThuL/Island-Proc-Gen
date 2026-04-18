@@ -687,9 +687,20 @@ mod tests {
 
     /// For non-eroding pipeline callers: translate a `StageId` discriminant
     /// (which includes `ErosionOuterLoop = 8`) into the corresponding index
-    /// in [`non_eroding_pipeline`], where every post-RiverExtraction stage
-    /// is shifted left by one slot.
+    /// in [`non_eroding_pipeline`], where every post-ErosionOuterLoop stage
+    /// is shifted left by one slot. **Precondition**: `id` must NOT be
+    /// `StageId::ErosionOuterLoop` itself — that stage is omitted from
+    /// `non_eroding_pipeline` by construction, so there is no valid index
+    /// to return. Calling with `ErosionOuterLoop` is a test-helper misuse
+    /// (a `run_from(ErosionOuterLoop)` under the non-eroding pipeline has
+    /// no meaningful semantics); the debug_assert guards against silent
+    /// mis-mapping to `RiverExtraction`.
     fn non_eroding_index(id: StageId) -> usize {
+        debug_assert!(
+            id != StageId::ErosionOuterLoop,
+            "non_eroding_index called with StageId::ErosionOuterLoop — that stage is \
+             omitted from non_eroding_pipeline, so no index exists for it"
+        );
         let raw = id as usize;
         let erosion = StageId::ErosionOuterLoop as usize;
         if raw >= erosion { raw - 1 } else { raw }

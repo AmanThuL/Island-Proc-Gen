@@ -124,18 +124,17 @@ impl SimulationStage for ErosionOuterLoop {
         if world.derived.erosion_baseline.is_none() {
             let height = world.authoritative.height.as_ref().unwrap();
             let coast = world.derived.coast_mask.as_ref().unwrap();
-            let n_cells = height.data.len();
             debug_assert_eq!(
                 coast.is_land.data.len(),
-                n_cells,
+                height.data.len(),
                 "coast_mask.is_land length must match authoritative.height"
             );
 
             let mut max_h: f32 = f32::NEG_INFINITY;
             let mut land_count: u32 = 0;
-            for i in 0..n_cells {
-                if coast.is_land.data[i] == 1 {
-                    max_h = max_h.max(height.data[i]);
+            for (&h, &is_land) in height.data.iter().zip(coast.is_land.data.iter()) {
+                if is_land == 1 {
+                    max_h = max_h.max(h);
                     land_count += 1;
                 }
             }
