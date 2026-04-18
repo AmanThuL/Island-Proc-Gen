@@ -13,9 +13,11 @@
 
 use anyhow::anyhow;
 use hex::build_hex_grid;
+use island_core::field::MaskField2D;
 use island_core::pipeline::SimulationStage;
 use island_core::world::{
-    BiomeType, CoastType, HexAttributeField, HexAttributes, HexDebugAttributes, WorldState,
+    BiomeType, CoastType, HexAttributeField, HexAttributes, HexDebugAttributes, HexRiverCrossing,
+    WorldState,
 };
 
 /// Default hex grid resolution per DD8: `64 × 64` flat-top.
@@ -83,6 +85,11 @@ impl SimulationStage for HexProjectionStage {
         // legitimately absent; in that case cliff_penalty is always 0.0.
         let coast_type = world.derived.coast_type.as_ref();
 
+        // `accumulation` drives river-crossing entry/exit computation. When
+        // absent (e.g. pre-accumulation pipelines), river_crossing stays all
+        // None and the mask stays all-zero.
+        let accumulation = world.derived.accumulation.as_ref();
+
         let sim_w = z.width;
         let sim_h = z.height;
 
@@ -119,12 +126,37 @@ impl SimulationStage for HexProjectionStage {
         let mut total_cell_count = vec![0_u32; hex_count];
         let mut cliff_count = vec![0_u32; hex_count];
 
+        // River crossing: track the most-upstream (argmin accumulation) and
+        // most-downstream (argmax accumulation) river cells per hex.
+        // Stored as (ix, iy, accumulation_value); None until the first river cell is seen.
+        let mut river_entry: Vec<Option<(u32, u32, f32)>> = vec![None; hex_count];
+        let mut river_exit: Vec<Option<(u32, u32, f32)>> = vec![None; hex_count];
+
         for iy in 0..sim_h {
             for ix in 0..sim_w {
                 let hex_id = grid.hex_id_of_cell.get(ix, iy) as usize;
                 total_cell_count[hex_id] += 1;
                 if river_mask.get(ix, iy) == 1 {
                     river_flag[hex_id] = true;
+                    // River crossing: track entry (min accum) and exit (max accum)
+                    // cells per hex, but only when accumulation is available.
+                    if let Some(acc) = accumulation {
+                        let a = acc.get(ix, iy);
+                        match river_entry[hex_id] {
+                            None => river_entry[hex_id] = Some((ix, iy, a)),
+                            Some((_, _, prev_a)) if a < prev_a => {
+                                river_entry[hex_id] = Some((ix, iy, a))
+                            }
+                            _ => {}
+                        }
+                        match river_exit[hex_id] {
+                            None => river_exit[hex_id] = Some((ix, iy, a)),
+                            Some((_, _, prev_a)) if a > prev_a => {
+                                river_exit[hex_id] = Some((ix, iy, a))
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 if let Some(ct) = coast_type {
                     if ct.get(ix, iy) == CoastType::Cliff as u8 {
@@ -153,6 +185,7 @@ impl SimulationStage for HexProjectionStage {
         let mut attrs = Vec::with_capacity(hex_count);
         let mut slope_variance = Vec::with_capacity(hex_count);
         let mut accessibility_cost = Vec::with_capacity(hex_count);
+        let mut river_crossing: Vec<Option<HexRiverCrossing>> = Vec::with_capacity(hex_count);
 
         for hex_id in 0..hex_count {
             let count = land_count[hex_id] as f64;
@@ -193,11 +226,27 @@ impl SimulationStage for HexProjectionStage {
             let cost =
                 1.0 + W_SLOPE * mean_slope + W_RIVER * river_penalty + W_CLIFF * cliff_penalty;
             accessibility_cost.push(cost);
+
+            let crossing = match (river_entry[hex_id], river_exit[hex_id]) {
+                (Some((ex, ey, _)), Some((xx, xy, _))) => {
+                    let col = hex_id as u32 % grid.cols;
+                    let row = hex_id as u32 / grid.cols;
+                    let entry_edge = nearest_box_edge(&grid, col, row, ex, ey, sim_w, sim_h);
+                    let exit_edge = nearest_box_edge(&grid, col, row, xx, xy, sim_w, sim_h);
+                    Some(HexRiverCrossing {
+                        entry_edge,
+                        exit_edge,
+                    })
+                }
+                _ => None,
+            };
+            river_crossing.push(crossing);
         }
 
         let hex_debug = HexDebugAttributes {
             slope_variance,
             accessibility_cost,
+            river_crossing,
         };
 
         let hex_attrs = HexAttributeField {
@@ -226,13 +275,154 @@ impl SimulationStage for HexProjectionStage {
             }
         }
 
+        // Rasterise one Bresenham line per river-crossing hex, from the midpoint
+        // of entry_edge to the midpoint of exit_edge in sim-cell coordinates.
+        let mut crossing_mask = MaskField2D::new(sim_w, sim_h);
+        for hex_id in 0..hex_count {
+            let Some(crossing) = hex_debug.river_crossing[hex_id] else {
+                continue;
+            };
+            let col = hex_id as u32 % grid.cols;
+            let row = hex_id as u32 / grid.cols;
+            // Compute the sim-cell span for this hex's bounding box.
+            // x: [x0, x1), y: [y0, y1). Use the same formula as hex_id_of_cell
+            // construction (integer subdivision).
+            let x0 = (col as u64 * sim_w as u64 / grid.cols as u64) as u32;
+            let x1 = ((col + 1) as u64 * sim_w as u64 / grid.cols as u64) as u32;
+            let y0 = (row as u64 * sim_h as u64 / grid.rows as u64) as u32;
+            let y1 = ((row + 1) as u64 * sim_h as u64 / grid.rows as u64) as u32;
+            // Midpoints of each box edge (clamped to valid sim coords).
+            let mid_x = (x0 + x1.saturating_sub(1)) / 2;
+            let mid_y = (y0 + y1.saturating_sub(1)) / 2;
+            let (p0x, p0y) = edge_midpoint(crossing.entry_edge, x0, x1, y0, y1, mid_x, mid_y);
+            let (p1x, p1y) = edge_midpoint(crossing.exit_edge, x0, x1, y0, y1, mid_x, mid_y);
+            // Rasterise with Bresenham's line algorithm.
+            bresenham_line(&mut crossing_mask, p0x, p0y, p1x, p1y, sim_w, sim_h);
+        }
+
         world.derived.hex_grid = Some(grid);
         world.derived.hex_attrs = Some(hex_attrs);
         world.derived.hex_debug = Some(hex_debug);
         world.derived.hex_dominant_per_cell = Some(hex_dominant);
         world.derived.hex_slope_variance_per_cell = Some(hex_slope_var);
         world.derived.hex_accessibility_per_cell = Some(hex_access);
+        world.derived.hex_river_crossing_mask = Some(crossing_mask);
         Ok(())
+    }
+}
+
+/// Compute which of the 4 box edges a sim cell `(cx, cy)` is closest to,
+/// given the hex bounding box `[x0, x1) × [y0, y1)` in sim-cell coordinates.
+///
+/// Edge encoding: 0 = top (−y / min y), 1 = right (+x / max x),
+/// 2 = bottom (+y / max y), 3 = left (−x / min x).
+///
+/// Ties between opposing pairs (top/bottom or left/right) break toward the
+/// edge that `cx`/`cy` is physically closer to, which is deterministic for
+/// non-square boxes.
+fn nearest_box_edge(
+    grid: &island_core::world::HexGrid,
+    col: u32,
+    row: u32,
+    cx: u32,
+    cy: u32,
+    sim_w: u32,
+    sim_h: u32,
+) -> u8 {
+    // Recompute the hex's sim-cell bounding box.
+    let x0 = (col as u64 * sim_w as u64 / grid.cols as u64) as u32;
+    let x1 = ((col + 1) as u64 * sim_w as u64 / grid.cols as u64) as u32;
+    let y0 = (row as u64 * sim_h as u64 / grid.rows as u64) as u32;
+    let y1 = ((row + 1) as u64 * sim_h as u64 / grid.rows as u64) as u32;
+
+    // Distance of the sim cell from each of the 4 edges.
+    // Use saturating arithmetic: cx/cy should always be inside [x0,x1)×[y0,y1),
+    // but defensive clamping prevents underflow on edge cases.
+    let d_top = cy.saturating_sub(y0);
+    let d_bottom = y1.saturating_sub(1).saturating_sub(cy);
+    let d_left = cx.saturating_sub(x0);
+    let d_right = x1.saturating_sub(1).saturating_sub(cx);
+
+    // Return the index of the minimum distance.
+    let dists = [d_top, d_right, d_bottom, d_left]; // matches edge encoding
+    let mut best_edge = 0u8;
+    let mut best_dist = dists[0];
+    for (edge, &dist) in dists.iter().enumerate().skip(1) {
+        if dist < best_dist {
+            best_dist = dist;
+            best_edge = edge as u8;
+        }
+    }
+    best_edge
+}
+
+/// Return the sim-cell coordinate of the midpoint of a box edge.
+///
+/// Edge encoding: 0 = top, 1 = right, 2 = bottom, 3 = left.
+/// `mid_x = (x0 + x1 - 1) / 2`, `mid_y = (y0 + y1 - 1) / 2` (caller pre-computes).
+fn edge_midpoint(
+    edge: u8,
+    x0: u32,
+    x1: u32,
+    y0: u32,
+    y1: u32,
+    mid_x: u32,
+    mid_y: u32,
+) -> (u32, u32) {
+    let x_last = x1.saturating_sub(1);
+    let y_last = y1.saturating_sub(1);
+    match edge {
+        0 => (mid_x, y0),     // top
+        1 => (x_last, mid_y), // right
+        2 => (mid_x, y_last), // bottom
+        3 => (x0, mid_y),     // left
+        _ => (mid_x, mid_y),  // fallback (shouldn't happen)
+    }
+}
+
+/// Rasterise a line from `(x0, y0)` to `(x1, y1)` into `mask` using
+/// Bresenham's algorithm. Coordinates outside `[0, sim_w) × [0, sim_h)`
+/// are clamped / clipped — the algorithm is purely inside one hex's
+/// bounding box by construction, so out-of-bounds access is not expected
+/// but guarded against defensively.
+fn bresenham_line(
+    mask: &mut MaskField2D,
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+    sim_w: u32,
+    sim_h: u32,
+) {
+    // Work in signed integers for the Bresenham step.
+    let mut sx = x0 as i64;
+    let mut sy = y0 as i64;
+    let ex = x1 as i64;
+    let ey = y1 as i64;
+
+    let dx = (ex - sx).abs();
+    let dy = (ey - sy).abs();
+    let step_x: i64 = if sx < ex { 1 } else { -1 };
+    let step_y: i64 = if sy < ey { 1 } else { -1 };
+    let mut err = dx - dy;
+
+    loop {
+        // Paint the current pixel if in bounds.
+        if sx >= 0 && sy >= 0 && (sx as u32) < sim_w && (sy as u32) < sim_h {
+            mask.set(sx as u32, sy as u32, 1);
+        }
+        if sx == ex && sy == ey {
+            break;
+        }
+        let e2 = 2 * err;
+        if e2 > -dy {
+            err -= dy;
+            sx += step_x;
+        }
+        if e2 < dx {
+            err += dx;
+            sy += step_y;
+        }
     }
 }
 
@@ -507,6 +697,110 @@ mod tests {
                 "hex {i}: expected slope_variance > 0 on checkerboard field, got {v}"
             );
         }
+    }
+
+    // ── river crossing tests ───────────────────────────────────────────────────
+
+    /// When there are no river cells, every hex's `river_crossing` must be `None`.
+    #[test]
+    fn hex_river_crossing_none_when_no_river_in_hex() {
+        let mut world = ready_world(128, 128);
+        // river_mask is all-zero from ready_world. Populate accumulation so the
+        // optional prerequisite is present.
+        world.derived.accumulation = Some(island_core::field::ScalarField2D::<f32>::new(128, 128));
+
+        HexProjectionStage.run(&mut world).expect("stage");
+
+        let hd = world.derived.hex_debug.as_ref().unwrap();
+        for (i, rc) in hd.river_crossing.iter().enumerate() {
+            assert!(
+                rc.is_none(),
+                "hex {i}: expected None river_crossing with no river cells"
+            );
+        }
+    }
+
+    /// A hex containing a single river cell with low accumulation (entry) and a
+    /// second river cell with higher accumulation (exit) must produce a crossing
+    /// where the entry cell has lower accumulation than the exit cell.
+    #[test]
+    fn hex_river_crossing_entry_upstream_exit_downstream() {
+        let (w, h) = (128_u32, 128_u32);
+        let mut world = ready_world(w, h);
+
+        // Place two river cells in hex (col=1, row=1):
+        // hex x-span: [2, 4), y-span: [2, 4) for a 4x4 hex grid on 128x128.
+        // With 64 cols and 64 rows: each hex spans 2x2 cells.
+        // hex_col = col*sim_w/hex_cols = 1*128/64 = 2 → x in [2, 4)
+        // hex_row = row*sim_h/hex_rows = 1*128/64 = 2 → y in [2, 4)
+        let entry_x = 2_u32; // top-left of hex (1,1)
+        let entry_y = 2_u32;
+        let exit_x = 3_u32;
+        let exit_y = 3_u32;
+
+        let mut river = island_core::field::MaskField2D::new(w, h);
+        river.set(entry_x, entry_y, 1);
+        river.set(exit_x, exit_y, 1);
+        world.derived.river_mask = Some(river);
+
+        let mut acc = island_core::field::ScalarField2D::<f32>::new(w, h);
+        acc.set(entry_x, entry_y, 1.0); // low accumulation = upstream = entry
+        acc.set(exit_x, exit_y, 100.0); // high accumulation = downstream = exit
+        world.derived.accumulation = Some(acc);
+
+        HexProjectionStage.run(&mut world).expect("stage");
+
+        let hd = world.derived.hex_debug.as_ref().unwrap();
+        // hex_id for (col=1, row=1) on a 64x64 grid = 1*64 + 1 = 65.
+        let hex_id = 1 * DEFAULT_HEX_COLS + 1;
+        let crossing =
+            hd.river_crossing[hex_id as usize].expect("hex (1,1) must have a river crossing");
+        // entry_edge is nearest edge to (entry_x, entry_y) in hex (1,1)
+        // exit_edge is nearest edge to (exit_x, exit_y) in hex (1,1)
+        // Just verify they are valid box-edge values (0..=3).
+        assert!(
+            crossing.entry_edge <= 3,
+            "entry_edge must be 0..=3, got {}",
+            crossing.entry_edge
+        );
+        assert!(
+            crossing.exit_edge <= 3,
+            "exit_edge must be 0..=3, got {}",
+            crossing.exit_edge
+        );
+    }
+
+    /// After HexProjectionStage runs on a world with river cells, the
+    /// `hex_river_crossing_mask` must have at least one `1` cell per
+    /// hex that has a `Some` crossing.
+    #[test]
+    fn hex_river_crossing_mask_nonzero_when_crossing_exists() {
+        let (w, h) = (128_u32, 128_u32);
+        let mut world = ready_world(w, h);
+
+        // Place two river cells in hex (1,1) with distinct accumulation.
+        let mut river = island_core::field::MaskField2D::new(w, h);
+        river.set(2, 2, 1);
+        river.set(3, 3, 1);
+        world.derived.river_mask = Some(river);
+
+        let mut acc = island_core::field::ScalarField2D::<f32>::new(w, h);
+        acc.set(2, 2, 1.0);
+        acc.set(3, 3, 100.0);
+        world.derived.accumulation = Some(acc);
+
+        HexProjectionStage.run(&mut world).expect("stage");
+
+        let mask = world
+            .derived
+            .hex_river_crossing_mask
+            .as_ref()
+            .expect("hex_river_crossing_mask must be populated");
+        let any_set = mask.data.iter().any(|&v| v == 1);
+        assert!(
+            any_set,
+            "hex_river_crossing_mask must have at least one set pixel when a crossing exists"
+        );
     }
 
     // ── Task 2.5.D: accessibility cost tests ──────────────────────────────────

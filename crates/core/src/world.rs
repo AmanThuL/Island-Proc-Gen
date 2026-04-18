@@ -281,8 +281,21 @@ impl BiomeWeights {
     }
 }
 
+/// Per-hex river crossing debug info. Records which two of the 4 box edges
+/// the dominant river enters and exits through.
+///
+/// Box edge convention: 0 = top (-y), 1 = right (+x), 2 = bottom (+y),
+/// 3 = left (-x). Kept inside `HexDebugAttributes` (not `HexAttributes`) so
+/// a future real-hex rework can expand to 6 edges without touching the public
+/// aggregation type.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HexRiverCrossing {
+    pub entry_edge: u8,
+    pub exit_edge: u8,
+}
+
 /// Per-hex debug attributes computed by `HexProjectionStage` alongside the
-/// main `HexAttributes` aggregation. Both `Vec` fields have length
+/// main `HexAttributes` aggregation. All `Vec` fields have length
 /// `cols * rows` and are row-major, matching `HexAttributeField`.
 #[derive(Debug, Clone)]
 pub struct HexDebugAttributes {
@@ -302,6 +315,14 @@ pub struct HexDebugAttributes {
     /// to the numerator but count in the denominator). Hexes with no sim cells
     /// get cost `1.0`.
     pub accessibility_cost: Vec<f32>,
+
+    /// Per-hex river crossing: which box edges the dominant river thread
+    /// enters and exits. `None` for hexes with no river sim cells or where
+    /// the accumulation field was absent when the stage ran.
+    ///
+    /// Box edge encoding: 0 = top (−y), 1 = right (+x), 2 = bottom (+y),
+    /// 3 = left (−x). See [`HexRiverCrossing`].
+    pub river_crossing: Vec<Option<HexRiverCrossing>>,
 }
 
 /// Sprint 2 DD3/DD8: snapshot of pre-erosion height / land statistics,
@@ -467,6 +488,14 @@ pub struct DerivedCaches {
     /// hex `h`. Drives the `hex_accessibility` overlay. `None` until
     /// `HexProjectionStage` has run.
     pub hex_accessibility_per_cell: Option<ScalarField2D<f32>>,
+
+    /// Pre-rasterised river-crossing line segments as a `MaskField2D` at sim
+    /// resolution. For each hex with a `Some` river crossing, a 1-pixel-wide
+    /// Bresenham line is drawn from the midpoint of `entry_edge` to the
+    /// midpoint of `exit_edge`. `None` until `HexProjectionStage` has run
+    /// (all-zero when no river hexes exist or when `derived.accumulation` was
+    /// absent).
+    pub hex_river_crossing_mask: Option<MaskField2D>,
 }
 
 // ─── WorldState ──────────────────────────────────────────────────────────────

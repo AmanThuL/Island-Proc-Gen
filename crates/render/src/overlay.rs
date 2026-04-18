@@ -109,8 +109,8 @@ pub struct OverlayRegistry {
 impl OverlayRegistry {
     /// Return the Sprint 2.5 overlay registry — 6 Sprint 1A geomorph
     /// overlays + 6 Sprint 1B climate / ecology / hex overlays + 1 Sprint 2
-    /// coastal geomorphology overlay + 2 Sprint 2.5 hex debug overlays,
-    /// total 15.
+    /// coastal geomorphology overlay + 2 Sprint 2.5 hex debug overlays +
+    /// 1 Sprint 2.5.C river crossing mask overlay, total 16.
     ///
     /// `final_elevation` reads `z_filled` (not `height`) —
     /// `authoritative.height` stores `z_raw` pre-pit-fill; the render
@@ -255,6 +255,20 @@ impl OverlayRegistry {
                     value_range: ValueRange::Auto,
                     visible: false,
                 },
+                // ── hex river crossing mask ────────────────────────────
+                // Pre-rasterised Bresenham line from entry_edge midpoint to
+                // exit_edge midpoint per river-bearing hex. BinaryBlue gives
+                // transparent on 0-cells and the river-blue colour on 1-cells,
+                // matching the existing river_network overlay style.
+                // Fixed(0.0, 1.0): mask values are exactly 0 or 1.
+                OverlayDescriptor {
+                    id: "hex_river_crossing",
+                    label: "Hex river crossing",
+                    source: OverlaySource::Mask("hex_river_crossing_mask"),
+                    palette: PaletteId::BinaryBlue,
+                    value_range: ValueRange::Fixed(0.0, 1.0),
+                    visible: false,
+                },
             ],
         }
     }
@@ -374,6 +388,14 @@ pub(crate) fn resolve_scalar_source<'w>(
             .as_ref()
             .map(ResolvedField::F32),
 
+        // River-crossing mask — uses the Mask variant (same as river_mask and
+        // coast_type) because `MaskField2D` is `ScalarField2D<u8>`.
+        Mask("hex_river_crossing_mask") => world
+            .derived
+            .hex_river_crossing_mask
+            .as_ref()
+            .map(ResolvedField::Mask),
+
         // Unknown / not-yet-populated sources silently return None so
         // the renderer skips rather than panicking on a missing field.
         _ => None,
@@ -387,8 +409,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_15_sprint_2_5_defaults() {
-        assert_eq!(OverlayRegistry::sprint_2_5_defaults().all().len(), 15);
+    fn registry_has_16_sprint_2_5_defaults() {
+        assert_eq!(OverlayRegistry::sprint_2_5_defaults().all().len(), 16);
     }
 
     #[test]

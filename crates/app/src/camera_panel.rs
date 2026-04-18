@@ -4,6 +4,7 @@
 use crate::camera::Camera;
 use crate::runtime::{
     INITIAL_CAMERA_DISTANCE, INITIAL_CAMERA_PITCH, INITIAL_CAMERA_YAW, INITIAL_VERTICAL_SCALE,
+    ViewMode,
 };
 use render::{ALL_PRESETS, CameraPreset, CameraPresetId};
 
@@ -25,12 +26,18 @@ impl CameraPanel {
     ///
     /// `island_radius` is used to scale the preset's `distance_factor` when
     /// the user snaps to a canonical capture angle via the preset ComboBox.
+    ///
+    /// Returns `Some(new_mode)` if the user selected a different [`ViewMode`],
+    /// `None` if unchanged.
     pub fn show(
         ctx: &egui::Context,
         camera: &mut Camera,
         vertical_scale: &mut f32,
         island_radius: f32,
-    ) {
+        view_mode: ViewMode,
+    ) -> Option<ViewMode> {
+        let mut new_view_mode: Option<ViewMode> = None;
+
         egui::Window::new("Camera")
             .default_pos(egui::pos2(16.0, 340.0))
             .show(ctx, |ui| {
@@ -132,6 +139,33 @@ impl CameraPanel {
                     camera.pitch = INITIAL_CAMERA_PITCH;
                     *vertical_scale = INITIAL_VERTICAL_SCALE;
                 }
+
+                ui.separator();
+
+                // ── ViewMode selector ─────────────────────────────────────────
+                // Continuous: user controls overlay visibility freely.
+                // HexOverlay: keeps user overlays AND forces hex_aggregated on.
+                // HexOnly: hides everything except hex_aggregated (saves/restores prior state).
+                let all_modes = [
+                    ViewMode::Continuous,
+                    ViewMode::HexOverlay,
+                    ViewMode::HexOnly,
+                ];
+                egui::ComboBox::from_label("view mode")
+                    .selected_text(view_mode.label())
+                    .show_ui(ui, |ui| {
+                        for &mode in &all_modes {
+                            if ui
+                                .selectable_label(view_mode == mode, mode.label())
+                                .clicked()
+                                && mode != view_mode
+                            {
+                                new_view_mode = Some(mode);
+                            }
+                        }
+                    });
             });
+
+        new_view_mode
     }
 }

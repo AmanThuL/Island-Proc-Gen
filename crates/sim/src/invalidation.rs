@@ -228,7 +228,8 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
 
         // HexProjectionStage: writes derived.hex_grid + derived.hex_attrs
         // + derived.hex_dominant_per_cell + derived.hex_debug
-        // + derived.hex_slope_variance_per_cell + derived.hex_accessibility_per_cell.
+        // + derived.hex_slope_variance_per_cell + derived.hex_accessibility_per_cell
+        // + derived.hex_river_crossing_mask.
         StageId::HexProjection => {
             world.derived.hex_grid = None;
             world.derived.hex_attrs = None;
@@ -236,6 +237,7 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
             world.derived.hex_debug = None;
             world.derived.hex_slope_variance_per_cell = None;
             world.derived.hex_accessibility_per_cell = None;
+            world.derived.hex_river_crossing_mask = None;
         }
     }
 }
@@ -348,6 +350,10 @@ mod tests {
         assert!(
             world.derived.hex_accessibility_per_cell.is_none(),
             "hex_accessibility_per_cell"
+        );
+        assert!(
+            world.derived.hex_river_crossing_mask.is_none(),
+            "hex_river_crossing_mask"
         );
 
         // ── every baked.* field is None ───────────────────────────────────────
@@ -482,6 +488,10 @@ mod tests {
         assert!(
             world.derived.hex_accessibility_per_cell.is_none(),
             "hex_accessibility_per_cell must be None"
+        );
+        assert!(
+            world.derived.hex_river_crossing_mask.is_none(),
+            "hex_river_crossing_mask must be None (downstream of Accumulation)"
         );
     }
 
@@ -632,6 +642,13 @@ mod tests {
             for v in &hd.accessibility_cost {
                 hasher.update(&v.to_le_bytes());
             }
+            // river_crossing: hash presence + edge values.
+            for rc in &hd.river_crossing {
+                match rc {
+                    None => hasher.update(&[0u8]),
+                    Some(c) => hasher.update(&[1u8, c.entry_edge, c.exit_edge]),
+                };
+            }
         }
         hash_f32(
             &mut hasher,
@@ -649,6 +666,14 @@ mod tests {
                 .hex_accessibility_per_cell
                 .as_ref()
                 .expect("hex_accessibility_per_cell")
+                .data,
+        );
+        hasher.update(
+            &world
+                .derived
+                .hex_river_crossing_mask
+                .as_ref()
+                .expect("hex_river_crossing_mask")
                 .data,
         );
 

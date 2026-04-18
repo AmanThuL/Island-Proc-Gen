@@ -25,6 +25,41 @@ use sim::{StageId, default_pipeline, invalidate_from};
 
 use crate::camera::{Camera, InputState};
 
+// ── ViewMode ──────────────────────────────────────────────────────────────────
+
+/// Controls which overlays are shown each frame.
+///
+/// Leaving `Continuous` (in either direction) snapshots the user's current
+/// per-overlay visibility as the "baseline". `HexOverlay` renders the
+/// baseline + `hex_aggregated` forced on; `HexOnly` renders only
+/// `hex_aggregated` (every baseline entry hidden). Returning to
+/// `Continuous` restores the baseline and clears the snapshot, so
+/// `HexOverlay → HexOnly → Continuous` lands back on the original state
+/// regardless of intermediate hops.
+///
+/// Invariant: `saved_visibility` is `Some` iff `view_mode != Continuous`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewMode {
+    /// User controls overlay visibility freely. Default state.
+    Continuous,
+    /// All user-enabled overlays are shown AND `hex_aggregated` is forced on.
+    HexOverlay,
+    /// Only `hex_aggregated` is shown; all other overlays are hidden.
+    /// Prior visibility is saved and restored on exit.
+    HexOnly,
+}
+
+impl ViewMode {
+    /// Human-readable label for the egui ComboBox.
+    pub fn label(self) -> &'static str {
+        match self {
+            ViewMode::Continuous => "Continuous",
+            ViewMode::HexOverlay => "Hex overlay",
+            ViewMode::HexOnly => "Hex only",
+        }
+    }
+}
+
 // ── Startup defaults (edit here to change initial window / camera state) ──────
 
 /// Initial logical window dimensions on first open. The OS may shrink this to
@@ -88,6 +123,11 @@ pub struct Runtime {
     // to re-run just the affected stages.
     world: WorldState,
     pipeline: SimulationPipeline,
+
+    // ViewMode three-view toggle. `saved_visibility` holds the Continuous
+    // baseline while `view_mode != Continuous`; see [`ViewMode`] docs.
+    view_mode: ViewMode,
+    saved_visibility: Option<Vec<(&'static str, bool)>>,
 }
 
 impl Runtime {
@@ -199,6 +239,8 @@ impl Runtime {
             resolution,
             world,
             pipeline,
+            view_mode: ViewMode::Continuous,
+            saved_visibility: None,
         })
     }
 
@@ -211,6 +253,67 @@ impl Runtime {
     /// this to look up `derived.*` fields by name.
     pub fn world(&self) -> &WorldState {
         &self.world
+    }
+
+    /// Transition to a new [`ViewMode`], applying visibility changes to
+    /// `overlay_registry`. Idempotent on same-mode calls.
+    ///
+    /// `saved_visibility` holds the Continuous-mode baseline — the user's
+    /// original per-overlay visibility. It is populated when leaving
+    /// Continuous for the first time and cleared when returning to
+    /// Continuous, so `HexOverlay ↔ HexOnly` transitions never lose the
+    /// baseline. This matters when a user entered `HexOverlay` (which
+    /// forces `hex_aggregated` on), then `HexOnly`, then back to
+    /// `Continuous`: they should land on their original state, not on
+    /// a state carrying `HexOverlay`'s side-effects.
+    pub fn set_view_mode(&mut self, new_mode: ViewMode) {
+        if new_mode == self.view_mode {
+            return;
+        }
+        let was_continuous = self.view_mode == ViewMode::Continuous;
+        let becoming_continuous = new_mode == ViewMode::Continuous;
+
+        if was_continuous && !becoming_continuous {
+            self.saved_visibility = Some(
+                self.overlay_registry
+                    .all()
+                    .iter()
+                    .map(|d| (d.id, d.visible))
+                    .collect(),
+            );
+        }
+
+        match new_mode {
+            ViewMode::Continuous => {
+                if let Some(saved) = self.saved_visibility.take() {
+                    for (id, visible) in saved {
+                        self.overlay_registry.set_visibility(id, visible);
+                    }
+                }
+            }
+            ViewMode::HexOverlay => {
+                if let Some(saved) = self.saved_visibility.as_ref() {
+                    for &(id, visible) in saved {
+                        self.overlay_registry.set_visibility(id, visible);
+                    }
+                }
+                self.overlay_registry.set_visibility("hex_aggregated", true);
+            }
+            ViewMode::HexOnly => {
+                if let Some(saved) = self.saved_visibility.as_ref() {
+                    for &(id, _) in saved {
+                        self.overlay_registry.set_visibility(id, false);
+                    }
+                }
+                self.overlay_registry.set_visibility("hex_aggregated", true);
+            }
+        }
+        self.view_mode = new_mode;
+    }
+
+    /// Expose the current [`ViewMode`] for the UI.
+    pub fn view_mode(&self) -> ViewMode {
+        self.view_mode
     }
 
     /// Handle a `WindowEvent` from winit.
@@ -393,19 +496,21 @@ impl Runtime {
         let camera = &mut self.camera;
         let vertical_scale = &mut self.vertical_scale;
         let preset = &mut self.preset;
+        let view_mode = self.view_mode;
 
         let raw_input = self.egui_state.take_egui_input(&self.window);
 
         // Use begin_pass / end_pass (the non-deprecated path in egui 0.34).
         self.egui_ctx.begin_pass(raw_input);
 
-        // Four panels: Overlays → Camera → Params → Stats.
+        // Five panels: Overlays → Camera (+ ViewMode) → Params → Stats.
         ui::OverlayPanel::show(&self.egui_ctx, registry);
-        crate::camera_panel::CameraPanel::show(
+        let new_view_mode = crate::camera_panel::CameraPanel::show(
             &self.egui_ctx,
             camera,
             vertical_scale,
             island_radius,
+            view_mode,
         );
         let params_result = ui::ParamsPanel::show(&self.egui_ctx, preset);
         ui::StatsPanel::show(
@@ -418,6 +523,11 @@ impl Runtime {
         );
 
         let full_output = self.egui_ctx.end_pass();
+
+        // Apply ViewMode transition if the user changed it in the panel.
+        if let Some(mode) = new_view_mode {
+            self.set_view_mode(mode);
+        }
 
         // Slider re-run: when a Sprint 1B climate slider is touched,
         // update the world's preset copy and re-run the affected stage
@@ -537,5 +647,145 @@ fn load_preset() -> IslandArchetypePreset {
                 erosion: island_core::preset::ErosionParams::default(),
             }
         }
+    }
+}
+
+// ── ViewMode unit tests ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::ViewMode;
+    use render::overlay::OverlayRegistry;
+
+    /// Minimal stand-in for the runtime's view_mode state machine, using only
+    /// `OverlayRegistry` + the two `ViewMode` fields. Mirrors `set_view_mode`
+    /// without requiring a live GPU / window.
+    struct FakeRuntime {
+        registry: OverlayRegistry,
+        view_mode: ViewMode,
+        saved_visibility: Option<Vec<(&'static str, bool)>>,
+    }
+
+    impl FakeRuntime {
+        fn new() -> Self {
+            Self {
+                registry: OverlayRegistry::sprint_2_5_defaults(),
+                view_mode: ViewMode::Continuous,
+                saved_visibility: None,
+            }
+        }
+
+        /// Mirror of `Runtime::set_view_mode` — identical logic, no GPU deps.
+        fn set_view_mode(&mut self, new_mode: ViewMode) {
+            if new_mode == self.view_mode {
+                return;
+            }
+            let was_continuous = self.view_mode == ViewMode::Continuous;
+            let becoming_continuous = new_mode == ViewMode::Continuous;
+
+            if was_continuous && !becoming_continuous {
+                self.saved_visibility = Some(
+                    self.registry
+                        .all()
+                        .iter()
+                        .map(|d| (d.id, d.visible))
+                        .collect(),
+                );
+            }
+
+            match new_mode {
+                ViewMode::Continuous => {
+                    if let Some(saved) = self.saved_visibility.take() {
+                        for (id, visible) in saved {
+                            self.registry.set_visibility(id, visible);
+                        }
+                    }
+                }
+                ViewMode::HexOverlay => {
+                    if let Some(saved) = self.saved_visibility.as_ref() {
+                        for &(id, visible) in saved {
+                            self.registry.set_visibility(id, visible);
+                        }
+                    }
+                    self.registry.set_visibility("hex_aggregated", true);
+                }
+                ViewMode::HexOnly => {
+                    if let Some(saved) = self.saved_visibility.as_ref() {
+                        for &(id, _) in saved {
+                            self.registry.set_visibility(id, false);
+                        }
+                    }
+                    self.registry.set_visibility("hex_aggregated", true);
+                }
+            }
+            self.view_mode = new_mode;
+        }
+
+        fn visibility_snapshot(&self) -> Vec<(&'static str, bool)> {
+            self.registry
+                .all()
+                .iter()
+                .map(|d| (d.id, d.visible))
+                .collect()
+        }
+    }
+
+    /// Any round-trip that ends at `Continuous` must leave the overlay
+    /// visibility state bit-exact equal to the initial state. The snapshot
+    /// is the Continuous baseline (the user's original visibility), so
+    /// HexOverlay's side-effect of forcing `hex_aggregated` on is undone on
+    /// return, regardless of how many HexOverlay/HexOnly hops occurred
+    /// between.
+    #[test]
+    fn view_mode_toggle_sequence_is_idempotent() {
+        // Pick an initial state where hex_aggregated is OFF so HexOverlay's
+        // side-effect is observable if restoration fails.
+        let mut rt = FakeRuntime::new();
+        rt.registry.set_visibility("slope", true);
+        rt.registry.set_visibility("hex_aggregated", false);
+        let initial = rt.visibility_snapshot();
+
+        // Case A: Continuous → HexOnly → Continuous
+        rt.set_view_mode(ViewMode::HexOnly);
+        rt.set_view_mode(ViewMode::Continuous);
+        assert_eq!(
+            initial,
+            rt.visibility_snapshot(),
+            "Continuous → HexOnly → Continuous must restore initial visibility"
+        );
+
+        // Case B: Continuous → HexOverlay → HexOnly → Continuous
+        rt.set_view_mode(ViewMode::HexOverlay);
+        rt.set_view_mode(ViewMode::HexOnly);
+        rt.set_view_mode(ViewMode::Continuous);
+        assert_eq!(
+            initial,
+            rt.visibility_snapshot(),
+            "HexOverlay → HexOnly → Continuous must restore the pre-ViewMode baseline (hex_aggregated off)"
+        );
+    }
+
+    /// Entering HexOnly must hide everything except `hex_aggregated`.
+    #[test]
+    fn hex_only_shows_only_hex_aggregated() {
+        let mut rt = FakeRuntime::new();
+        // Enable a few overlays so there is something to hide.
+        rt.registry.set_visibility("slope", true);
+        rt.registry.set_visibility("river_network", true);
+
+        rt.set_view_mode(ViewMode::HexOnly);
+
+        let visible_ids: Vec<&str> = rt
+            .registry
+            .all()
+            .iter()
+            .filter(|d| d.visible)
+            .map(|d| d.id)
+            .collect();
+        assert_eq!(
+            visible_ids,
+            vec!["hex_aggregated"],
+            "HexOnly must show only hex_aggregated, got: {visible_ids:?}"
+        );
     }
 }
