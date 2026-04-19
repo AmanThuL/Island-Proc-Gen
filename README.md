@@ -20,10 +20,12 @@ A 19-stage canonical simulation pipeline (18 `StageId` variants + terminal
 `ValidationStage`) runs at app startup, populating continuous 2D fields for
 terrain height, slope, flow routing, drainage basins, rivers, temperature,
 precipitation, fog, potential evapotranspiration, soil moisture, biome weights,
-and hex aggregation on a 256×256 grid. Thirteen live
-overlays toggle in the egui panel; a wind-direction slider re-runs the
-climate-ecology chain end-to-end and refreshes overlay textures on the same
-frame. `cargo run -p app` opens a working window on macOS / Metal.
+and hex aggregation on a 256×256 grid. Sixteen live
+overlays toggle in the egui panel with per-descriptor alpha sliders; a
+`Continuous / HexOverlay / HexOnly` ViewMode selector, wind-direction slider,
+and erosion tuning sliders all re-run the relevant slice of the pipeline and
+refresh overlay textures on the same frame. `cargo run -p app` opens a working
+window on macOS / Metal.
 
 A windowless `--headless` harness drives the same pipeline for batch capture
 and deterministic regression: `cargo run -p app -- --headless <request.ron>`
@@ -70,12 +72,12 @@ Controls in the app window:
 
 | Crate | Role |
 |---|---|
-| `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`, `validation` (11 invariants after Sprint 2), `FLOW_DIR_SINK` / `D8_OFFSETS` / neighborhood constants, `BiomeType` / `BiomeWeights`, `CoastType`, `ErosionBaseline`. Must compile without any graphics crate. |
+| `crates/core` | Pure-CPU state: `WorldState`, `ScalarField2D<T>`, `Seed`, `SimulationPipeline`, `validation` (12 invariants after Sprint 2.5), `FLOW_DIR_SINK` / `D8_OFFSETS` / neighborhood constants, `BiomeType` / `BiomeWeights`, `CoastType`, `ErosionBaseline`, `HexDebugAttributes` + `HexRiverCrossing`. Must compile without any graphics crate. |
 | `crates/sim` | 19-stage canonical pipeline (18 `StageId` variants: geomorph + hydro + `ErosionOuterLoop` + `CoastType` + climate + ecology + hex projection; + terminal `ValidationStage`). `StageId` enum locks pipeline indices for `SimulationPipeline::run_from`. |
 | `crates/hex` | `HexGrid` + axis-aligned box tessellation (v1 simplification; a future pass can refit to true hexagonal Voronoi). |
 | `crates/data` | Built-in presets (`volcanic_single`, `volcanic_twin`, `caldera`), golden-seed snapshots, `SummaryMetrics` regression tiers (1A core + 1B climate/ecology + Sprint 2 erosion/coast-type fields). |
 | `crates/gpu` | `wgpu` device/surface management, depth attachment. |
-| `crates/render` | Descriptor-based `OverlayRegistry` (13 overlays after Sprint 2 adds `coast_type`), `TerrainRenderer`, `OverlayRenderer`, `SkyRenderer`, canonical palette (incl. `PaletteId::CoastType`), camera-preset LUT math. All `&'static str` field-key dispatch confined to `overlay.rs`. |
+| `crates/render` | Descriptor-based `OverlayRegistry` (16 overlays after Sprint 2.5 adds `hex_projection_error` / `hex_accessibility` / `hex_river_crossing`; `OverlayDescriptor.alpha` per-descriptor), `TerrainRenderer`, `OverlayRenderer` (per-frame alpha uniform writes), `SkyRenderer`, canonical palette (incl. `PaletteId::CoastType`), `ValueRange::LogCompressedClampPercentile` for long-tail overlays, camera-preset LUT math. All `&'static str` field-key dispatch confined to `overlay.rs`. |
 | `crates/ui` | `egui` panels — overlay toggles, camera controls, preset params (with wind-direction slider), stats. |
 | `crates/app` | `winit` event loop, orbit camera, preset loading, save/load Path wrapper, slider → `run_from` wiring, and the `--headless` / `--headless-validate` harness (capture request parsing, CPU truth bake, GPU offscreen beauty, summary diff). |
 

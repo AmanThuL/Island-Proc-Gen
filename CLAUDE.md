@@ -387,12 +387,16 @@ app ──▶ render ──▶ gpu ──┐
   test (e.g. non-eroding for bit-exact invalidation round-trips),
   define it `#[cfg(test)]` inside `crates/sim/` next to the test
   that needs it, not in a downstream crate.
-- **`OverlayRegistry::sprint_2_defaults()` returns 13 descriptors
-  (1B 12 + Sprint 2's `coast_type`).** Do NOT add
-  `sprint_Na_defaults()` alias methods per sprint — CLAUDE.md
-  forbids backwards-compat shims. When a new sprint adds an
-  overlay, rename `sprint_N_defaults` to the latest sprint's
-  number and update every call site in the same commit.
+- **`OverlayRegistry::sprint_2_5_defaults()` returns 16 descriptors
+  (1B 12 + Sprint 2's `coast_type` + Sprint 2.5's
+  `hex_projection_error` / `hex_accessibility` / `hex_river_crossing`).**
+  Do NOT add `sprint_Na_defaults()` alias methods per sprint —
+  CLAUDE.md forbids backwards-compat shims. When a new sprint adds
+  an overlay, rename `sprint_N_defaults` to the latest sprint's
+  number and update every call site in the same commit. Also do NOT
+  hardcode "15" / "16" / the current count in UI code: the
+  `OverlayPanel` iterates `registry.entries_mut()` so new overlays
+  pick up a slider row automatically.
 - **`coast_type` overlay normalises via `ValueRange::Fixed(0.0,
   4.0)`, not `(0.0, 3.0)`.** With `Fixed(0.0, 3.0)` the
   RockyHeadland discriminant (3) would map to `t = 1.0`,
@@ -409,6 +413,62 @@ app ──▶ render ──▶ gpu ──┐
   `--headless-validate` exit 0 under v2 and beyond. Do NOT stamp
   a "current tool version" into `RunSummary.schema_version`; that
   breaks the forward-compat contract.
+- **`HexAttributes` is locked at 8 fields** (elevation, slope,
+  rainfall, temperature, moisture, biome_weights, dominant_biome,
+  has_river). Sprint 2.5 added three per-hex prototype quantities
+  (slope variance, accessibility cost, river crossing) — they live
+  in a separate `HexDebugAttributes` sibling on `derived.hex_debug`.
+  Sprint 3 / 4 do NOT read `hex_debug`; Sprint 5 S2 settlement /
+  road / WFC consumers MAY redesign it freely. Do not extend
+  `HexAttributes` with Sprint 2.5 debug data — `HexAttributes` is
+  the stable aggregation contract Sprint 5 S2 depends on.
+- **`HexRiverCrossing` uses 4 box edges (0=top / 1=right /
+  2=bottom / 3=left), not 6 hex edges.** The `crates/hex`
+  tessellation is axis-aligned rectangles per Sprint 1B; Sprint
+  2.5.C adapted the spec's 6-edge flat-top hex convention to the
+  4-edge box reality. Sprint 5 S1's real-hex rework expands it to
+  6; keeping `HexRiverCrossing` inside `HexDebugAttributes`
+  (not `HexAttributes`) isolates that expansion.
+- **ViewMode snapshot is the Continuous baseline, not the previous
+  view.** `Runtime::saved_visibility` is populated on the first
+  departure from `ViewMode::Continuous` and cleared on the return.
+  Any round-trip back to Continuous — including
+  `Continuous → HexOverlay → HexOnly → Continuous` — lands on the
+  user's original per-overlay visibility. HexOverlay's side-effect
+  (forcing `hex_aggregated` on) does NOT persist after return to
+  Continuous.
+- **`OverlayDescriptor.alpha` replaces the hardcoded `0.6`.** Per
+  descriptor, default 0.6. `OverlayRenderer::draw` writes each
+  descriptor's current alpha to its uniform via `queue.write_buffer`
+  every frame (`registry.len() × 4 bytes` cost — negligible even at
+  25+ overlays). Do NOT reintroduce a single hardcoded alpha
+  constant; new overlays pick up the slider row via
+  `registry.entries_mut()` automatically.
+- **`flow_accumulation` uses `ValueRange::LogCompressedClampPercentile(0.99)`,
+  not plain `LogCompressed`.** Accumulation has a long tail driven
+  by a few high-order river-mouth cells (P90/max ≈ 0.02 on
+  volcanic_twin); `LogCompressed` uses `ln(1+max)` as the ceiling,
+  compressing the entire visible range into the bottom ~20% of the
+  palette. The percentile variant computes the p-quantile of
+  `ln(1+value)` at bake time. Sprint 1A's Turbo palette is unchanged.
+  New long-tail overlays should also use `LogCompressedClampPercentile`.
+- **`BasinsStage` post-BFS CC pass is currently vacuous on real
+  terrain** because `ErosionOuterLoop` ends with a fresh `PitFill`
+  that eliminates interior depressions. The infrastructure + the
+  `basin_partition_post_erosion_well_formed` invariant + the
+  `MIN_INTERNAL_LAKE_CELLS = 8` threshold + the Von4 CC pass all
+  activate once Sprint 3 sediment-aware SPACE-lite leaves
+  intentional deposition lakes unfilled. Do NOT remove the
+  defensive code; it's pre-wired for Sprint 3's terrain
+  vocabulary.
+- **Sprint 2.5.I / 2.5.L dither + blue-noise-size toggle are
+  deferred**, pending an interactive-display session. The
+  ±½ LSB dither stays in `shaders/terrain.wgsl`; do NOT add
+  `DITHER_ON` uniform plumbing or a blue-noise-size ComboBox in
+  a headless session — the decision has to be eyeballed on a live
+  display first. Audit memo
+  `docs/design/sprints/sprint_2_5_visual_acceptance/dither_ab_audit.md`
+  (Obsidian symlink, local-only).
 
 ---
 

@@ -495,7 +495,60 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
 
 ## DEFERRED TO LATER SPRINTS
 
-**From Sprint 2 close-out (new — 2026-04-18):**
+**From Sprint 2.5 close-out (new — 2026-04-18):**
+
+- **2.5.I — Blue-noise dither A/B visual validation.** The ±½ LSB
+  amplitude is below headless PNG byte-threshold; the keep-vs-remove
+  call must be eyeballed on a live display. No `DITHER_ON` toggle
+  added — that would be scope creep for a deferred decision. Reopens
+  whenever a future in-window work session touches the terrain
+  shader. Audit memo
+  `docs/design/sprints/sprint_2_5_visual_acceptance/dither_ab_audit.md`
+  (Obsidian symlink, local-only).
+- **2.5.L — Blue-noise runtime size toggle (64 / 128 / 256).**
+  Gated on 2.5.I per the sprint doc's decision tree. If 2.5.I keeps
+  dither → 2.5.L implements the ComboBox. If 2.5.I removes dither
+  → 2.5.L drops the loader + 2 unused PNG assets. Reopens with 2.5.I.
+- **2.5.Jb — Climate constant tuning (`CONDENSATION_RATE` /
+  `RAIN_SHADOW_K` / other `climate/` constants).** Explicit scope
+  split inside Sprint 2.5: only ecology bells were tuned; climate
+  constants are deferred to Sprint 3 LFPM v3 which supersedes the
+  upwind raymarch entirely. A v1.5 constants pass would be throwaway
+  ahead of v3. Sprint 3's precipitation design doc must explicitly
+  address whether LFPM v3 covers the "moisture swing not strong
+  enough" symptom or whether a v1.5 tune is still needed.
+- **2.5.F deviation — `volcanic_twin_old` `n_batch`.** Sprint doc
+  specified `n_batch: 15` for the "more eroded look" on this
+  archetype; empirical test showed 15 trips the
+  `erosion_no_excessive_sea_crossing` 5 % invariant at the safe
+  K=1.5e-3. Preset ships with default `n_batch=10` instead. Sprint
+  3 sediment-aware `K · g(hs)` modulation unlocks higher n_batch
+  because g(hs) damps coastal erosion where sediment pools.
+- **2.5.D / 2.5.B — `HexDebugAttributes` is prototype only.**
+  Sprint 5 S2 (settlement / road / WFC) will redesign the
+  `accessibility_cost` contract when it becomes a real consumer.
+  The Sprint 2.5 overlay shows that the formula produces
+  distinguishable values (flat ~1, cliff-coast 10+) — the
+  production-quality contract is deferred.
+- **2.5 CoastalScrub + CloudForest coverage.** After 2.5.Ja tuning
+  they remain at 0 % on `volcanic_single` (dry interior + no fog).
+  Not a regression — the bells will produce both biomes on wetter /
+  foggier archetypes. A synthetic-env kernel test per biome would
+  defend against inadvertent kernel narrowing but wasn't in scope.
+  Sprint 3 climate v3 (LFPM + fog hydrology) gets the richer
+  moisture / fog domains that should make these biomes visible on
+  `volcanic_single` too.
+- **2.5.G — Basin CC promotion is dormant on real terrain.** The
+  post-BFS CC pass activates only when `FLOW_DIR_SINK` land cells
+  survive past the end of `ErosionOuterLoop` → PitFill cycle. On
+  the current Sprint 2 pipeline PitFill eliminates every interior
+  depression, so the `basin_partition` overlay hash is bit-identical
+  pre- vs post-2.5.G. Sprint 3 sediment-aware SPACE-lite may
+  intentionally leave deposition-lakes unfilled (valley floors,
+  caldera lakes), at which point the promotion fires automatically
+  + labels them as fresh basins.
+
+**From Sprint 2 close-out (still pending — inherited by Sprint 3):**
 
 - **§10 "max_z 下降 10–30 %"** across 3 presets. Measured
   0.19 / 1.54 / 1.52 % at the safe K=1.5e-3 calibration (close to
@@ -519,29 +572,27 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
   coastal cliffs naturally; (b) coast_type v2 classifier with
   fetch-integral wave exposure (16-direction wave fetch, not a
   single shoreline_normal dot-product) per sprint doc §11 open #2.
-- **1A tail — flow accumulation overlay log-compression audit.**
-  Deferred from Sprint 1A, not picked up in Sprint 2. Natural fit
-  for Sprint 2.5 when reviewing the wider overlay set now that the
-  erosion / coast_type work has shifted the accumulation
-  distribution.
-- **1A tail — Blue noise dither A/B visual validation.** Sub-LSB
-  amplitude still below screenshot threshold; Sprint 2's shading
-  work didn't exercise it. Defer to a future sprint that touches
-  the shader feature-flag plumbing.
-- **1B 16-shot visual acceptance full migration.** Schema v2
-  `preset_override` (shipped in 2.5) now unblocks the 6
-  wind-varying shots + panel smoke test (7 total). Sprint 2.5 is
-  the natural slot. The pipeline-level guard
-  `sim::validation_stage::tests::wind_dir_rerun_propagates_through_biome_chain`
-  still locks the wind-propagation contract mechanically, so the
-  deferral is visual-artifact-only.
-- **1B tail — biome suitability parameter tuning.** `volcanic_single`
-  still collapses to 3 biomes. Task 1B.9 shipped the slider hooks;
-  per-biome tunables are not exposed yet. Natural fit for Sprint
-  2.5 tail absorption.
-- **1B tail — T2/T3 UI polish** (per-descriptor alpha slider for
-  the 13 overlays; blue-noise runtime size toggle 64/128/256).
-  Sprint 2.5 tail.
+
+**Absorbed by Sprint 2.5 (close this section):**
+
+- ~~**1A tail — flow accumulation overlay log-compression audit.**~~
+  **SHIPPED in 2.5.H** (`4dc75ed`): P90/max = 0.023 confirmed the
+  washout; new `ValueRange::LogCompressedClampPercentile(0.99)` variant
+  fixes it without palette churn.
+- ~~**1B 16-shot visual acceptance full migration.**~~ **SHIPPED in
+  2.5.E** (`554f4f7`): 9 → 15 shots, schema v2 `preset_override`
+  path exercised, byte-level wind propagation locked. Shot
+  `01_baseline_camera_overlays_panels` permanently excluded (UI
+  state non-serialisable; stays as manual reference).
+- ~~**1B tail — biome suitability parameter tuning.**~~ **SHIPPED
+  in 2.5.Ja** (`93f7c5b`): `volcanic_single` 3 biomes → 5 biomes
+  ≥ 3 % coverage; wind 180° swing ~14 % argmax flip.
+- ~~**1B tail — T2 per-descriptor alpha slider.**~~ **SHIPPED in
+  2.5.K** (`1073f4e`): `OverlayDescriptor.alpha: f32` field +
+  OverlayPanel row-per-descriptor + per-frame uniform upload.
+- ~~**1B tail — T3 blue-noise runtime size toggle.**~~ Not shipped —
+  gated on 2.5.I's keep-vs-remove decision; see "From Sprint 2.5
+  close-out" above.
 
 **From Sprint 1B close-out (still pending):**
 

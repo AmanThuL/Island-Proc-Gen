@@ -176,10 +176,10 @@ uses the concrete aliases above.
 ## 4. Simulation pipeline
 
 The canonical pipeline is a **19-stage pipeline (18 `StageId` variants +
-terminal `ValidationStage`)** that runs 11 invariants at the tail (4 Sprint
-1A + 4 Sprint 1B + 3 Sprint 2 erosion/coast). `StageId` in
-`crates/sim/src/lib.rs` is the single source of truth for pipeline
-indices — every `SimulationPipeline::run_from` caller passes
+terminal `ValidationStage`)** that runs 12 invariants at the tail (4 Sprint
+1A + 4 Sprint 1B + 3 Sprint 2 erosion/coast + 1 Sprint 2.5 basin partition).
+`StageId` in `crates/sim/src/lib.rs` is the single source of truth for
+pipeline indices — every `SimulationPipeline::run_from` caller passes
 `StageId::X as usize`, never a literal.
 
 ```mermaid
@@ -210,7 +210,7 @@ flowchart TB
     end
     S7 --> S8
     S9 --> S10
-    S17 --> V[ValidationStage&nbsp;tail<br/>11 invariants]
+    S17 --> V[ValidationStage&nbsp;tail<br/>12 invariants]
 
     Slider([Wind slider]) -. run_from&nbsp;StageId::Precipitation .-> S11
     ErosionSlider([Erosion sliders]) -. run_from&nbsp;StageId::ErosionOuterLoop .-> S8
@@ -472,13 +472,15 @@ bit-drift in the raster is the stronger signal.
   (3 presets × 3 seeds × Hero camera). Seeds `[42, 123, 777]`
   match the pre-existing `golden_seed_regression` triples so the
   numeric and visual regressions share one set of pairs.
-- `crates/data/golden/headless/sprint_1b_acceptance/` — 9 shots,
-  the default-wind subset of the 16-shot
-  `docs/design/sprints/sprint_1b_visual_acceptance/` PNG
-  archive. The 6 wind-varying shots and the panel smoke test
-  stay as manual PNGs; migrating them needs either a Sprint 2.5
-  harness slice or the schema-v2 `preset_override` machinery
-  Sprint 2 shipped (no parity target yet).
+- `crates/data/golden/headless/sprint_1b_acceptance/` — 15 shots
+  after Sprint 2.5.E migration: the original 9 default-wind shots
+  from Sprint 1C plus 6 wind-varying shots (4 wind directions ×
+  precipitation + 2 opposing-wind `soil_moisture` pairs) driven via
+  schema-v2 `preset_override.prevailing_wind_dir`. The panel smoke
+  test (`01_baseline_camera_overlays_panels`) is permanently
+  excluded — it captures UI state that the `--headless` path cannot
+  serialise; it remains as a manual reference in
+  `docs/design/sprints/sprint_1b_visual_acceptance/`.
 - `crates/data/golden/headless/sprint_2_erosion/` — 6 shots
   (3 presets × `pre`/`post` erosion at seed 42). `pre_*` shots
   use `schema_version: 2` `preset_override.erosion.n_batch = 0`
