@@ -23,6 +23,9 @@ impl CameraPanel {
     /// `island_radius` is used to scale the preset's `distance_factor` when
     /// the user snaps to a canonical capture angle via the preset ComboBox.
     ///
+    /// `dither_on` is read/written each frame; the caller is responsible for
+    /// calling `TerrainRenderer::update_dither` when the value changes.
+    ///
     /// Returns `Some(new_mode)` if the user selected a different [`ViewMode`],
     /// `None` if unchanged.
     pub fn show(
@@ -30,6 +33,7 @@ impl CameraPanel {
         camera: &mut Camera,
         island_radius: f32,
         view_mode: ViewMode,
+        dither_on: &mut bool,
     ) -> Option<ViewMode> {
         let mut new_view_mode: Option<ViewMode> = None;
 
@@ -123,6 +127,8 @@ impl CameraPanel {
             camera.yaw = INITIAL_CAMERA_YAW;
             camera.pitch = INITIAL_CAMERA_PITCH;
         }
+
+        ui.checkbox(dither_on, "Dither (±½ LSB blue-noise)");
 
         ui.separator();
 

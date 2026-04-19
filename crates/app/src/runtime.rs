@@ -105,6 +105,7 @@ struct AppTabViewer<'a> {
     viewport_rect: &'a mut Option<egui::Rect>,
     world_panel: &'a mut WorldPanel,
     world_event: &'a mut WorldPanelEvent,
+    dither_on: &'a mut bool,
 }
 
 impl egui_dock::TabViewer for AppTabViewer<'_> {
@@ -145,6 +146,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     self.camera,
                     self.island_radius,
                     self.view_mode,
+                    self.dither_on,
                 ) {
                     *self.new_view_mode = Some(mode);
                 }
@@ -218,6 +220,9 @@ pub struct Runtime {
 
     // Sprint 2.6.C: World panel state (preset picker, seed, geometry sliders).
     world_panel: WorldPanel,
+
+    // Camera-panel dither checkbox state — uploaded to the terrain uniform on change.
+    dither_on: bool,
 }
 
 impl Runtime {
@@ -370,6 +375,7 @@ impl Runtime {
             dock_layout_path,
             viewport_rect: None,
             world_panel,
+            dither_on: true,
         })
     }
 
@@ -751,6 +757,8 @@ impl Runtime {
         let dock_state = &mut self.dock.state;
         let viewport_rect = &mut self.viewport_rect;
         let world_panel = &mut self.world_panel;
+        let dither_on = &mut self.dither_on;
+        let dither_before = *dither_on;
         {
             #[allow(deprecated)]
             egui::CentralPanel::default()
@@ -769,12 +777,17 @@ impl Runtime {
                         viewport_rect,
                         world_panel,
                         world_event: &mut world_event,
+                        dither_on,
                     };
                     egui_dock::DockArea::new(dock_state).show_inside(ui, &mut viewer);
                 });
         }
 
         let full_output = self.egui_ctx.end_pass();
+
+        if self.dither_on != dither_before {
+            self.terrain.update_dither(&self.gpu, self.dither_on);
+        }
 
         // Apply ViewMode transition if the user changed it in the panel.
         if let Some(mode) = new_view_mode {

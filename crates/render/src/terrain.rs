@@ -69,13 +69,14 @@ impl PaletteUniform {
 /// Light-rig uniform — binding 2.  64 bytes (4 × vec4<f32>).
 ///
 /// Field order matches `struct LightRig` in terrain.wgsl.
+/// `sea_level`: x = sea_level, y = DITHER_ON (0.0/1.0), zw = padding.
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct LightRigUniform {
     key_dir: [f32; 4],   // xyz = direction light→surface, w = intensity
     fill_dir: [f32; 4],  // xyz = direction light→surface, w = intensity
     ambient: [f32; 4],   // rgb = tint, a = scalar lift
-    sea_level: [f32; 4], // x = sea_level, yzw = padding
+    sea_level: [f32; 4], // x = sea_level, y = DITHER_ON (0.0/1.0), zw = padding
 }
 
 impl LightRigUniform {
@@ -95,7 +96,8 @@ impl LightRigUniform {
             // ambient.rgb + ambient.a into the same floor, so rgb stays at
             // zero — the full 0.15 lift comes from the scalar slot.
             ambient: [0.0, 0.0, 0.0, 0.15],
-            sea_level: [sea_level, 0.0, 0.0, 0.0],
+            // y = DITHER_ON: default 1.0 (Sprint 1A behaviour, dither on).
+            sea_level: [sea_level, 1.0, 0.0, 0.0],
         }
     }
 }
@@ -432,11 +434,26 @@ impl TerrainRenderer {
             .write_buffer(&self.light_buf, 0, bytemuck::bytes_of(&self.light));
     }
 
+    /// Toggle the fragment-shader dither gate. The LightRigUniform CPU
+    /// mirror tracks this in `self.light.sea_level[1]`; GPU-side the
+    /// terrain WGSL reads the same slot as `light.sea_level.y > 0.5`.
+    pub fn update_dither(&mut self, gpu: &GpuContext, on: bool) {
+        self.light.sea_level[1] = if on { 1.0 } else { 0.0 };
+        gpu.queue
+            .write_buffer(&self.light_buf, 0, bytemuck::bytes_of(&self.light));
+    }
+
     /// Test-only accessor so tests can verify `update_sea_level` without a
     /// GPU readback of the vertex buffer.
     #[cfg(test)]
     pub fn sea_level_for_test(&self) -> f32 {
         self.light.sea_level[0]
+    }
+
+    /// Test-only accessor to verify the dither flag in the CPU mirror.
+    #[cfg(test)]
+    pub fn dither_on_for_test(&self) -> bool {
+        self.light.sea_level[1] > 0.5
     }
 
     /// Record terrain and sea-plane draw calls into `render_pass`.
@@ -874,6 +891,34 @@ mod tests {
     /// A full GPU readback (map + await) would be the tighter test but is
     /// expensive to wire up in a unit-test context; the in-shader contract is
     /// covered by the headless baselines and the existing `sea_quad_*` tests.
+
+    /// Verifies that `sprint_1a_default` initialises the dither flag ON, and
+    /// that direct field mutation toggles it correctly (CPU-mirror contract for
+    /// `update_dither`).  Does not require a GPU adapter.
+    #[test]
+    fn update_dither_mirrors_flag_in_light_uniform() {
+        let mut lu = LightRigUniform::sprint_1a_default(0.30);
+        assert!(
+            (lu.sea_level[1] - 1.0).abs() < 1e-6,
+            "sprint_1a_default must have dither ON by default (sea_level[1] == 1.0), got {}",
+            lu.sea_level[1]
+        );
+
+        lu.sea_level[1] = 0.0;
+        assert!(
+            (lu.sea_level[1]).abs() < 1e-6,
+            "dither off: expected sea_level[1] == 0.0, got {}",
+            lu.sea_level[1]
+        );
+
+        lu.sea_level[1] = 1.0;
+        assert!(
+            (lu.sea_level[1] - 1.0).abs() < 1e-6,
+            "dither on: expected sea_level[1] == 1.0, got {}",
+            lu.sea_level[1]
+        );
+    }
+
     #[test]
     #[ignore = "requires a working GPU adapter; baseline host = macOS Metal (AD10)"]
     fn update_sea_level_refreshes_sea_quad_y() {

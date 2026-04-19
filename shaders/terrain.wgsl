@@ -27,7 +27,7 @@ struct LightRig {
     key_dir:  vec4<f32>, // xyz = direction, w = intensity
     fill_dir: vec4<f32>, // xyz = direction, w = intensity
     ambient:  vec4<f32>, // rgb = color * intensity, a = scalar intensity
-    // sea_level packed into x; y/z/w unused (keeps struct std140-aligned).
+    // sea_level packed into x; y = DITHER_ON flag (0.0 / 1.0); z/w unused.
     sea_level: vec4<f32>,
 }
 
@@ -121,9 +121,15 @@ fn fs_terrain(input: VsOut) -> @location(0) vec4<f32> {
     // random-looking dither across the full mesh. Amplitude is 1.0/255.0
     // centred on zero — ±½ LSB of the final 8-bit sRGB output, visible only
     // as reduced banding.
-    let dither_tile = 8.0;
-    let dither = (textureSample(blue_noise, blue_noise_sampler,
-                                input.uv * dither_tile).r - 0.5) * (1.0 / 255.0);
+    // Sprint 2.6.D: gated by light.sea_level.y > 0.5 (DITHER_ON flag).
+    let dither_on = light.sea_level.y > 0.5;
+    var final_rgb = lit_rgb;
+    if dither_on {
+        let dither_tile = 8.0;
+        let dither = (textureSample(blue_noise, blue_noise_sampler,
+                                    input.uv * dither_tile).r - 0.5) * (1.0 / 255.0);
+        final_rgb = lit_rgb + vec3<f32>(dither);
+    }
 
-    return vec4<f32>(lit_rgb + vec3<f32>(dither), 1.0);
+    return vec4<f32>(final_rgb, 1.0);
 }
