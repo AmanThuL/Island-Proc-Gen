@@ -29,6 +29,7 @@ use sim::{StageId, default_pipeline, invalidate_from};
 
 use crate::camera::{Camera, InputState};
 use crate::dock::{DockLayout, TabKind};
+use crate::world_panel::{WorldPanel, WorldPanelEvent};
 
 // ── ViewMode ──────────────────────────────────────────────────────────────────
 
@@ -102,6 +103,8 @@ struct AppTabViewer<'a> {
     /// Written each frame by the Viewport tab body so `handle_window_event`
     /// can gate camera input to cursor-inside-viewport-only.
     viewport_rect: &'a mut Option<egui::Rect>,
+    world_panel: &'a mut WorldPanel,
+    world_event: &'a mut WorldPanelEvent,
 }
 
 impl egui_dock::TabViewer for AppTabViewer<'_> {
@@ -134,7 +137,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                 ui::OverlayPanel::show(ui, self.overlay_registry);
             }
             TabKind::World => {
-                ui.label("World panel — coming in 2.6.C");
+                *self.world_event = self.world_panel.show(ui);
             }
             TabKind::Camera => {
                 if let Some(mode) = crate::camera_panel::CameraPanel::show(
@@ -212,6 +215,9 @@ pub struct Runtime {
     // each frame and read by handle_window_event to gate camera mouse input.
     // None on the very first frame (before the dock has laid out).
     viewport_rect: Option<egui::Rect>,
+
+    // Sprint 2.6.C: World panel state (preset picker, seed, geometry sliders).
+    world_panel: WorldPanel,
 }
 
 impl Runtime {
@@ -315,6 +321,11 @@ impl Runtime {
         camera.yaw = INITIAL_CAMERA_YAW;
         camera.pitch = INITIAL_CAMERA_PITCH;
 
+        // ── World panel ───────────────────────────────────────────────────────
+        // Constructed from the just-loaded preset and initial seed so the panel
+        // reflects the current world state on first open.
+        let world_panel = WorldPanel::new(&preset, seed.0);
+
         // ── Dock layout path + load ───────────────────────────────────────────
         // Resolve ~/.island_proc_gen/dock_layout.ron on Unix via $HOME.
         // On rare systems where $HOME is unset, fall back to a relative path
@@ -358,6 +369,7 @@ impl Runtime {
             dock,
             dock_layout_path,
             viewport_rect: None,
+            world_panel,
         })
     }
 
@@ -709,6 +721,7 @@ impl Runtime {
         let viewport_tex_id = self.viewport_tex.egui_texture_id();
         let mut new_view_mode: Option<ViewMode> = None;
         let mut params_result = ui::ParamsPanelResult::default();
+        let mut world_event = WorldPanelEvent::default();
         let stats_data = ui::StatsPanelData {
             fps,
             resolution,
@@ -720,6 +733,7 @@ impl Runtime {
         // borrowed by show().
         let dock_state = &mut self.dock.state;
         let viewport_rect = &mut self.viewport_rect;
+        let world_panel = &mut self.world_panel;
         {
             #[allow(deprecated)]
             egui::CentralPanel::default()
@@ -736,6 +750,8 @@ impl Runtime {
                         params_result: &mut params_result,
                         stats_data: &stats_data,
                         viewport_rect,
+                        world_panel,
+                        world_event: &mut world_event,
                     };
                     egui_dock::DockArea::new(dock_state).show_inside(ui, &mut viewer);
                 });
@@ -781,6 +797,18 @@ impl Runtime {
             } else {
                 self.overlay
                     .refresh(&self.gpu, &self.world, &self.overlay_registry);
+            }
+        }
+
+        // Sprint 2.6.C: World panel events — full rebuild or sea_level fast path.
+        if world_event.regenerate {
+            if let Err(err) = self.regenerate_from_world_panel() {
+                warn!("regenerate failed: {err}");
+            }
+        }
+        if world_event.sea_level_released {
+            if let Err(err) = self.apply_sea_level_fast_path() {
+                warn!("sea_level fast-path failed: {err}");
             }
         }
 
@@ -854,6 +882,87 @@ impl Runtime {
         self.gpu.queue.submit(std::iter::once(encoder.finish()));
         self.window.pre_present_notify();
         frame.present();
+    }
+
+    // ── World panel regen helpers ─────────────────────────────────────────────
+
+    /// Full world rebuild triggered by the `Regenerate` button.
+    ///
+    /// Reads the current `world_panel` state (preset name, seed, three slider
+    /// overrides), rebuilds the `WorldState`, runs the full pipeline, and
+    /// re-initialises both renderers so the GPU buffers reflect the new world.
+    fn regenerate_from_world_panel(&mut self) -> anyhow::Result<()> {
+        // 1. Build new preset: load the stock preset, then apply slider overrides.
+        let mut new_preset = data::presets::load_preset(&self.world_panel.preset_name)?;
+        new_preset.island_radius = self.world_panel.island_radius;
+        new_preset.max_relief = self.world_panel.max_relief;
+        new_preset.sea_level = self.world_panel.sea_level;
+
+        // 2. New WorldState.
+        let new_seed = Seed(self.world_panel.seed);
+        self.preset = new_preset.clone();
+        self.world = WorldState::new(new_seed, new_preset, self.resolution);
+        self.seed = new_seed;
+
+        // 3. Full pipeline run.
+        self.pipeline.run(&mut self.world)?;
+
+        // 4. Rebuild terrain renderer — picks up new sea_vbo height + new
+        //    light uniform sea_level from the preset.
+        self.terrain = render::TerrainRenderer::new(&self.gpu, &self.world, &self.preset);
+
+        // 5. Rebuild overlay renderer — shares the new terrain VBO/IBO/view_buf.
+        self.overlay = render::OverlayRenderer::new(
+            &self.gpu,
+            &self.world,
+            &self.overlay_registry,
+            self.terrain.view_buf(),
+            self.terrain.terrain_vbo(),
+            self.terrain.terrain_ibo(),
+            self.terrain.terrain_index_count(),
+        );
+
+        // 6. Recentre camera target at the new water line (preserve
+        //    yaw/pitch/distance).
+        self.camera.target = glam::Vec3::new(
+            render::WORLD_XZ_EXTENT * 0.5,
+            self.preset.sea_level,
+            render::WORLD_XZ_EXTENT * 0.5,
+        );
+
+        // 7. Reset panel slider state to the just-applied preset values so
+        //    the next edit starts from a correct baseline.
+        self.world_panel.island_radius = self.preset.island_radius;
+        self.world_panel.max_relief = self.preset.max_relief;
+        self.world_panel.sea_level = self.preset.sea_level;
+
+        Ok(())
+    }
+
+    /// Sea-level fast path — re-runs only from `Coastal` instead of rebuilding
+    /// the whole world.  Called when the `sea_level` slider is released.
+    fn apply_sea_level_fast_path(&mut self) -> anyhow::Result<()> {
+        // 1. Sync the new sea_level into both preset mirrors.
+        let new_sea_level = self.world_panel.sea_level;
+        self.preset.sea_level = new_sea_level;
+        self.world.preset.sea_level = new_sea_level;
+
+        // 2. Invalidate + re-run from Coastal.
+        invalidate_from(&mut self.world, StageId::Coastal);
+        self.pipeline
+            .run_from(&mut self.world, StageId::Coastal as usize)?;
+
+        // 3. Update terrain renderer sea quad vertices + light uniform.
+        self.terrain.update_sea_level(&self.gpu, new_sea_level);
+
+        // 4. Refresh overlay textures (coast_mask and derived overlays changed).
+        self.overlay
+            .refresh(&self.gpu, &self.world, &self.overlay_registry);
+
+        // 5. Move camera target Y to the new water line.
+        self.camera.target.y = new_sea_level;
+
+        Ok(())
     }
 }
 
@@ -1077,5 +1186,55 @@ mod tests {
         assert!(cursor_in_rect_physical((25.0, 25.0), rect, 2.0));
         // Physical (45, 45) / ppp 2.0 = logical (22.5, 22.5) — outside
         assert!(!cursor_in_rect_physical((45.0, 45.0), rect, 2.0));
+    }
+
+    // ── Regen determinism tests (sim-level, no GPU) ───────────────────────────
+
+    /// Helper: run a full pipeline on a fresh WorldState and return the
+    /// blake3 hash of `authoritative.height.to_bytes()`.
+    fn height_hash(preset_name: &str, seed: u64) -> String {
+        use island_core::{
+            seed::Seed,
+            world::{Resolution, WorldState},
+        };
+        use sim::default_pipeline;
+
+        let preset = data::presets::load_preset(preset_name)
+            .unwrap_or_else(|e| panic!("load_preset({preset_name}): {e}"));
+        let resolution = Resolution::new(128, 128);
+        let mut world = WorldState::new(Seed(seed), preset, resolution);
+        default_pipeline().run(&mut world).expect("pipeline.run");
+        let bytes = world
+            .authoritative
+            .height
+            .as_ref()
+            .expect("height must be populated after pipeline.run")
+            .to_bytes();
+        blake3::hash(&bytes).to_hex().to_string()
+    }
+
+    /// Two different presets with the same seed must produce different height
+    /// fields — verifies that `regenerate_from_world_panel` would produce a
+    /// different world when the user switches presets.
+    #[test]
+    fn regenerate_with_different_preset_changes_world_hash() {
+        let h1 = height_hash("volcanic_single", 42);
+        let h2 = height_hash("caldera", 42);
+        assert_ne!(
+            h1, h2,
+            "volcanic_single and caldera at seed=42 must produce different height hashes"
+        );
+    }
+
+    /// Same preset with two different seeds must produce different height fields
+    /// — verifies the seed DragValue actually matters.
+    #[test]
+    fn regenerate_with_different_seed_changes_world_hash() {
+        let h1 = height_hash("volcanic_single", 1);
+        let h2 = height_hash("volcanic_single", 2);
+        assert_ne!(
+            h1, h2,
+            "volcanic_single at seed=1 and seed=2 must produce different height hashes"
+        );
     }
 }
