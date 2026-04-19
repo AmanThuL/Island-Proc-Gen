@@ -12,26 +12,22 @@ use render::overlay::OverlayRegistry;
 pub struct OverlayPanel;
 
 impl OverlayPanel {
-    /// Draw the "Overlays" window.
+    /// Draw the "Overlays" tab body inline into the provided `ui`.
     ///
     /// Visibility and alpha changes take effect immediately via mutable
     /// access to each descriptor and persist to the next frame because the
     /// caller owns the registry.
-    pub fn show(ctx: &egui::Context, registry: &mut OverlayRegistry) {
-        egui::Window::new("Overlays")
-            .default_pos(egui::pos2(16.0, 16.0))
-            .show(ctx, |ui| {
-                for entry in registry.entries_mut() {
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut entry.visible, "");
-                        ui.add(
-                            egui::Slider::new(&mut entry.alpha, 0.0..=1.0)
-                                .fixed_decimals(2)
-                                .clamping(egui::SliderClamping::Always),
-                        );
-                        ui.label(entry.label);
-                    });
-                }
+    pub fn show(ui: &mut egui::Ui, registry: &mut OverlayRegistry) {
+        for entry in registry.entries_mut() {
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut entry.visible, "");
+                ui.add(
+                    egui::Slider::new(&mut entry.alpha, 0.0..=1.0)
+                        .fixed_decimals(2)
+                        .clamping(egui::SliderClamping::Always),
+                );
+                ui.label(entry.label);
             });
+        }
     }
 }

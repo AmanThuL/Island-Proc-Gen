@@ -16,17 +16,13 @@ pub struct StatsPanelData {
 }
 
 impl StatsPanel {
-    /// Draw the "Stats" window.
-    pub fn show(ctx: &egui::Context, data: &StatsPanelData) {
-        egui::Window::new("Stats")
-            .default_pos(egui::pos2(280.0, 16.0))
-            .show(ctx, |ui| {
-                ui.label(format!("FPS: {:.1}", data.fps));
-                ui.label(format!(
-                    "resolution: {}x{}",
-                    data.resolution.sim_width, data.resolution.sim_height
-                ));
-                ui.label(format!("seed: 0x{:016x}", data.seed.0));
-            });
+    /// Draw the "Stats" tab body inline into the provided `ui`.
+    pub fn show(ui: &mut egui::Ui, data: &StatsPanelData) {
+        ui.label(format!("FPS: {:.1}", data.fps));
+        ui.label(format!(
+            "resolution: {}x{}",
+            data.resolution.sim_width, data.resolution.sim_height
+        ));
+        ui.label(format!("seed: 0x{:016x}", data.seed.0));
     }
 }

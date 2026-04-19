@@ -27,6 +27,7 @@ use render::{
 use sim::{StageId, default_pipeline, invalidate_from};
 
 use crate::camera::{Camera, InputState};
+use crate::dock::{DockLayout, TabKind};
 
 // ── ViewMode ──────────────────────────────────────────────────────────────────
 
@@ -80,6 +81,71 @@ pub(crate) const INITIAL_CAMERA_DISTANCE: f32 = 1.44;
 pub(crate) const INITIAL_CAMERA_YAW: f32 = 0.23;
 pub(crate) const INITIAL_CAMERA_PITCH: f32 = 0.22;
 
+// ── AppTabViewer ──────────────────────────────────────────────────────────────
+
+/// `egui_dock::TabViewer` implementation for the main window.
+///
+/// Holds short-lived borrows to all state the tab bodies need for one frame.
+/// Constructed inside `tick()` immediately before `DockArea::show_inside` and
+/// dropped right after.
+struct AppTabViewer<'a> {
+    viewport_tex_id: egui::TextureId,
+    overlay_registry: &'a mut OverlayRegistry,
+    camera: &'a mut Camera,
+    island_radius: f32,
+    view_mode: ViewMode,
+    new_view_mode: &'a mut Option<ViewMode>,
+    preset: &'a mut IslandArchetypePreset,
+    params_result: &'a mut ui::ParamsPanelResult,
+    stats_data: &'a ui::StatsPanelData,
+}
+
+impl egui_dock::TabViewer for AppTabViewer<'_> {
+    type Tab = TabKind;
+
+    fn title(&mut self, tab: &mut TabKind) -> egui::WidgetText {
+        tab.title().into()
+    }
+
+    fn is_closeable(&self, tab: &TabKind) -> bool {
+        tab.closeable()
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, tab: &mut TabKind) {
+        match tab {
+            TabKind::Viewport => {
+                let avail = ui.available_size();
+                ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                    self.viewport_tex_id,
+                    avail,
+                )));
+            }
+            TabKind::Overlays => {
+                ui::OverlayPanel::show(ui, self.overlay_registry);
+            }
+            TabKind::World => {
+                ui.label("World panel — coming in 2.6.C");
+            }
+            TabKind::Camera => {
+                if let Some(mode) = crate::camera_panel::CameraPanel::show(
+                    ui,
+                    self.camera,
+                    self.island_radius,
+                    self.view_mode,
+                ) {
+                    *self.new_view_mode = Some(mode);
+                }
+            }
+            TabKind::Params => {
+                *self.params_result = ui::ParamsPanel::show(ui, self.preset);
+            }
+            TabKind::Stats => {
+                ui::StatsPanel::show(ui, self.stats_data);
+            }
+        }
+    }
+}
+
 // ── Runtime ───────────────────────────────────────────────────────────────────
 
 /// Holds all per-window application state.
@@ -127,6 +193,9 @@ pub struct Runtime {
     // baseline while `view_mode != Continuous`; see [`ViewMode`] docs.
     view_mode: ViewMode,
     saved_visibility: Option<Vec<(&'static str, bool)>>,
+
+    // egui_dock layout (B.2: in-memory; B.3 adds persistence).
+    dock: DockLayout,
 }
 
 impl Runtime {
@@ -252,6 +321,7 @@ impl Runtime {
             pipeline,
             view_mode: ViewMode::Continuous,
             saved_visibility: None,
+            dock: DockLayout::default_layout(),
         })
     }
 
@@ -518,47 +588,43 @@ impl Runtime {
         // Use begin_pass / end_pass (the non-deprecated path in egui 0.34).
         self.egui_ctx.begin_pass(raw_input);
 
-        // ── CentralPanel — displays the offscreen viewport texture ────────────
-        // Painted first so the four floating Window panels sit on top.
-        // egui::Window always draws after Panels (egui painter ordering).
-        // Frame::NONE removes the default panel margin so the image is
-        // edge-to-edge with the window client area.
+        // ── DockArea — six-tab dock layout replacing the old CentralPanel +
+        //    four floating windows. TabViewer dispatches each tab variant to
+        //    its panel body; the Viewport tab renders the offscreen texture.
         //
-        // `CentralPanel::show(&ctx, ...)` is deprecated in egui 0.34 in favour
-        // of `show_inside(&mut ui, ...)`, but `show_inside` requires an existing
-        // `&mut Ui` which is unavailable in the `begin_pass / end_pass` call
-        // pattern. The `#[allow(deprecated)]` is targeted here; the migration to
-        // `run_ui` (which would provide a top-level `&mut Ui`) is deferred to B.2.
+        // Extract local temporaries that the TabViewer needs but that would
+        // otherwise conflict with the `&mut self.dock.state` borrow below.
+        let viewport_tex_id = self.viewport_tex.egui_texture_id();
+        let mut new_view_mode: Option<ViewMode> = None;
+        let mut params_result = ui::ParamsPanelResult::default();
+        let stats_data = ui::StatsPanelData {
+            fps,
+            resolution,
+            seed,
+        };
+
+        // Reborrow self.dock.state as a local so the closure below doesn't
+        // need to borrow self while self.egui_ctx is also borrowed by show().
+        let dock_state = &mut self.dock.state;
         {
             #[allow(deprecated)]
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
                 .show(&self.egui_ctx, |ui| {
-                    let avail = ui.available_size();
-                    ui.add(egui::Image::new(egui::load::SizedTexture::new(
-                        self.viewport_tex.egui_texture_id(),
-                        avail,
-                    )));
+                    let mut viewer = AppTabViewer {
+                        viewport_tex_id,
+                        overlay_registry: registry,
+                        camera,
+                        island_radius,
+                        view_mode,
+                        new_view_mode: &mut new_view_mode,
+                        preset,
+                        params_result: &mut params_result,
+                        stats_data: &stats_data,
+                    };
+                    egui_dock::DockArea::new(dock_state).show_inside(ui, &mut viewer);
                 });
         }
-
-        // Four floating panels: Overlays → Camera (+ ViewMode) → Params → Stats.
-        ui::OverlayPanel::show(&self.egui_ctx, registry);
-        let new_view_mode = crate::camera_panel::CameraPanel::show(
-            &self.egui_ctx,
-            camera,
-            island_radius,
-            view_mode,
-        );
-        let params_result = ui::ParamsPanel::show(&self.egui_ctx, preset);
-        ui::StatsPanel::show(
-            &self.egui_ctx,
-            &ui::StatsPanelData {
-                fps,
-                resolution,
-                seed,
-            },
-        );
 
         let full_output = self.egui_ctx.end_pass();
 

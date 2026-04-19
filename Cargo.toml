@@ -30,3 +30,4 @@ png              = "0.17"
 pollster         = "0.4"
 bytemuck         = { version = "1.25", features = ["derive"] }
 blake3           = "1"
+egui_dock         = "0.19"

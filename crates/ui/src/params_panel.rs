@@ -36,83 +36,77 @@ pub struct ParamsPanelResult {
 pub struct ParamsPanel;
 
 impl ParamsPanel {
-    /// Draw the "Params" window. Returns flags for any slider that
-    /// was touched this frame.
-    pub fn show(ctx: &egui::Context, preset: &mut IslandArchetypePreset) -> ParamsPanelResult {
+    /// Draw the "Params" tab body inline into the provided `ui`. Returns flags
+    /// for any slider that was touched this frame.
+    pub fn show(ui: &mut egui::Ui, preset: &mut IslandArchetypePreset) -> ParamsPanelResult {
         let mut result = ParamsPanelResult::default();
-        egui::Window::new("Params")
-            .default_pos(egui::pos2(16.0, 180.0))
-            .show(ctx, |ui| {
-                ui.label(format!("name: {}", preset.name));
-                ui.label(format!("island_radius: {:.3}", preset.island_radius));
-                ui.label(format!("max_relief: {:.3}", preset.max_relief));
-                ui.label(format!(
-                    "volcanic_center_count: {}",
-                    preset.volcanic_center_count
-                ));
-                ui.label(format!("island_age: {:?}", preset.island_age));
 
-                ui.separator();
-                ui.label("Climate");
-                let wind_slider = egui::Slider::new(&mut preset.prevailing_wind_dir, 0.0..=TAU)
-                    .text("wind dir (rad)")
-                    .fixed_decimals(3);
-                let wind_response = ui.add(wind_slider);
-                if wind_response.changed() {
-                    result.wind_dir_changed = true;
-                }
+        ui.label(format!("name: {}", preset.name));
+        ui.label(format!("island_radius: {:.3}", preset.island_radius));
+        ui.label(format!("max_relief: {:.3}", preset.max_relief));
+        ui.label(format!(
+            "volcanic_center_count: {}",
+            preset.volcanic_center_count
+        ));
+        ui.label(format!("island_age: {:?}", preset.island_age));
 
-                ui.label(format!(
-                    "marine_moisture_strength: {:.3}",
-                    preset.marine_moisture_strength
-                ));
-                ui.label(format!("sea_level: {:.3}", preset.sea_level));
+        ui.separator();
+        ui.label("Climate");
+        let wind_slider = egui::Slider::new(&mut preset.prevailing_wind_dir, 0.0..=TAU)
+            .text("wind dir (rad)")
+            .fixed_decimals(3);
+        let wind_response = ui.add(wind_slider);
+        if wind_response.changed() {
+            result.wind_dir_changed = true;
+        }
 
-                // ── Erosion (Sprint 2) ────────────────────────────────────
-                ui.separator();
-                ui.label("Erosion (Sprint 2)");
+        ui.label(format!(
+            "marine_moisture_strength: {:.3}",
+            preset.marine_moisture_strength
+        ));
+        ui.label(format!("sea_level: {:.3}", preset.sea_level));
 
-                // Tier A: live update on every drag tick.
-                let k_slider = egui::Slider::new(&mut preset.erosion.spim_k, 1e-5..=5e-3)
-                    .text("spim K")
-                    .logarithmic(true)
-                    .fixed_decimals(4);
-                if ui.add(k_slider).changed() {
-                    result.erosion_changed = true;
-                }
+        // ── Erosion (Sprint 2) ────────────────────────────────────
+        ui.separator();
+        ui.label("Erosion (Sprint 2)");
 
-                let d_slider = egui::Slider::new(&mut preset.erosion.hillslope_d, 0.0..=1e-2)
-                    .text("hillslope D")
-                    .fixed_decimals(4);
-                if ui.add(d_slider).changed() {
-                    result.erosion_changed = true;
-                }
+        // Tier A: live update on every drag tick.
+        let k_slider = egui::Slider::new(&mut preset.erosion.spim_k, 1e-5..=5e-3)
+            .text("spim K")
+            .logarithmic(true)
+            .fixed_decimals(4);
+        if ui.add(k_slider).changed() {
+            result.erosion_changed = true;
+        }
 
-                // Tier B: fire only on drag_stopped (release) or a direct
-                // click-to-edit that isn't a drag — avoids stalling the frame
-                // loop with a flow-network rebuild on every intermediate integer.
-                let n_batch_resp = ui.add(
-                    egui::DragValue::new(&mut preset.erosion.n_batch)
-                        .range(0_u32..=20_u32)
-                        .prefix("n_batch: "),
-                );
-                if n_batch_resp.drag_stopped()
-                    || (n_batch_resp.changed() && !n_batch_resp.dragged())
-                {
-                    result.erosion_changed = true;
-                }
+        let d_slider = egui::Slider::new(&mut preset.erosion.hillslope_d, 0.0..=1e-2)
+            .text("hillslope D")
+            .fixed_decimals(4);
+        if ui.add(d_slider).changed() {
+            result.erosion_changed = true;
+        }
 
-                let n_inner_resp = ui.add(
-                    egui::DragValue::new(&mut preset.erosion.n_inner)
-                        .range(1_u32..=20_u32)
-                        .prefix("n_inner: "),
-                );
-                if n_inner_resp.drag_stopped()
-                    || (n_inner_resp.changed() && !n_inner_resp.dragged())
-                {
-                    result.erosion_changed = true;
-                }
-            });
+        // Tier B: fire only on drag_stopped (release) or a direct
+        // click-to-edit that isn't a drag — avoids stalling the frame
+        // loop with a flow-network rebuild on every intermediate integer.
+        let n_batch_resp = ui.add(
+            egui::DragValue::new(&mut preset.erosion.n_batch)
+                .range(0_u32..=20_u32)
+                .prefix("n_batch: "),
+        );
+        if n_batch_resp.drag_stopped() || (n_batch_resp.changed() && !n_batch_resp.dragged()) {
+            result.erosion_changed = true;
+        }
+
+        let n_inner_resp = ui.add(
+            egui::DragValue::new(&mut preset.erosion.n_inner)
+                .range(1_u32..=20_u32)
+                .prefix("n_inner: "),
+        );
+        if n_inner_resp.drag_stopped() || (n_inner_resp.changed() && !n_inner_resp.dragged()) {
+            result.erosion_changed = true;
+        }
+
         result
     }
 }
