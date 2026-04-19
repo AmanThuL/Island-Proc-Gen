@@ -23,7 +23,8 @@ Three questions this file must always answer:
 
 **Primary:** Sprint 2.5 — Hex UX Slice + Sprint 2 Tail Absorption.
 **Closed on `dev` 2026-04-18** with 10 atomic commits (26ff9a5 →
-4dc75ed) across 11 of the 12 planned sub-tasks. 2.5.I (blue-noise
+cf77ac2, the final commit being the PROGRESS close-out roll-forward)
+across 11 of the 12 planned sub-tasks. 2.5.I (blue-noise
 dither A/B) + 2.5.L (blue-noise size toggle) are explicitly deferred
 to a later sprint that has a live display for the visual A/B step —
 the dither path stays in place untouched, per the audit memo. Test
@@ -148,7 +149,19 @@ Both residuals have explicit Sprint 3 anchor points — they are
 natural fits for the next sprint's work, not Sprint 2 blockers.
 
 **Next session priorities** (see [QUICK REFERENCE](#quick-reference)):
-1. **Sprint 3** — Sediment + Advanced Climate. SPACE-lite sediment-
+1. **Sprint 2.6** — Editor Layout, World Proportions & Visual Tail.
+   **User chose to execute 2.6 before Sprint 3** (2026-04-19 planning
+   session). Fixes `vertical_scale` slider as debt by baking
+   `render::WORLD_XZ_EXTENT` (one const, live + headless auto-consistent,
+   slider deleted). Adds `egui_dock` viewport-as-tab layout with
+   persistence to `~/.island_proc_gen/dock_layout.ron`. Adds World
+   panel with preset ComboBox + seed + 3 geometry sliders + Regenerate.
+   **Absorbs Sprint 2.5.I + 2.5.L** (dither A/B + blue-noise size
+   toggle) — they no longer live as "opportunistic tail", they're
+   tasks 2.6.D / 2.6.E and must close with a decision memo. Sprint 3
+   does not depend on 2.6; this sprint is optional-but-chosen.
+   Doc: [`docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md`](docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md) (Obsidian symlink, gitignored).
+2. **Sprint 3** — Sediment + Advanced Climate. SPACE-lite sediment-
    aware erosion (`K · g(hs)`), LFPM v3 precipitation, cloud forest
    belt + fog hydrology, Coast type v2 (fetch integral + LavaDelta),
    riparian biome alluvial-fan-aware upgrade, optional DualSeason
@@ -157,11 +170,8 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
    archetypes, 15-shot 1B baseline, tuned biome bells, and hex
    debug overlays provide the new starting baseline.
    Doc: `docs/design/sprints/sprint_3_sediment_advanced_climate.md` (TBD).
-2. **Sprint 1B paper pack** (low-energy): Bruijnzeel 2005 / 2011,
+3. **Sprint 1B paper pack** (low-energy): Bruijnzeel 2005 / 2011,
    Chen 2023 Budyko, Core Pack #2/#3/#5/#6/#8 落地点 sections.
-3. **Sprint 2.5.I + 2.5.L tail** (opportunistic): blue-noise dither
-   A/B visual test + conditional size toggle. Requires interactive
-   display session; can be bundled into any future in-window work.
 
 ---
 
@@ -190,7 +200,7 @@ from a polished, hex-validated, 5-archetype, biome-diverse baseline.
 | `1073f4e` | 2.5.K | `OverlayDescriptor.alpha: f32` (default 0.6) + OverlayPanel `[checkbox][slider][label]` per descriptor row, iterating `registry.entries_mut()` — zero hardcoded overlay counts. `OverlayRenderer::draw` writes per-frame alpha uniforms. Beauty PNG bit-identical. +1 test. |
 | `4dc75ed` | 2.5.H | `ValueRange::LogCompressedClampPercentile(f32)` variant — computes p-quantile of `ln(1+value)` at bake time instead of clamping on max. `flow_accumulation` descriptor switches to `LogCompressedClampPercentile(0.99)`; `volcanic_twin` distribution P90/max = 0.023 established the washout mathematically. Cascade regen of `flow_accumulation` hash across all 3 baselines; other overlays bit-identical. |
 
-**Deferred within Sprint 2.5:**
+**Deferred within Sprint 2.5** (historical — see forward pointer at end):
 
 - **2.5.I — dither A/B audit**: needs interactive display for the
   ±½ LSB banding comparison; headless PNG readback loses the
@@ -199,6 +209,13 @@ from a polished, hex-validated, 5-archetype, biome-diverse baseline.
   (local-only). No code change — the dither stays in `terrain.wgsl`.
 - **2.5.L — blue-noise size toggle**: dependency-gated on 2.5.I per
   the spec decision tree. Re-opens when 2.5.I resolves.
+
+> **Forward pointer (2026-04-19):** 2.5.I and 2.5.L are no longer
+> deferred — both have been **absorbed into Sprint 2.6.D / 2.6.E**
+> at sprint-planning time. See `DEFERRED TO LATER SPRINTS` section
+> for the current absorption status and Sprint 2.5.L lock-rule
+> compliant drop-path behaviour. The two paragraphs above are the
+> close-out snapshot as of 2026-04-18 and are retained for history.
 
 **Sprint 2.5 plan key decisions (locked):**
 
@@ -497,18 +514,29 @@ windward/leeward ratio 1.098, mean temp 19.1 °C, 3 dominant biomes.
 
 **From Sprint 2.5 close-out (new — 2026-04-18):**
 
-- **2.5.I — Blue-noise dither A/B visual validation.** The ±½ LSB
-  amplitude is below headless PNG byte-threshold; the keep-vs-remove
-  call must be eyeballed on a live display. No `DITHER_ON` toggle
-  added — that would be scope creep for a deferred decision. Reopens
-  whenever a future in-window work session touches the terrain
-  shader. Audit memo
-  `docs/design/sprints/sprint_2_5_visual_acceptance/dither_ab_audit.md`
-  (Obsidian symlink, local-only).
-- **2.5.L — Blue-noise runtime size toggle (64 / 128 / 256).**
-  Gated on 2.5.I per the sprint doc's decision tree. If 2.5.I keeps
-  dither → 2.5.L implements the ComboBox. If 2.5.I removes dither
-  → 2.5.L drops the loader + 2 unused PNG assets. Reopens with 2.5.I.
+- ~~**2.5.I — Blue-noise dither A/B visual validation.**~~
+  **ABSORBED INTO Sprint 2.6.D (2026-04-19).** The decision memo
+  lives at `docs/design/sprints/sprint_2_6_visual_acceptance/dither_ab_decision.md`
+  after Sprint 2.6's live-window A/B session; the `DITHER_ON` uniform
+  + Camera-panel toggle is Sprint 2.6.D scope (not scope creep anymore
+  — the full sprint is structured around closing this decision). See
+  Sprint 2.6 plan doc §3 Task 2.6.D.
+- ~~**2.5.L — Blue-noise runtime size toggle (64 / 128 / 256).**~~
+  **ABSORBED INTO Sprint 2.6.E (2026-04-19).** Three PNG assets
+  (`blue_noise_2d_64.png`, `blue_noise_2d_128.png`, `blue_noise_2d_256.png`)
+  already present in `assets/noise/`; `render::noise::load_blue_noise_2d`
+  is already size-generic (no loader changes needed). 2.6.E is a
+  Camera-panel ComboBox + runtime texture hot-reload only, **gated on
+  2.6.D keep-dither**. Decision-tree endings (Sprint 2.5.L lock-rule
+  compliant — no "future-proofing" exemption):
+  - 2.6.D **keeps** dither → 2.6.E executes; all three PNGs retained
+    as active consumers.
+  - 2.6.D **drops** dither → 2.6.E closes "n/a via upstream 2.6.D";
+    `blue_noise_2d_64.png` retained (still loaded by
+    `overlay_render.rs:122` for overlay dither), `blue_noise_2d_128.png`
+    + `blue_noise_2d_256.png` **deleted from repo** in the same commit
+    that removes the terrain dither branch. If blue-noise ever returns
+    to the terrain path, re-download from Calinou is a one-liner.
 - **2.5.Jb — Climate constant tuning (`CONDENSATION_RATE` /
   `RAIN_SHADOW_K` / other `climate/` constants).** Explicit scope
   split inside Sprint 2.5: only ecology bells were tuned; climate
@@ -1041,14 +1069,16 @@ Delivered:
 
 ## UPCOMING SPRINTS
 
-Sprints 1A, 1B, 1C, 1D, and 2 are shipped. Upcoming work starts at
-Sprint 2.5. Per-sprint plan docs are written **one at a time** after
-the previous sprint closes — the roadmap carries the forward-looking
-vision until each sprint's doc gets authored.
+Sprints 1A, 1B, 1C, 1D, 2, and 2.5 are shipped. Upcoming work starts
+at Sprint 2.6 (user-chosen, 2026-04-19 — optional UX sprint that
+absorbs Sprint 2.5's two display-gated deferrals). Per-sprint plan
+docs are written **one at a time** after the previous sprint closes —
+the roadmap carries the forward-looking vision until each sprint's
+doc gets authored.
 
 | Sprint | Focus | Source of truth |
 |---|---|---|
-| 2.5 | Hex UX slice (3 views toggle, projection error overlay, river crossing debug, `accessibility_cost` prototype) + absorbed 1A/1B/2 tail items (biome param tuning, T2/T3 UI polish, 1B 16-shot full migration, basin partition refinement post-erosion, 3 new archetypes) | [`sprint_2_5_hex_ux_and_tail.md`](docs/design/sprints/sprint_2_5_hex_ux_and_tail.md) (Obsidian symlink, gitignored) |
+| 2.6 | Editor Layout (egui_dock + viewport-as-tab + dock persistence), World Proportions (`render::WORLD_XZ_EXTENT` const replaces `vertical_scale` slider), World panel (preset picker + seed + 3 geometry sliders + Regenerate), absorbs Sprint 2.5.I dither A/B + 2.5.L blue-noise size toggle | [`sprint_2_6_editor_layout_and_visual_tail.md`](docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md) (Obsidian symlink, gitignored) |
 | 3 | Sediment v1 + SPACE-inspired dual-equation erosion with `K·g(hs)` modulation (unlocks Sprint 2's deferred "max_z drop 10-30 %" + CoastType Cliff bin), LFPM v3 precipitation, cloud-forest inversion, Coast v2 (fetch integral + LavaDelta) | Roadmap §Sprint 3 |
 | 4 | `crates/gpu/` + `ComputeBackend` refactor, 5 GPU passes, CLI productization (`island-gen`), parity framework, implicit SPIM (Braun 2023) | Roadmap §Sprint 4 |
 | 5 | Four subsystems: S1 Hex, S2 Semantic (rule-based + WFC stretch), S3 Web (trunk, curated subset), S4 Demo/Article/Gallery | Roadmap §Sprint 5 |
