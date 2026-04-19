@@ -1,6 +1,7 @@
 //! Application runtime — owns the window, GPU context, renderer, egui state,
 //! and camera. Drives one full frame per `tick()` call.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -98,6 +99,9 @@ struct AppTabViewer<'a> {
     preset: &'a mut IslandArchetypePreset,
     params_result: &'a mut ui::ParamsPanelResult,
     stats_data: &'a ui::StatsPanelData,
+    /// Written each frame by the Viewport tab body so `handle_window_event`
+    /// can gate camera input to cursor-inside-viewport-only.
+    viewport_rect: &'a mut Option<egui::Rect>,
 }
 
 impl egui_dock::TabViewer for AppTabViewer<'_> {
@@ -114,7 +118,13 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut TabKind) {
         match tab {
             TabKind::Viewport => {
-                let avail = ui.available_size();
+                // Capture the rect before adding the image widget so we get
+                // the full available area including the pixel the image will
+                // occupy. This rect (in logical points) is used by
+                // `handle_window_event` to gate mouse input to the viewport.
+                let rect = ui.available_rect_before_wrap();
+                *self.viewport_rect = Some(rect);
+                let avail = rect.size();
                 ui.add(egui::Image::new(egui::load::SizedTexture::new(
                     self.viewport_tex_id,
                     avail,
@@ -194,8 +204,14 @@ pub struct Runtime {
     view_mode: ViewMode,
     saved_visibility: Option<Vec<(&'static str, bool)>>,
 
-    // egui_dock layout (B.2: in-memory; B.3 adds persistence).
+    // egui_dock layout + persistence path.
     dock: DockLayout,
+    dock_layout_path: PathBuf,
+
+    // Viewport tab rect in egui logical points, written by AppTabViewer::ui
+    // each frame and read by handle_window_event to gate camera mouse input.
+    // None on the very first frame (before the dock has laid out).
+    viewport_rect: Option<egui::Rect>,
 }
 
 impl Runtime {
@@ -299,6 +315,24 @@ impl Runtime {
         camera.yaw = INITIAL_CAMERA_YAW;
         camera.pitch = INITIAL_CAMERA_PITCH;
 
+        // ── Dock layout path + load ───────────────────────────────────────────
+        // Resolve ~/.island_proc_gen/dock_layout.ron on Unix via $HOME.
+        // On rare systems where $HOME is unset, fall back to a relative path
+        // so the app still starts; a warning is logged in that case.
+        let dock_layout_path: PathBuf = match std::env::var("HOME") {
+            Ok(home) => PathBuf::from(home)
+                .join(".island_proc_gen")
+                .join("dock_layout.ron"),
+            Err(_) => {
+                warn!(
+                    "$HOME is not set; dock layout will be persisted to \
+                     ./.island_proc_gen/dock_layout.ron"
+                );
+                PathBuf::from(".island_proc_gen").join("dock_layout.ron")
+            }
+        };
+        let dock = DockLayout::load_or_default(&dock_layout_path);
+
         Ok(Self {
             window,
             gpu,
@@ -321,7 +355,9 @@ impl Runtime {
             pipeline,
             view_mode: ViewMode::Continuous,
             saved_visibility: None,
-            dock: DockLayout::default_layout(),
+            dock,
+            dock_layout_path,
+            viewport_rect: None,
         })
     }
 
@@ -406,18 +442,29 @@ impl Runtime {
             return; // egui handled it
         }
 
+        let ppp = egui_winit::pixels_per_point(&self.egui_ctx, &self.window);
+
         match event {
             WindowEvent::CloseRequested => {
                 debug!("Window close requested");
+                // Persist the dock layout before exiting so the user's panel
+                // arrangement is restored on the next launch.
+                if let Err(err) = self.dock.save(&self.dock_layout_path) {
+                    warn!(
+                        path = %self.dock_layout_path.display(),
+                        error = %err,
+                        "dock_layout.ron save failed"
+                    );
+                }
                 event_loop.exit();
             }
 
             WindowEvent::Resized(new_size) => {
                 self.gpu.resize(new_size);
-                let aspect = new_size.width as f32 / new_size.height.max(1) as f32;
-                self.camera.set_aspect(aspect);
-                // B.1: viewport fills the window. In B.3 the aspect source will
-                // move to the viewport tab rect, but for now they are equal.
+                // Camera aspect is now set per-frame from viewport_rect in
+                // tick() (using the previous frame's tab rect). We no longer
+                // drive it directly from window size so that the aspect always
+                // matches the actual 3-D viewport area, not the full window.
                 self.viewport_tex.resize(
                     &self.gpu,
                     (new_size.width, new_size.height),
@@ -430,28 +477,72 @@ impl Runtime {
             }
 
             // ── Camera input ──────────────────────────────────────────────────
-            WindowEvent::MouseInput { state, button, .. } => match button {
-                MouseButton::Left => {
-                    self.input.left_pressed = state == ElementState::Pressed;
-                    if state == ElementState::Released {
-                        self.input.last_cursor = None;
+            WindowEvent::MouseInput { state, button, .. } => {
+                // Gate press events on cursor being inside the viewport tab.
+                // Release events always pass through so we never leak
+                // left_pressed / right_pressed = true state.
+                let is_press = state == ElementState::Pressed;
+                if is_press {
+                    let inside = self
+                        .input
+                        .last_cursor
+                        .zip(self.viewport_rect)
+                        .map(|((cx, cy), rect)| cursor_in_rect_physical((cx, cy), rect, ppp))
+                        .unwrap_or(false);
+                    if !inside {
+                        return;
                     }
                 }
-                MouseButton::Right => {
-                    self.input.right_pressed = state == ElementState::Pressed;
-                    if state == ElementState::Released {
-                        self.input.last_cursor = None;
+                match button {
+                    MouseButton::Left => {
+                        self.input.left_pressed = is_press;
+                        if !is_press {
+                            self.input.last_cursor = None;
+                        }
                     }
+                    MouseButton::Right => {
+                        self.input.right_pressed = is_press;
+                        if !is_press {
+                            self.input.last_cursor = None;
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
 
             WindowEvent::CursorMoved { position, .. } => {
                 let (cx, cy) = (position.x, position.y);
-                if let Some((lx, ly)) = self.input.last_cursor {
-                    let PhysicalSize { width, height } = self.gpu.size;
-                    let dx = (cx - lx) as f32 / width as f32;
-                    let dy = (cy - ly) as f32 / height as f32;
+
+                // Always update last_cursor first so the next move after
+                // re-entering the viewport computes a fresh delta rather than
+                // teleporting from the stale pre-exit position.
+                let prev_cursor = self.input.last_cursor;
+                self.input.last_cursor = Some((cx, cy));
+
+                // Only drive the camera when the cursor is inside the
+                // viewport tab rect. The delta denominator is the viewport's
+                // physical-pixel size so sensitivity is independent of how
+                // large or small the user has resized the tab.
+                let in_viewport = self
+                    .viewport_rect
+                    .map(|rect| cursor_in_rect_physical((cx, cy), rect, ppp))
+                    .unwrap_or(false);
+
+                if !in_viewport {
+                    return;
+                }
+
+                if let Some((lx, ly)) = prev_cursor {
+                    // Compute deltas as a fraction of the viewport's physical
+                    // size. Using physical pixels for both cursor deltas and
+                    // the viewport dimensions keeps the math consistent without
+                    // any intermediate conversion.
+                    // viewport_rect is guaranteed Some here — in_viewport checked above.
+                    let rect = self.viewport_rect.unwrap();
+                    let rect_w_phys = (rect.width() * ppp).max(1.0);
+                    let rect_h_phys = (rect.height() * ppp).max(1.0);
+                    let dx = (cx - lx) as f32 / rect_w_phys;
+                    let dy = (cy - ly) as f32 / rect_h_phys;
 
                     if self.input.right_pressed
                         || (self.input.left_pressed && self.input.shift_held)
@@ -461,10 +552,20 @@ impl Runtime {
                         self.camera.orbit(dx, dy);
                     }
                 }
-                self.input.last_cursor = Some((cx, cy));
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
+                // Gate scroll on cursor being inside the viewport tab.
+                let in_viewport = self
+                    .input
+                    .last_cursor
+                    .zip(self.viewport_rect)
+                    .map(|((cx, cy), rect)| cursor_in_rect_physical((cx, cy), rect, ppp))
+                    .unwrap_or(false);
+                if !in_viewport {
+                    return;
+                }
+
                 let scroll = match delta {
                     MouseScrollDelta::LineDelta(_, y) => y,
                     MouseScrollDelta::PixelDelta(pos) => pos.y as f32 * 0.01,
@@ -492,6 +593,17 @@ impl Runtime {
         } else {
             self.fps * 0.95 + (1.0 / dt.max(f32::EPSILON)) * 0.05
         };
+
+        // ── Camera aspect from viewport rect ──────────────────────────────────
+        // We use the rect written by AppTabViewer::ui in the PREVIOUS frame.
+        // This produces at most one frame of stale aspect during window
+        // resize, which is imperceptible at 60 fps. On the very first frame
+        // viewport_rect is None, so the initial aspect set in Runtime::new
+        // (from gpu.size) continues to apply.
+        if let Some(rect) = self.viewport_rect {
+            let aspect = rect.aspect_ratio().max(1e-3);
+            self.camera.set_aspect(aspect);
+        }
 
         // ── Sim step (Sprint 0: no-op) ────────────────────────────────────────
 
@@ -603,9 +715,11 @@ impl Runtime {
             seed,
         };
 
-        // Reborrow self.dock.state as a local so the closure below doesn't
-        // need to borrow self while self.egui_ctx is also borrowed by show().
+        // Reborrow self.dock.state and viewport_rect as locals so the closure
+        // below doesn't need to borrow self while self.egui_ctx is also
+        // borrowed by show().
         let dock_state = &mut self.dock.state;
+        let viewport_rect = &mut self.viewport_rect;
         {
             #[allow(deprecated)]
             egui::CentralPanel::default()
@@ -621,6 +735,7 @@ impl Runtime {
                         preset,
                         params_result: &mut params_result,
                         stats_data: &stats_data,
+                        viewport_rect,
                     };
                     egui_dock::DockArea::new(dock_state).show_inside(ui, &mut viewer);
                 });
@@ -764,11 +879,34 @@ fn load_preset() -> IslandArchetypePreset {
     }
 }
 
+// ── Input routing helpers ─────────────────────────────────────────────────────
+
+/// Returns `true` when the physical-pixel cursor position `(cx, cy)` lies
+/// inside `rect_logical` after converting to logical points using
+/// `pixels_per_point`.
+///
+/// Coordinate convention:
+/// - `cursor_phys` — physical pixels, from `WindowEvent::CursorMoved`.
+/// - `rect_logical` — egui logical points, from `ui.available_rect_before_wrap()`.
+/// - `ppp` — pixels per logical point, from `egui_winit::pixels_per_point`.
+///
+/// Separating this as a pure function makes it trivially testable without
+/// a live event loop.
+pub(crate) fn cursor_in_rect_physical(
+    cursor_phys: (f64, f64),
+    rect_logical: egui::Rect,
+    ppp: f32,
+) -> bool {
+    let lx = (cursor_phys.0 / ppp as f64) as f32;
+    let ly = (cursor_phys.1 / ppp as f64) as f32;
+    rect_logical.contains(egui::pos2(lx, ly))
+}
+
 // ── ViewMode unit tests ───────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
-    use super::ViewMode;
+    use super::{ViewMode, cursor_in_rect_physical};
     use render::overlay::OverlayRegistry;
 
     /// Minimal stand-in for the runtime's view_mode state machine, using only
@@ -901,5 +1039,43 @@ mod tests {
             vec!["hex_aggregated"],
             "HexOnly must show only hex_aggregated, got: {visible_ids:?}"
         );
+    }
+
+    // ── cursor_in_rect_physical ───────────────────────────────────────────────
+
+    fn make_rect(min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> egui::Rect {
+        egui::Rect::from_min_max(egui::pos2(min_x, min_y), egui::pos2(max_x, max_y))
+    }
+
+    /// Cursor clearly inside the rect at ppp=1.0.
+    #[test]
+    fn cursor_inside_rect_returns_true() {
+        let rect = make_rect(10.0, 10.0, 20.0, 20.0);
+        assert!(cursor_in_rect_physical((15.0, 15.0), rect, 1.0));
+    }
+
+    /// Cursor outside on all four sides.
+    #[test]
+    fn cursor_outside_rect_all_sides_returns_false() {
+        let rect = make_rect(10.0, 10.0, 20.0, 20.0);
+        // Left
+        assert!(!cursor_in_rect_physical((5.0, 15.0), rect, 1.0));
+        // Right
+        assert!(!cursor_in_rect_physical((25.0, 15.0), rect, 1.0));
+        // Above
+        assert!(!cursor_in_rect_physical((15.0, 5.0), rect, 1.0));
+        // Below
+        assert!(!cursor_in_rect_physical((15.0, 25.0), rect, 1.0));
+    }
+
+    /// ppp=2.0: logical rect (10,10)–(20,20), physical cursor at (25,25)
+    /// converts to logical (12.5, 12.5) which is inside.
+    #[test]
+    fn cursor_in_rect_physical_respects_ppp_scaling() {
+        let rect = make_rect(10.0, 10.0, 20.0, 20.0);
+        // Physical (25, 25) / ppp 2.0 = logical (12.5, 12.5) — inside
+        assert!(cursor_in_rect_physical((25.0, 25.0), rect, 2.0));
+        // Physical (45, 45) / ppp 2.0 = logical (22.5, 22.5) — outside
+        assert!(!cursor_in_rect_physical((45.0, 45.0), rect, 2.0));
     }
 }

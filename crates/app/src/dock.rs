@@ -3,14 +3,14 @@
 //! Defines the [`TabKind`] enum (one variant per dockable tab) and a
 //! [`DockLayout`] wrapper around `egui_dock::DockState<TabKind>` that hides
 //! serde / file-IO behind simple `load_or_default` / `save` calls.
-//!
-//! B.2: state lives in memory only; `load_or_default` returns the default
-//! layout unconditionally. Persistence arrives in B.3.
+
+use std::{fs, io, path::Path};
 
 use egui_dock::{DockState, NodeIndex};
+use serde::{Deserialize, Serialize};
 
 /// One variant per dockable tab in the main window.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TabKind {
     /// The 3-D scene viewport (rendered via offscreen texture).
     Viewport,
@@ -50,8 +50,6 @@ impl TabKind {
 }
 
 /// Wrapper around `egui_dock::DockState<TabKind>` with a stable public API.
-///
-/// B.2: in-memory only. B.3 will add `load_or_default` / `save` persistence.
 pub struct DockLayout {
     /// The underlying dock state. Exposed publicly so `Runtime::tick` can
     /// pass `&mut self.dock.state` directly to `DockArea::new`.
@@ -108,6 +106,51 @@ impl DockLayout {
 
         Self { state }
     }
+
+    /// Load a `DockState<TabKind>` from `path`, or fall back to
+    /// [`Self::default_layout`] if:
+    /// - the file does not exist,
+    /// - the file exists but cannot be read (permissions etc.),
+    /// - the file exists but cannot be deserialised (schema drift, corruption).
+    ///
+    /// Never crashes. Failures are logged at `warn` level with the reason;
+    /// the caller gets a working default layout.
+    pub fn load_or_default(path: &Path) -> Self {
+        match fs::read_to_string(path) {
+            Ok(contents) => match ron::from_str::<DockState<TabKind>>(&contents) {
+                Ok(state) => Self { state },
+                Err(err) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %err,
+                        "dock_layout.ron failed to parse; falling back to default layout"
+                    );
+                    Self::default_layout()
+                }
+            },
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Self::default_layout(),
+            Err(err) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "dock_layout.ron read failed; falling back to default layout"
+                );
+                Self::default_layout()
+            }
+        }
+    }
+
+    /// Write the current layout to `path` in RON format. Creates any missing
+    /// parent directories. Returns `Ok(())` on success, bubbles up IO /
+    /// serialisation errors otherwise.
+    pub fn save(&self, path: &Path) -> anyhow::Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let ron_text = ron::ser::to_string_pretty(&self.state, ron::ser::PrettyConfig::default())?;
+        fs::write(path, ron_text)?;
+        Ok(())
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -158,5 +201,42 @@ mod tests {
         ] {
             assert!(tabs.contains(&kind), "{kind:?} must be in default layout");
         }
+    }
+
+    #[test]
+    fn roundtrip_serde_ron_preserves_layout() {
+        let original = DockLayout::default_layout();
+        let path = std::env::temp_dir().join("island_proc_gen_dock_roundtrip.ron");
+        original.save(&path).expect("save should succeed");
+
+        let loaded = DockLayout::load_or_default(&path);
+        let mut orig_tabs: Vec<TabKind> = original.state.iter_all_tabs().map(|(_, t)| *t).collect();
+        let mut loaded_tabs: Vec<TabKind> = loaded.state.iter_all_tabs().map(|(_, t)| *t).collect();
+        // Sort both so comparison is order-independent across serde round-trips.
+        orig_tabs.sort_by_key(|t| *t as u8);
+        loaded_tabs.sort_by_key(|t| *t as u8);
+        assert_eq!(orig_tabs, loaded_tabs, "tab set must round-trip");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_graceful_fallback_on_corrupt_file() {
+        let path = std::env::temp_dir().join("island_proc_gen_dock_corrupt.ron");
+        std::fs::write(&path, "not valid RON at all :::").expect("write corrupt");
+        let layout = DockLayout::load_or_default(&path);
+        // Should fall back to default, which contains Viewport.
+        let tabs: Vec<TabKind> = layout.state.iter_all_tabs().map(|(_, t)| *t).collect();
+        assert!(tabs.contains(&TabKind::Viewport));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_graceful_fallback_on_missing_file() {
+        let path = std::env::temp_dir().join("island_proc_gen_dock_missing.ron");
+        let _ = std::fs::remove_file(&path); // ensure missing
+        let layout = DockLayout::load_or_default(&path);
+        let tabs: Vec<TabKind> = layout.state.iter_all_tabs().map(|(_, t)| *t).collect();
+        assert!(tabs.contains(&TabKind::Viewport));
     }
 }

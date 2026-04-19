@@ -162,6 +162,15 @@ app ──▶ render ──▶ gpu ──┐
   `0.34.1`; `wgpu` `29.0.1`; `winit` `0.30.13`. Winit 0.30 uses the
   `ApplicationHandler` trait pattern, not the legacy `EventLoop::run` closure.
   Don't mix versions without verifying the egui / wgpu compatibility matrix.
+- **`egui_dock` version locks lockstep with egui.** `egui_dock = "0.19"`
+  tracks `egui = "0.34.1"` (egui_dock's own Cargo.toml declares
+  `egui = "^0.34"`). Upgrading egui requires simultaneously upgrading
+  egui_dock and verifying the dock API surface (`TabViewer::is_closeable`,
+  `split_left` fraction semantics, `iter_all_tabs` tuple shape). Same
+  discipline as the existing egui / egui-wgpu / egui-winit 0.34.1
+  three-pin set. The `serde` feature on `egui_dock` must also be kept in
+  sync — it activates `egui/serde` transitively, so dock layout persistence
+  (`load_or_default` / `save` in `crates/app/src/dock.rs`) depends on it.
 - **`FLOW_DIR_SINK` is `0xFF`, not `0`.** `0` is already the `E` direction in
   the D8 encoding (`D8_OFFSETS[0] = (1, 0)`). The sprint doc originally wrote
   the sink sentinel as `0`, but that collides with east-flowing cells. Every
