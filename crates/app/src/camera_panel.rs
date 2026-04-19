@@ -1,12 +1,8 @@
-//! Camera panel — orbit camera readouts + editable distance/yaw/pitch/FOV and
-//! render-path vertical scale knob.
+//! Camera panel — orbit camera readouts + editable distance/yaw/pitch/FOV.
 
 use crate::camera::Camera;
-use crate::runtime::{
-    INITIAL_CAMERA_DISTANCE, INITIAL_CAMERA_PITCH, INITIAL_CAMERA_YAW, INITIAL_VERTICAL_SCALE,
-    ViewMode,
-};
-use render::{ALL_PRESETS, CameraPreset, CameraPresetId};
+use crate::runtime::{INITIAL_CAMERA_DISTANCE, INITIAL_CAMERA_PITCH, INITIAL_CAMERA_YAW, ViewMode};
+use render::{ALL_PRESETS, CameraPreset, CameraPresetId, WORLD_XZ_EXTENT};
 
 /// Human-readable label for a preset id, shown in the dropdown.
 fn preset_label(id: CameraPresetId) -> &'static str {
@@ -21,8 +17,7 @@ fn preset_label(id: CameraPresetId) -> &'static str {
 pub struct CameraPanel;
 
 impl CameraPanel {
-    /// Draw the "Camera" window. Edits to `camera` and `vertical_scale` take
-    /// effect on the next frame.
+    /// Draw the "Camera" window. Edits to `camera` take effect on the next frame.
     ///
     /// `island_radius` is used to scale the preset's `distance_factor` when
     /// the user snaps to a canonical capture angle via the preset ComboBox.
@@ -32,7 +27,6 @@ impl CameraPanel {
     pub fn show(
         ctx: &egui::Context,
         camera: &mut Camera,
-        vertical_scale: &mut f32,
         island_radius: f32,
         view_mode: ViewMode,
     ) -> Option<ViewMode> {
@@ -126,18 +120,10 @@ impl CameraPanel {
 
                 ui.separator();
 
-                ui.horizontal(|ui| {
-                    ui.label("vertical scale");
-                    ui.add(egui::Slider::new(vertical_scale, 0.1_f32..=2.0));
-                });
-
-                ui.separator();
-
                 if ui.button("Reset view").clicked() {
-                    camera.distance = INITIAL_CAMERA_DISTANCE;
+                    camera.distance = INITIAL_CAMERA_DISTANCE * WORLD_XZ_EXTENT;
                     camera.yaw = INITIAL_CAMERA_YAW;
                     camera.pitch = INITIAL_CAMERA_PITCH;
-                    *vertical_scale = INITIAL_VERTICAL_SCALE;
                 }
 
                 ui.separator();

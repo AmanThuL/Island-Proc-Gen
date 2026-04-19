@@ -20,7 +20,9 @@ use island_core::{
     seed::Seed,
     world::{Resolution, WorldState},
 };
-use render::{OverlayRenderer, SkyRenderer, TerrainRenderer, overlay::OverlayRegistry};
+use render::{
+    OverlayRenderer, SkyRenderer, TerrainRenderer, WORLD_XZ_EXTENT, overlay::OverlayRegistry,
+};
 use sim::{StageId, default_pipeline, invalidate_from};
 
 use crate::camera::{Camera, InputState};
@@ -67,12 +69,6 @@ impl ViewMode {
 pub(crate) const INITIAL_WINDOW_WIDTH: u32 = 1280;
 pub(crate) const INITIAL_WINDOW_HEIGHT: u32 = 800;
 
-/// Vertical exaggeration applied to the terrain mesh at render time. Values
-/// below 1.0 compress the Y axis (makes tall islands look less dramatic),
-/// above 1.0 stretch it. Applied purely via the view-projection matrix — sim
-/// data and the fragment sea test still use the unscaled heightfield.
-pub(crate) const INITIAL_VERTICAL_SCALE: f32 = 0.5;
-
 /// Orbit camera defaults used at first open AND by the camera panel "Reset"
 /// button. Target Y is overridden at runtime to `preset.sea_level`. The
 /// angles/distance below capture the user-approved preview view: a ~13° yaw
@@ -101,7 +97,6 @@ pub struct Runtime {
     // camera
     camera: Camera,
     input: InputState,
-    vertical_scale: f32,
 
     // timing / display
     last_frame: Instant,
@@ -213,9 +208,13 @@ impl Runtime {
         // ── Sky renderer (depends only on gpu) ───────────────────────────────
         let sky = SkyRenderer::new(&gpu);
 
-        // Centre the camera on the island mesh ([0,1]×[0,1] on XZ, Y=height).
-        camera.target = glam::Vec3::new(0.5, preset.sea_level, 0.5);
-        camera.distance = INITIAL_CAMERA_DISTANCE;
+        // Centre the camera on the island mesh ([0, WORLD_XZ_EXTENT] on XZ, Y=height).
+        camera.target = glam::Vec3::new(
+            WORLD_XZ_EXTENT * 0.5,
+            preset.sea_level,
+            WORLD_XZ_EXTENT * 0.5,
+        );
+        camera.distance = INITIAL_CAMERA_DISTANCE * WORLD_XZ_EXTENT;
         camera.yaw = INITIAL_CAMERA_YAW;
         camera.pitch = INITIAL_CAMERA_PITCH;
 
@@ -230,7 +229,6 @@ impl Runtime {
             egui_renderer,
             camera,
             input: InputState::default(),
-            vertical_scale: INITIAL_VERTICAL_SCALE,
             last_frame: Instant::now(),
             fps: 0.0,
             preset,
@@ -408,14 +406,7 @@ impl Runtime {
         // ── Sim step (Sprint 0: no-op) ────────────────────────────────────────
 
         // ── Upload camera ─────────────────────────────────────────────────────
-        // Compose a (1, vertical_scale, 1) world-space scale INTO the view-proj so
-        // the mesh appears vertically compressed/exaggerated without mutating the
-        // canonical heightfield. The fragment shader's sea test still reads the
-        // unscaled world_pos.y passed from vs_terrain. Normals are not rebuilt
-        // either, so lighting keeps the unscaled mesh's shading — intentional
-        // for Sprint 1A; Sprint 2+ can refit if the mismatch becomes visible.
-        let scale = glam::Mat4::from_scale(glam::Vec3::new(1.0, self.vertical_scale, 1.0));
-        let vp = self.camera.view_projection() * scale;
+        let vp = self.camera.view_projection();
         let eye = self.camera.eye();
         self.terrain.update_view(&self.gpu.queue, vp, eye);
 
@@ -495,7 +486,6 @@ impl Runtime {
         let island_radius = self.preset.island_radius;
         let registry = &mut self.overlay_registry;
         let camera = &mut self.camera;
-        let vertical_scale = &mut self.vertical_scale;
         let preset = &mut self.preset;
         let view_mode = self.view_mode;
 
@@ -509,7 +499,6 @@ impl Runtime {
         let new_view_mode = crate::camera_panel::CameraPanel::show(
             &self.egui_ctx,
             camera,
-            vertical_scale,
             island_radius,
             view_mode,
         );

@@ -512,13 +512,14 @@ pub fn build_terrain_mesh(z_filled: &island_core::field::ScalarField2D<f32>) -> 
                 (z(xi, yi - 1), z(xi, yi + 1))
             };
 
-            let dz_dx = (z_xp - z_xm) * 0.5 * inv_w;
-            let dz_dy = (z_yp - z_ym) * 0.5 * inv_h;
+            // dz/dx in world units: X span grew by WORLD_XZ_EXTENT so divide out.
+            let dz_dx = (z_xp - z_xm) * 0.5 * inv_w / crate::WORLD_XZ_EXTENT;
+            let dz_dy = (z_yp - z_ym) * 0.5 * inv_h / crate::WORLD_XZ_EXTENT;
 
-            // tangent_x = (inv_w, dz_dx, 0),  tangent_y = (0, dz_dy, inv_h)
+            // tangent_x = (inv_w * EXTENT, dz_dx, 0),  tangent_y = (0, dz_dy, inv_h * EXTENT)
             // normal = tangent_y × tangent_x  (yields +Y for a flat plane)
-            let tx = [inv_w, dz_dx, 0.0_f32];
-            let ty = [0.0_f32, dz_dy, inv_h];
+            let tx = [inv_w * crate::WORLD_XZ_EXTENT, dz_dx, 0.0_f32];
+            let ty = [0.0_f32, dz_dy, inv_h * crate::WORLD_XZ_EXTENT];
             let nx = ty[1] * tx[2] - ty[2] * tx[1];
             let ny = ty[2] * tx[0] - ty[0] * tx[2];
             let nz = ty[0] * tx[1] - ty[1] * tx[0];
@@ -527,9 +528,9 @@ pub fn build_terrain_mesh(z_filled: &island_core::field::ScalarField2D<f32>) -> 
 
             vertices.push(TerrainVertex {
                 position: [
-                    x as f32 * inv_w,
+                    x as f32 * inv_w * crate::WORLD_XZ_EXTENT,
                     z_filled.get(x as u32, y as u32),
-                    y as f32 * inv_h,
+                    y as f32 * inv_h * crate::WORLD_XZ_EXTENT,
                 ],
                 normal,
                 uv: [x as f32 * inv_w, y as f32 * inv_h],
@@ -559,10 +560,11 @@ pub fn build_terrain_mesh(z_filled: &island_core::field::ScalarField2D<f32>) -> 
 
 /// Build the sea-plane quad at `y = sea_level`.
 ///
-/// A single CCW 2-triangle quad covering `[0, 1] × [0, 1]` on XZ. Paired with
-/// `cull_mode: Back` the quad disappears when the camera dips below
-/// `sea_level`; Sprint 1A §3.2 A2 does not require underwater visibility.
+/// A single CCW 2-triangle quad covering `[0, WORLD_XZ_EXTENT] × [0, WORLD_XZ_EXTENT]`
+/// on XZ. Paired with `cull_mode: Back` the quad disappears when the camera dips
+/// below `sea_level`; Sprint 1A §3.2 A2 does not require underwater visibility.
 pub fn build_sea_quad(sea_level: f32) -> MeshData {
+    let e = crate::WORLD_XZ_EXTENT;
     let vertices = vec![
         TerrainVertex {
             position: [0.0, sea_level, 0.0],
@@ -570,17 +572,17 @@ pub fn build_sea_quad(sea_level: f32) -> MeshData {
             uv: [0.0, 0.0],
         },
         TerrainVertex {
-            position: [1.0, sea_level, 0.0],
+            position: [e, sea_level, 0.0],
             normal: [0.0, 1.0, 0.0],
             uv: [1.0, 0.0],
         },
         TerrainVertex {
-            position: [0.0, sea_level, 1.0],
+            position: [0.0, sea_level, e],
             normal: [0.0, 1.0, 0.0],
             uv: [0.0, 1.0],
         },
         TerrainVertex {
-            position: [1.0, sea_level, 1.0],
+            position: [e, sea_level, e],
             normal: [0.0, 1.0, 0.0],
             uv: [1.0, 1.0],
         },
@@ -779,5 +781,48 @@ mod tests {
             32,
             "TerrainVertex must be 32 bytes (3+3+2 f32s)"
         );
+    }
+
+    #[test]
+    fn mesh_xz_extent_matches_world_const() {
+        let field = flat_field(4, 4, 0.5);
+        let mesh = build_terrain_mesh(&field);
+        let max_x = mesh
+            .vertices
+            .iter()
+            .map(|v| v.position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let max_z = mesh
+            .vertices
+            .iter()
+            .map(|v| v.position[2])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            (max_x - crate::WORLD_XZ_EXTENT).abs() < 1e-5,
+            "max x = {max_x}, expected WORLD_XZ_EXTENT = {}",
+            crate::WORLD_XZ_EXTENT
+        );
+        assert!(
+            (max_z - crate::WORLD_XZ_EXTENT).abs() < 1e-5,
+            "max z = {max_z}, expected WORLD_XZ_EXTENT = {}",
+            crate::WORLD_XZ_EXTENT
+        );
+    }
+
+    #[test]
+    fn sea_quad_extent_matches_world_const() {
+        let mesh = build_sea_quad(0.3);
+        let max_x = mesh
+            .vertices
+            .iter()
+            .map(|v| v.position[0])
+            .fold(f32::NEG_INFINITY, f32::max);
+        let max_z = mesh
+            .vertices
+            .iter()
+            .map(|v| v.position[2])
+            .fold(f32::NEG_INFINITY, f32::max);
+        assert!((max_x - crate::WORLD_XZ_EXTENT).abs() < 1e-5);
+        assert!((max_z - crate::WORLD_XZ_EXTENT).abs() < 1e-5);
     }
 }

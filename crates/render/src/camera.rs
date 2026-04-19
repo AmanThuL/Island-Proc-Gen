@@ -5,6 +5,8 @@
 
 use glam::{Mat4, Vec3};
 
+use crate::WORLD_XZ_EXTENT;
+
 /// The three Sprint 1A canonical capture angles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraPresetId {
@@ -42,7 +44,7 @@ pub const PRESET_HERO: CameraPreset = CameraPreset {
     id: CameraPresetId::Hero,
     yaw: std::f32::consts::FRAC_PI_4,   // 45° — classic 3/4 angle
     pitch: std::f32::consts::FRAC_PI_6, // 30°
-    // 5.0 × 0.5 = 2.5 world units → eye.y = 1.25, ~0.25 above the peak.
+    // 5.0 × 0.5 × WORLD_XZ_EXTENT = 7.5 world units → eye.y ≈ 3.75, well above the peak.
     distance_factor: 5.0,
     fov_y: 0.6109, // ~35°
     orthographic: false,
@@ -52,7 +54,7 @@ pub const PRESET_TOP_DEBUG: CameraPreset = CameraPreset {
     id: CameraPresetId::TopDebug,
     yaw: 0.0,
     pitch: std::f32::consts::FRAC_PI_2 - 0.01, // ~89° (0.01 rad margin to avoid singular look_at_rh)
-    // 3.5 × 0.5 = 1.75 world units → eye.y ≈ 1.75, well above the peak.
+    // 3.5 × 0.5 × WORLD_XZ_EXTENT = 5.25 world units → eye.y ≈ 5.25, well above the peak.
     distance_factor: 3.5,
     fov_y: 0.0, // ignored
     orthographic: true,
@@ -70,24 +72,26 @@ pub const PRESET_LOW_OBLIQUE: CameraPreset = CameraPreset {
 pub const ALL_PRESETS: [CameraPreset; 3] = [PRESET_HERO, PRESET_TOP_DEBUG, PRESET_LOW_OBLIQUE];
 
 /// Compute the view × projection matrix for the given preset, aimed at a
-/// normalized-domain island whose total span is `[0, 1] × [0, 1]` in the
-/// XZ plane with Y-up elevations in `[0, 1]`.
+/// world-domain island whose total span is `[0, WORLD_XZ_EXTENT] × [0, WORLD_XZ_EXTENT]`
+/// in the XZ plane with Y-up elevations in `[0, ~max_relief]`.
 ///
 /// * `preset` — which of the three canonical angles to use.
-/// * `island_radius` — the preset's `distance_factor` is scaled by this.
+/// * `island_radius` — the preset's `distance_factor` is scaled by this and by `WORLD_XZ_EXTENT`.
 /// * `aspect` — viewport width / height.
 pub fn view_projection(preset: CameraPreset, island_radius: f32, aspect: f32) -> Mat4 {
     let eye = eye_position(preset, island_radius);
-    let target = Vec3::new(0.5, 0.0, 0.5);
+    let target = Vec3::new(WORLD_XZ_EXTENT * 0.5, 0.0, WORLD_XZ_EXTENT * 0.5);
     let view = Mat4::look_at_rh(eye, target, Vec3::Y);
 
     let proj = if preset.orthographic {
-        // Orthographic frustum sized to just contain the [0,1] × [0,1] domain
+        // Orthographic frustum sized to just contain the [0, WORLD_XZ_EXTENT] domain
         // with a small margin. Keep near/far symmetric around the eye so
         // the whole terrain elevation range is visible.
-        let half_w = 0.55 * aspect.max(1e-3);
-        let half_h = 0.55;
-        Mat4::orthographic_rh(-half_w, half_w, -half_h, half_h, 0.01, 10.0)
+        let half_w = 0.55 * aspect.max(1e-3) * WORLD_XZ_EXTENT;
+        let half_h = 0.55 * WORLD_XZ_EXTENT;
+        // Far plane raised from 10 to 100 when WORLD_XZ_EXTENT = 3.0 moved the
+        // eye ~5× farther from origin; 10 clipped the terrain on TopDebug.
+        Mat4::orthographic_rh(-half_w, half_w, -half_h, half_h, 0.01, 100.0)
     } else {
         Mat4::perspective_rh(preset.fov_y, aspect, 0.01, 100.0)
     };
@@ -126,8 +130,8 @@ pub fn preset_by_name(name: &str) -> Option<CameraPreset> {
 /// Exposed for Sprint 1C headless beauty capture so the executor can upload
 /// the matching eye position into `TerrainRenderer`'s view uniform.
 pub fn eye_position(preset: CameraPreset, island_radius: f32) -> Vec3 {
-    let target = Vec3::new(0.5, 0.0, 0.5);
-    let distance = preset.distance_factor * island_radius.max(0.01);
+    let target = Vec3::new(WORLD_XZ_EXTENT * 0.5, 0.0, WORLD_XZ_EXTENT * 0.5);
+    let distance = preset.distance_factor * island_radius.max(0.01) * WORLD_XZ_EXTENT;
     target
         + Vec3::new(
             distance * preset.yaw.cos() * preset.pitch.cos(),

@@ -9,7 +9,7 @@
 //! then passed to [`Camera::process_drag`] / [`Camera::process_scroll`].
 
 use glam::{Mat4, Vec3};
-use render::CameraPreset;
+use render::{CameraPreset, WORLD_XZ_EXTENT};
 
 /// Hard pitch clamp (≈ 89°, just shy of +π/2) to keep `look_at_rh` non-singular
 /// at the zenith and nadir. Shared by interactive orbit and preset snap.
@@ -95,11 +95,11 @@ impl Camera {
     /// `fov_y` and `aspect` are left untouched — presets control geometry, not
     /// the interactive camera's FOV.
     ///
-    /// The target is placed at `(0.5, 0.0, 0.5)`, matching
-    /// `render::camera::view_projection`'s canonical island centre.
+    /// The target is placed at `(WORLD_XZ_EXTENT*0.5, 0.0, WORLD_XZ_EXTENT*0.5)`,
+    /// matching `render::camera::view_projection`'s canonical island centre.
     pub fn apply_preset(&mut self, preset: CameraPreset, island_radius: f32) {
-        self.target = Vec3::new(0.5, 0.0, 0.5);
-        self.distance = preset.distance_factor * island_radius.max(0.01);
+        self.target = Vec3::new(WORLD_XZ_EXTENT * 0.5, 0.0, WORLD_XZ_EXTENT * 0.5);
+        self.distance = preset.distance_factor * island_radius.max(0.01) * WORLD_XZ_EXTENT;
         self.yaw = preset.yaw;
         // Note: TopDebug's pitch (π/2 − 0.01 ≈ 1.5608) is clamped to ~89°
         // because look_at_rh becomes singular at exactly +π/2.
@@ -123,7 +123,7 @@ pub struct InputState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use render::{ALL_PRESETS, PRESET_HERO, PRESET_TOP_DEBUG};
+    use render::{ALL_PRESETS, PRESET_HERO, PRESET_TOP_DEBUG, WORLD_XZ_EXTENT};
 
     #[test]
     fn apply_preset_hero_sets_spherical_coords() {
@@ -131,14 +131,14 @@ mod tests {
         let default_fov = cam.fov_y;
         cam.apply_preset(PRESET_HERO, 0.5);
 
+        let expected_centre = Vec3::new(WORLD_XZ_EXTENT * 0.5, 0.0, WORLD_XZ_EXTENT * 0.5);
         assert_eq!(
-            cam.target,
-            Vec3::new(0.5, 0.0, 0.5),
+            cam.target, expected_centre,
             "target must be set to canonical island centre"
         );
         assert!(
-            (cam.distance - PRESET_HERO.distance_factor * 0.5).abs() < 1e-6,
-            "distance must equal distance_factor * island_radius"
+            (cam.distance - PRESET_HERO.distance_factor * 0.5 * WORLD_XZ_EXTENT).abs() < 1e-6,
+            "distance must equal distance_factor * island_radius * WORLD_XZ_EXTENT"
         );
         assert!(
             (cam.yaw - PRESET_HERO.yaw).abs() < 1e-6,

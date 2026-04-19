@@ -415,7 +415,7 @@ fn render_beauty_shot(
     );
     let sky = render::SkyRenderer::new(gpu);
 
-    // ── Upload camera (mirrors Runtime::tick's vertical-scale factor) ───────
+    // ── Upload camera (live + headless both read WORLD_XZ_EXTENT automatically) ──
     let (width, height) = beauty.resolution;
     let aspect = width as f32 / height.max(1) as f32;
     let vp = view_projection(camera_preset, preset.island_radius, aspect);
