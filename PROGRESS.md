@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-18 (Sprint 2.5 shipped; Sprint 2 residuals still pending Sprint 3)
+**Last Updated:** 2026-04-19 (Sprint 2.6 shipped — editor layout + `DEFAULT_WORLD_XZ_EXTENT` at Fuji-like 5.0 + dither A/B decided DROP; Sprint 2 residuals still pending Sprint 3)
 
 ---
 
@@ -21,17 +21,72 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 2.5 — Hex UX Slice + Sprint 2 Tail Absorption.
-**Closed on `dev` 2026-04-18** with 10 atomic commits (26ff9a5 →
-cf77ac2, the final commit being the PROGRESS close-out roll-forward)
-across 11 of the 12 planned sub-tasks. 2.5.I (blue-noise
-dither A/B) + 2.5.L (blue-noise size toggle) are explicitly deferred
-to a later sprint that has a live display for the visual A/B step —
-the dither path stays in place untouched, per the audit memo. Test
-delta: 385 → 405 passing (+20), 5 ignored unchanged. Every
-non-mechanical commit used the CLAUDE.local.md simplifier + reviewer
-cadence; one reviewer-surfaced Important finding fixed in-place
-(ViewMode snapshot semantic).
+**Primary:** Sprint 2.6 — Editor Layout, World Proportions & Visual Tail.
+**Closed on `dev` 2026-04-19** with 13 atomic commits (`32ed155 →
+f35941e`) across the 5 planned tasks + 1 user-requested follow-up
+(aspect ratio ComboBox). Every feature commit used the CLAUDE.local.md
+implementer → `code-simplifier` → `superpowers:code-reviewer` cadence;
+the reviewer is fixed to Opus per an updated user preference. Test
+delta: 405 → 424 passing (+19), 5 → 8 ignored (+3 new `#[ignore]`'d
+GPU tests for offscreen viewport + sea-quad Y refresh). Hard CI gate
+(`cargo fmt --check && cargo clippy --workspace -- -D warnings && cargo
+test --workspace`) all green. 3 `--headless` baselines exit 0; beauty
+PNGs regenerated twice as cascade follow-ups (`090337c` at
+`WORLD_XZ_EXTENT = 3.0`, then `f35941e` at the user-frozen Fuji-like
+`DEFAULT_WORLD_XZ_EXTENT = 5.0`).
+
+Sprint 2.6 shipped three user-visible changes out of the box:
+
+1. **Engine-editor dock layout.** `egui_dock = "0.19"` drives an
+   `Overlays (left) | Viewport (centre, non-closeable) | World +
+   Camera + Params + Stats (tabbed right)` layout. 3D renders into
+   an offscreen `ViewportTextureSet`; the image sits inside an
+   `egui::Image` widget inside the `Viewport` tab. Camera input
+   (orbit / pan / zoom) only fires when the cursor is inside the
+   viewport rect; mouse delta fraction + camera aspect both
+   normalise against the viewport rect, not the window. Layout
+   persists to `~/.island_proc_gen/dock_layout.ron` on close; load
+   gracefully falls back to default on missing / corrupt file.
+2. **World proportions from the source.** The Sprint 1A `vertical_
+   scale` Y-axis slider (a debug-era workaround for the 1:0.85
+   aspect) is fully deleted; `render::DEFAULT_WORLD_XZ_EXTENT = 5.0`
+   (Fuji-like aspect ≈ 0.17) is the baseline-capture const, and
+   `Runtime::world_xz_extent` is a runtime-mutable field with a
+   World-panel ComboBox (Pico-like 15.0 / Fuji-like 5.0 (default) /
+   Moderate 3.0 / Steep 2.0). All render functions take `extent: f32`
+   as an explicit parameter; headless passes the default, live app
+   lets the user A/B. Live + headless render identical by construction.
+3. **Runtime preset + seed switching.** New World panel (preset
+   ComboBox from `data::presets::list_builtin()` + seed DragValue<u64>
+   + `island_radius / max_relief / sea_level` sliders + Regenerate
+   button). Regenerate runs the 7-step full rebuild (new preset →
+   new WorldState → full pipeline → TerrainRenderer rebuild →
+   OverlayRenderer rebuild → camera recentre → panel state reset).
+   `sea_level` drag-release takes a 5-step fast path (invalidate +
+   `run_from(Coastal)` + `TerrainRenderer::update_sea_level` +
+   overlay refresh + camera Y sync) that avoids the full pipeline
+   rerun. No async — all synchronous ~300 ms for the full rebuild.
+
+Sprint 2.5's two display-gated deferrals closed in this sprint:
+
+- **2.6.D — dither A/B**: decided **DROP**. In-window session
+  2026-04-19 (`volcanic_single` seed 42 @ 128² Hero) reported no
+  perceptible difference between dither ON and OFF at the project's
+  render scale. `DITHER_ON` uniform / Camera-panel checkbox /
+  `TerrainRenderer::update_dither` all removed; `shaders/terrain.wgsl`
+  reverts to the Sprint 1A unconditional dither (still sampled from
+  `blue_noise_2d_64.png`). `assets/noise/blue_noise_2d_{128,256}.png`
+  deleted (64 tile kept for overlay_render). No "deferred toggle"
+  tail.
+- **2.6.E — blue-noise size**: closed `n/a via upstream 2.6.D drop`,
+  no commit. The decision tree gated E on D keeping dither.
+
+One B.3 regression fix (`966e545`) mid-sprint: egui's
+`response.consumed` flag was swallowing mouse events landing on the
+viewport image, so dragging inside the Viewport tab didn't move the
+camera. Fix was to let mouse events fall through our handler
+regardless of consumed (the viewport-rect gate already routes
+correctly), while keeping the early-return for non-mouse events.
 
 **Secondary:** Sprint 2 Geomorph Credibility — **still closed on
 `dev` 2026-04-18** (close-out commits ab7d5b5 ← 8145b38). Two §10
@@ -113,16 +168,17 @@ simplifier + `superpowers:code-reviewer` pass:
   `[checkbox][slider][label]` per row. Row count = registry size,
   not hardcoded. `OverlayRenderer::draw` writes per-frame alpha
   uniforms (`registry.len() × 4 bytes` cost).
-- ⏳ **2.5.I — dither A/B**: deferred. The ±½ LSB dither stays in
-  `terrain.wgsl`; the banding A/B test requires interactive display
-  (headless PNG readback loses the subpixel gamma-corrected
-  rendering that would reveal or hide the dither). No `DITHER_ON`
-  toggle added — that would be scope creep for a deferred decision.
-  Audit memo in `docs/design/sprints/sprint_2_5_visual_acceptance/`
-  (Obsidian symlink, local-only).
-- ⏳ **2.5.L — blue-noise size toggle**: gated on 2.5.I. Since 2.5.I
-  is deferred, 2.5.L cannot start per the spec's decision tree.
-  Re-opens when 2.5.I resolves.
+- ✓ **2.5.I — dither A/B**: **closed via Sprint 2.6.D DROP decision
+  (2026-04-19)**. In-window A/B (`volcanic_single` seed 42 @ 128²
+  Hero) reported no perceptible difference; Sprint 1A unconditional
+  dither retained in `terrain.wgsl`, the `DITHER_ON` toggle machinery
+  was never shipped (added in 2.6.D code commit `cf3b181`, removed in
+  2.6.D cleanup `d39e2f3` same sprint).
+- ✓ **2.5.L — blue-noise size toggle**: **closed `n/a via upstream
+  2.6.D drop`**. Since 2.6.D dropped dither, the blue-noise size
+  ComboBox has no signal to A/B against. No commit; `assets/noise/
+  blue_noise_2d_{128,256}.png` deleted as part of `d39e2f3` (only
+  the `64` tile remains, consumed by `overlay_render.rs`).
 
 **Sprint 2 §10 acceptance status (unchanged from Sprint 2 close-out):**
 
@@ -149,37 +205,50 @@ Both residuals have explicit Sprint 3 anchor points — they are
 natural fits for the next sprint's work, not Sprint 2 blockers.
 
 **Next session priorities** (see [QUICK REFERENCE](#quick-reference)):
-1. **Sprint 2.6** — Editor Layout, World Proportions & Visual Tail.
-   **User chose to execute 2.6 before Sprint 3** (2026-04-19 planning
-   session). Fixes `vertical_scale` slider as debt by baking
-   `render::DEFAULT_WORLD_XZ_EXTENT` (baseline-capture const, live
-   runtime override via `Runtime::world_xz_extent` + World-panel
-   ComboBox so the final aspect can be A/B'd before freeze; slider
-   deleted). Adds `egui_dock` viewport-as-tab layout with persistence
-   to `~/.island_proc_gen/dock_layout.ron`. Adds World panel with
-   preset ComboBox + seed + 3 geometry sliders + Regenerate + world
-   aspect dropdown (Pico-like 15.0 / Fuji-like 5.0 / Moderate 3.0 /
-   Steep 2.0).
-   **Absorbs Sprint 2.5.I + 2.5.L** (dither A/B + blue-noise size
-   toggle) — they no longer live as "opportunistic tail", they're
-   tasks 2.6.D / 2.6.E and must close with a decision memo. Sprint 3
-   does not depend on 2.6; this sprint is optional-but-chosen.
-   Doc: [`docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md`](docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md) (Obsidian symlink, gitignored).
-2. **Sprint 3** — Sediment + Advanced Climate. SPACE-lite sediment-
+1. **Sprint 3** — Sediment + Advanced Climate. SPACE-lite sediment-
    aware erosion (`K · g(hs)`), LFPM v3 precipitation, cloud forest
    belt + fog hydrology, Coast type v2 (fetch integral + LavaDelta),
    riparian biome alluvial-fan-aware upgrade, optional DualSeason
    wind. Inherits Sprint 2's two deferred §10 clauses (max_z drop
-   range, Cliff coverage) as natural targets. Sprint 2.5's 5 new
-   archetypes, 15-shot 1B baseline, tuned biome bells, and hex
-   debug overlays provide the new starting baseline.
+   range, Cliff coverage) as natural targets. Sprint 2.5's 5
+   archetypes + 15-shot 1B baseline + tuned biome bells + hex debug
+   overlays, and Sprint 2.6's editor layout + World panel + Fuji-like
+   world aspect ratio, together form the starting baseline. Sprint
+   2.6 did NOT produce any sim-side changes; the three `--headless`
+   baselines are truth-identical to pre-2.6 state (only beauty PNG
+   framing drifted). Sprint 3 can open the Sprint 2.6 aspect freeze
+   re-decision if "sculpted silhouette" from sediment-aware erosion
+   reads differently at some other aspect.
    Doc: `docs/design/sprints/sprint_3_sediment_advanced_climate.md` (TBD).
-3. **Sprint 1B paper pack** (low-energy): Bruijnzeel 2005 / 2011,
+2. **Sprint 1B paper pack** (low-energy): Bruijnzeel 2005 / 2011,
    Chen 2023 Budyko, Core Pack #2/#3/#5/#6/#8 落地点 sections.
 
 ---
 
 ## RECENTLY SHIPPED
+
+### Sprint 2.6 — Editor Layout, World Proportions & Visual Tail (2026-04-19, 13 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md`](docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md) (Obsidian symlink, gitignored)
+**Test delta:** 405 → 424 passing (+19), 5 → 8 ignored (+3 new GPU `#[ignore]`'d).
+
+Sprint 2.6 takes the live app from "4 egui windows stacked at (16,16) + a debug vertical-scale slider faking world aspect ratio + no runtime preset switch" to "engine-editor dock layout + world aspect frozen at Fuji-like + runtime preset/seed/geometry panel". Closes out the two Sprint 2.5 display-gated deferrals (2.5.I dither, 2.5.L blue-noise size) with DROP + n/a respectively.
+
+| Commit | Task | What shipped |
+|---|---|---|
+| `32ed155` | 2.6.A | `render::WORLD_XZ_EXTENT = 3.0` (initial value) — mesh + sea quad + render camera preset LUT + interactive orbit camera all read the const; `vertical_scale` field + slider + `INITIAL_VERTICAL_SCALE` const fully deleted; `INITIAL_CAMERA_DISTANCE` stays pre-EXTENT semantic, multiplied by EXTENT at use sites (Option A, explicit coupling). +2 mesh tests locking `max(x) == EXTENT`. |
+| `090337c` | 2.6.A cascade | 3 `--headless` baseline beauty PNGs regen at EXTENT = 3.0. Truth hashes bit-identical; only beauty `byte_hash` + AD7 whitelist (timestamp, ms fields) drifted. |
+| `0c4a310` | 2.6.0 | PROGRESS.md roll-forward at sprint start — records the decision to execute 2.6 before Sprint 3 and the 3 scope pillars. |
+| `1bda58b` | 2.6.B.1 | `render::ViewportTextureSet` — offscreen colour + depth textures sized to the egui Viewport tab rect. Registered with `egui_wgpu::Renderer` via `register_native_texture`; resizes preserve `egui::TextureId` via `update_egui_texture_from_wgpu_texture`. 3D render pass retargeted from window surface to viewport texture; egui pass `LoadOp::Clear` on the window surface since terrain no longer paints there. +2 GPU-ignored tests. |
+| `dfbcd38` | 2.6.B.2 | `egui_dock = "0.19"` integration. New `crates/app/src/dock.rs` with `TabKind` (6 variants, Viewport non-closeable) + `DockLayout::default_layout()` (Overlays 20% left / Viewport centre / World+Camera+Params+Stats tabbed 25% right). All 4 floating `egui::Window`-based panels refactored to take `ui: &mut egui::Ui` as the first parameter — no backwards-compat shim per CLAUDE.md. +4 tests. |
+| `d901ad9` | 2.6.B.3 | Viewport-aware input routing + dock layout persistence to `~/.island_proc_gen/dock_layout.ron`. Mouse events gated on `cursor_in_rect_physical(cursor, viewport_rect, ppp)`; delta fraction normalized against viewport rect (not window size) so shrinking the tab keeps orbit sensitivity stable; camera aspect ratio tracks viewport rect. Load gracefully falls back on missing / corrupt file. CLAUDE.md gotcha added for egui_dock ↔ egui lockstep. +6 tests. |
+| `4ce2381` | 2.6.C | New `crates/app/src/world_panel.rs` — preset ComboBox (6 built-in archetypes) + seed `DragValue<u64>` + 3 geometry sliders (island_radius / max_relief / sea_level) + Regenerate button. `regenerate_from_world_panel` runs the 7-step full rebuild; `apply_sea_level_fast_path` runs the 5-step drag-release path (`invalidate_from(Coastal)` + `run_from` + `TerrainRenderer::update_sea_level` + overlay refresh + camera Y sync) that avoids the full pipeline rerun. `TerrainRenderer` gained `light: LightRigUniform` + `light_buf: wgpu::Buffer` fields + `update_sea_level` method; `sea_vbo` picked up `COPY_DST` so `queue.write_buffer` works. +5 tests + 1 GPU-ignored. |
+| `966e545` | B.3 fix | Viewport drag was swallowed by the `response.consumed` early-return at the top of `handle_window_event` — egui marks cursor-over-Image events as consumed, so our viewport-rect gate never ran. Fix: let mouse events fall through regardless of consumed (the viewport-rect gate inside each arm already routes correctly); keep consumed-early-return for keyboard events (egui remains authoritative for future text inputs). |
+| `cf3b181` | 2.6.D code | `DITHER_ON` uniform (reusing `LightRig.sea_level.y` padding slot) + Camera-panel checkbox + `TerrainRenderer::update_dither` method. Default ON (Sprint 1A behaviour). +1 mirror test. Reverted same-sprint after the user's A/B decision. |
+| `d39e2f3` | 2.6.D drop | User's 2026-04-19 in-window A/B (`volcanic_single` seed 42 @ 128² Hero) reported no perceptible difference between dither ON and OFF. Shader branch + uniform + Camera-panel toggle + `Runtime::dither_on` all removed; `shaders/terrain.wgsl` reverts to Sprint 1A unconditional dither (`dither_tile = 8.0`, amplitude `1.0/255.0`, `blue_noise_2d_64.png`). `assets/noise/blue_noise_2d_{128,256}.png` deleted; 64 tile kept (overlay_render still uses it). 2.6.E closed `n/a via upstream 2.6.D drop`, no commit. No deferred toggle tail. |
+| `9653f4d` | 2.6.A follow-up | User reported `EXTENT = 3.0` still reads as "mountain tip" even after preset/max_relief/island_radius experiments. Parametrize the const: `WORLD_XZ_EXTENT` → `DEFAULT_WORLD_XZ_EXTENT` (still 3.0 initially, baseline-capture contract), every render function gains `extent: f32` explicit parameter, `Runtime::world_xz_extent` field drives the live app, World panel gets an aspect ComboBox (Pico-like 15.0 / Fuji-like 5.0 / Moderate 3.0 / Steep 2.0) firing `aspect_extent_changed: Option<f32>`. `apply_world_aspect` does a render-only rebuild (no sim pipeline rerun). Headless keeps passing `DEFAULT_WORLD_XZ_EXTENT` explicitly. +2 tests. |
+| `3d8dc7e` | 2.6.A freeze | After the follow-up in-window A/B, user froze the default at Fuji-like. `DEFAULT_WORLD_XZ_EXTENT: f32 = 5.0`; ComboBox `default` annotation swaps from Moderate to Fuji-like. The runtime override + ComboBox stay in place so Sprint 3 / 3.5 can re-open the decision if sediment-aware erosion's silhouette reads differently at some other aspect. |
+| `f35941e` | 2.6.A freeze cascade | Second beauty PNG regen for the 3.0 → 5.0 bump. Truth hashes bit-identical; only beauty `byte_hash` + AD7 whitelist drift. Mirrors `090337c`'s structure. |
 
 ### Sprint 2.5 — Hex UX Slice + Sprint 2 Tail Absorption (2026-04-18, 10 commits on `dev`)
 
@@ -1073,17 +1142,14 @@ Delivered:
 
 ## UPCOMING SPRINTS
 
-Sprints 1A, 1B, 1C, 1D, 2, and 2.5 are shipped. Upcoming work starts
-at Sprint 2.6 (user-chosen, 2026-04-19 — optional UX sprint that
-absorbs Sprint 2.5's two display-gated deferrals). Per-sprint plan
-docs are written **one at a time** after the previous sprint closes —
-the roadmap carries the forward-looking vision until each sprint's
-doc gets authored.
+Sprints 1A, 1B, 1C, 1D, 2, 2.5, and 2.6 are shipped. Upcoming work
+starts at Sprint 3. Per-sprint plan docs are written **one at a time**
+after the previous sprint closes — the roadmap carries the forward-
+looking vision until each sprint's doc gets authored.
 
 | Sprint | Focus | Source of truth |
 |---|---|---|
-| 2.6 | Editor Layout (egui_dock + viewport-as-tab + dock persistence to `~/.island_proc_gen/dock_layout.ron`), World Proportions (`render::DEFAULT_WORLD_XZ_EXTENT` const + runtime-overridable `Runtime::world_xz_extent` field + World-panel aspect ComboBox; `vertical_scale` slider deleted), World panel (preset picker + seed + 3 geometry sliders + Regenerate + sea_level drag-release fast path), 2.5.I dither A/B decided DROP (in-window session 2026-04-19), 2.5.L blue-noise size toggle closed n/a via upstream drop | [`sprint_2_6_editor_layout_and_visual_tail.md`](docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md) (Obsidian symlink, gitignored) |
-| 3 | Sediment v1 + SPACE-inspired dual-equation erosion with `K·g(hs)` modulation (unlocks Sprint 2's deferred "max_z drop 10-30 %" + CoastType Cliff bin), LFPM v3 precipitation, cloud-forest inversion, Coast v2 (fetch integral + LavaDelta) | Roadmap §Sprint 3 |
+| 3 | Sediment v1 + SPACE-inspired dual-equation erosion with `K·g(hs)` modulation (unlocks Sprint 2's deferred "max_z drop 10-30 %" + CoastType Cliff bin), LFPM v3 precipitation, cloud-forest inversion, Coast v2 (fetch integral + LavaDelta). Sprint 2.6 delivered the interactive tuning surface (dock layout + World panel preset/seed/aspect switching + Fuji-like world aspect) that makes Sprint 3's Pareto-probe in-window work pleasant. | Roadmap §Sprint 3 |
 | 4 | `crates/gpu/` + `ComputeBackend` refactor, 5 GPU passes, CLI productization (`island-gen`), parity framework, implicit SPIM (Braun 2023) | Roadmap §Sprint 4 |
 | 5 | Four subsystems: S1 Hex, S2 Semantic (rule-based + WFC stretch), S3 Web (trunk, curated subset), S4 Demo/Article/Gallery | Roadmap §Sprint 5 |
 
