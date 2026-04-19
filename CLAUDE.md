@@ -486,7 +486,9 @@ app ──▶ render ──▶ gpu ──┐
   in future sprints without a fresh in-window A/B session** — the
   decision was explicit, not a default.
 - **`render::DEFAULT_WORLD_XZ_EXTENT` is the baseline-capture value
-  (`3.0`); `Runtime::world_xz_extent` is the runtime field.** Sprint
+  (`5.0`, Fuji-like aspect ≈ 0.17, frozen 2026-04-19 after a live
+  A/B between Pico-like 15.0, Fuji-like 5.0, Moderate 3.0, Steep 2.0);
+  `Runtime::world_xz_extent` is the runtime field.** Sprint
   2.6.A shipped the const; the 2.6.A follow-up converted every render
   function (`build_terrain_mesh`, `build_sea_quad`,
   `render::camera::view_projection / eye_position`,

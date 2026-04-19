@@ -79,13 +79,13 @@ impl WorldPanel {
         //
         // Aspect ratio = max_relief / extent; at max_relief ≈ 0.85:
         //   extent 15.0 → aspect ≈ 0.056  (Pico-like)
-        //   extent  5.0 → aspect ≈ 0.17   (Fuji-like)
-        //   extent  3.0 → aspect ≈ 0.28   (Moderate, default)
+        //   extent  5.0 → aspect ≈ 0.17   (Fuji-like, default — frozen 2026-04-19)
+        //   extent  3.0 → aspect ≈ 0.28   (Moderate)
         //   extent  2.0 → aspect ≈ 0.43   (Steep)
         const ASPECT_PRESETS: &[(&str, f32)] = &[
             ("Pico-like (0.06) — extent 15.0", 15.0),
-            ("Fuji-like (0.17) — extent 5.0", 5.0),
-            ("Moderate (0.28) — default", 3.0),
+            ("Fuji-like (0.17) — default", 5.0),
+            ("Moderate (0.28) — extent 3.0", 3.0),
             ("Steep (0.43) — extent 2.0", 2.0),
         ];
         let current_label = ASPECT_PRESETS

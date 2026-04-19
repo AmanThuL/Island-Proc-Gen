@@ -31,7 +31,9 @@ harness locally.
 ## World aspect ratio convention
 
 All three baselines were captured at `render::DEFAULT_WORLD_XZ_EXTENT =
-3.0` (the Sprint 2.6.A value). Headless always passes
+5.0` (Fuji-like aspect ≈ 0.17, frozen 2026-04-19). Sprint 2.6.A
+originally shipped at `3.0` but the live A/B pushed the final value to
+Fuji-like. Headless always passes
 `DEFAULT_WORLD_XZ_EXTENT` to the camera math; the live app has a
 runtime override (`Runtime::world_xz_extent`) exposed via the World
 panel's aspect ComboBox so the user can A/B several values, but that

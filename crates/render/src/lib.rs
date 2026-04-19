@@ -32,16 +32,19 @@ pub use viewport::ViewportTextureSet;
 /// The heightfield `z_filled` lives in `[0.0, ~max_relief]` (typically
 /// `~0.85`), while without this constant the XZ plane would span `[0, 1]`
 /// — a 1 : 0.85 aspect ratio far steeper than any real volcanic island
-/// (Pico ≈ 0.056, Mt. Fuji ≈ 0.17). At `3.0` the aspect is `~0.28`,
-/// still a little dramatic but recognisable as an island.
+/// (Pico ≈ 0.056, Mt. Fuji ≈ 0.17). At `5.0` the aspect is `~0.17` —
+/// Fuji-like, the value the user froze after a 2026-04-19 in-window
+/// A/B between Pico-like (15.0), Fuji-like (5.0), Moderate (3.0), and
+/// Steep (2.0).
 ///
 /// **Baseline-capture contract**: all checked-in headless baselines
-/// (`sprint_1a_baseline`, `sprint_1b_acceptance`, `sprint_2_erosion`) were
+/// (`sprint_1a_baseline`, `sprint_1b_acceptance`, `sprint_2_erosion`) are
 /// captured with this value. The headless executor uses it explicitly so
 /// those baselines remain truth-identical regardless of what
 /// `Runtime::world_xz_extent` is set to interactively.
 ///
 /// `Runtime` owns `world_xz_extent: f32` initialised to this constant;
 /// the World-panel aspect ComboBox lets the user explore other values at
-/// runtime without changing the baselines. See Sprint 2.6.A for the history.
-pub const DEFAULT_WORLD_XZ_EXTENT: f32 = 3.0;
+/// runtime without changing the baselines. See Sprint 2.6.A + its 2026-04-19
+/// follow-up for the history.
+pub const DEFAULT_WORLD_XZ_EXTENT: f32 = 5.0;
