@@ -5,8 +5,6 @@
 
 use glam::{Mat4, Vec3};
 
-use crate::WORLD_XZ_EXTENT;
-
 /// The three Sprint 1A canonical capture angles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CameraPresetId {
@@ -44,7 +42,7 @@ pub const PRESET_HERO: CameraPreset = CameraPreset {
     id: CameraPresetId::Hero,
     yaw: std::f32::consts::FRAC_PI_4,   // 45° — classic 3/4 angle
     pitch: std::f32::consts::FRAC_PI_6, // 30°
-    // 5.0 × 0.5 × WORLD_XZ_EXTENT = 7.5 world units → eye.y ≈ 3.75, well above the peak.
+    // 5.0 × 0.5 × DEFAULT_WORLD_XZ_EXTENT = 7.5 world units → eye.y ≈ 3.75, well above the peak.
     distance_factor: 5.0,
     fov_y: 0.6109, // ~35°
     orthographic: false,
@@ -54,7 +52,7 @@ pub const PRESET_TOP_DEBUG: CameraPreset = CameraPreset {
     id: CameraPresetId::TopDebug,
     yaw: 0.0,
     pitch: std::f32::consts::FRAC_PI_2 - 0.01, // ~89° (0.01 rad margin to avoid singular look_at_rh)
-    // 3.5 × 0.5 × WORLD_XZ_EXTENT = 5.25 world units → eye.y ≈ 5.25, well above the peak.
+    // 3.5 × 0.5 × DEFAULT_WORLD_XZ_EXTENT = 5.25 world units → eye.y ≈ 5.25, well above the peak.
     distance_factor: 3.5,
     fov_y: 0.0, // ignored
     orthographic: true,
@@ -72,25 +70,28 @@ pub const PRESET_LOW_OBLIQUE: CameraPreset = CameraPreset {
 pub const ALL_PRESETS: [CameraPreset; 3] = [PRESET_HERO, PRESET_TOP_DEBUG, PRESET_LOW_OBLIQUE];
 
 /// Compute the view × projection matrix for the given preset, aimed at a
-/// world-domain island whose total span is `[0, WORLD_XZ_EXTENT] × [0, WORLD_XZ_EXTENT]`
+/// world-domain island whose total span is `[0, extent] × [0, extent]`
 /// in the XZ plane with Y-up elevations in `[0, ~max_relief]`.
 ///
 /// * `preset` — which of the three canonical angles to use.
-/// * `island_radius` — the preset's `distance_factor` is scaled by this and by `WORLD_XZ_EXTENT`.
+/// * `island_radius` — the preset's `distance_factor` is scaled by this and by `extent`.
 /// * `aspect` — viewport width / height.
-pub fn view_projection(preset: CameraPreset, island_radius: f32, aspect: f32) -> Mat4 {
-    let eye = eye_position(preset, island_radius);
-    let target = Vec3::new(WORLD_XZ_EXTENT * 0.5, 0.0, WORLD_XZ_EXTENT * 0.5);
+/// * `extent` — horizontal world span in world units. Defaults to
+///   [`DEFAULT_WORLD_XZ_EXTENT`] for headless captures; interactive
+///   `Runtime` passes `self.world_xz_extent`.
+pub fn view_projection(preset: CameraPreset, island_radius: f32, aspect: f32, extent: f32) -> Mat4 {
+    let eye = eye_position(preset, island_radius, extent);
+    let target = Vec3::new(extent * 0.5, 0.0, extent * 0.5);
     let view = Mat4::look_at_rh(eye, target, Vec3::Y);
 
     let proj = if preset.orthographic {
-        // Orthographic frustum sized to just contain the [0, WORLD_XZ_EXTENT] domain
+        // Orthographic frustum sized to just contain the [0, extent] domain
         // with a small margin. Keep near/far symmetric around the eye so
         // the whole terrain elevation range is visible.
-        let half_w = 0.55 * aspect.max(1e-3) * WORLD_XZ_EXTENT;
-        let half_h = 0.55 * WORLD_XZ_EXTENT;
-        // Far plane raised from 10 to 100 when WORLD_XZ_EXTENT = 3.0 moved the
-        // eye ~5× farther from origin; 10 clipped the terrain on TopDebug.
+        let half_w = 0.55 * aspect.max(1e-3) * extent;
+        let half_h = 0.55 * extent;
+        // Far plane raised from 10 to 100 when DEFAULT_WORLD_XZ_EXTENT = 3.0 moved
+        // the eye ~5× farther from origin; 10 clipped the terrain on TopDebug.
         Mat4::orthographic_rh(-half_w, half_w, -half_h, half_h, 0.01, 100.0)
     } else {
         Mat4::perspective_rh(preset.fov_y, aspect, 0.01, 100.0)
@@ -127,11 +128,15 @@ pub fn preset_by_name(name: &str) -> Option<CameraPreset> {
 /// Compute the eye position in world space for the given preset and island radius.
 /// Same spherical convention as `app::camera`: Y-up, yaw around Y, pitch above XZ.
 ///
+/// * `extent` — horizontal world span in world units. Pass
+///   [`DEFAULT_WORLD_XZ_EXTENT`] for headless captures; interactive
+///   `Runtime` passes `self.world_xz_extent`.
+///
 /// Exposed for Sprint 1C headless beauty capture so the executor can upload
 /// the matching eye position into `TerrainRenderer`'s view uniform.
-pub fn eye_position(preset: CameraPreset, island_radius: f32) -> Vec3 {
-    let target = Vec3::new(WORLD_XZ_EXTENT * 0.5, 0.0, WORLD_XZ_EXTENT * 0.5);
-    let distance = preset.distance_factor * island_radius.max(0.01) * WORLD_XZ_EXTENT;
+pub fn eye_position(preset: CameraPreset, island_radius: f32, extent: f32) -> Vec3 {
+    let target = Vec3::new(extent * 0.5, 0.0, extent * 0.5);
+    let distance = preset.distance_factor * island_radius.max(0.01) * extent;
     target
         + Vec3::new(
             distance * preset.yaw.cos() * preset.pitch.cos(),
@@ -143,6 +148,7 @@ pub fn eye_position(preset: CameraPreset, island_radius: f32) -> Vec3 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DEFAULT_WORLD_XZ_EXTENT;
 
     #[test]
     fn all_presets_listed_once() {
@@ -191,7 +197,7 @@ mod tests {
     fn view_projection_is_finite() {
         let aspect = 16.0_f32 / 9.0;
         for preset in ALL_PRESETS {
-            let mat = view_projection(preset, 0.45, aspect);
+            let mat = view_projection(preset, 0.45, aspect, DEFAULT_WORLD_XZ_EXTENT);
             for elem in mat.to_cols_array() {
                 assert!(
                     elem.is_finite(),
@@ -205,8 +211,8 @@ mod tests {
     #[test]
     fn view_projection_distance_scales_with_radius() {
         let aspect = 16.0_f32 / 9.0;
-        let mat_small = view_projection(PRESET_HERO, 0.2, aspect);
-        let mat_large = view_projection(PRESET_HERO, 0.8, aspect);
+        let mat_small = view_projection(PRESET_HERO, 0.2, aspect, DEFAULT_WORLD_XZ_EXTENT);
+        let mat_large = view_projection(PRESET_HERO, 0.8, aspect, DEFAULT_WORLD_XZ_EXTENT);
         let small_cols = mat_small.to_cols_array();
         let large_cols = mat_large.to_cols_array();
         assert!(
@@ -225,8 +231,8 @@ mod tests {
         const { assert!(!PRESET_LOW_OBLIQUE.orthographic) };
 
         let aspect = 16.0_f32 / 9.0;
-        let top = view_projection(PRESET_TOP_DEBUG, 0.45, aspect);
-        let hero = view_projection(PRESET_HERO, 0.45, aspect);
+        let top = view_projection(PRESET_TOP_DEBUG, 0.45, aspect, DEFAULT_WORLD_XZ_EXTENT);
+        let hero = view_projection(PRESET_HERO, 0.45, aspect, DEFAULT_WORLD_XZ_EXTENT);
         let top_cols = top.to_cols_array();
         let hero_cols = hero.to_cols_array();
         assert!(
@@ -237,7 +243,7 @@ mod tests {
 
     #[test]
     fn hero_eye_is_above_target() {
-        let eye = eye_position(PRESET_HERO, 0.45);
+        let eye = eye_position(PRESET_HERO, 0.45, DEFAULT_WORLD_XZ_EXTENT);
         let target_y = 0.0_f32;
         assert!(
             eye.y > target_y,
@@ -255,9 +261,12 @@ mod tests {
     fn all_three_presets_produce_distinct_matrices() {
         let aspect = 16.0_f32 / 9.0;
         let radius = 0.45;
-        let hero = view_projection(PRESET_HERO, radius, aspect).to_cols_array();
-        let top = view_projection(PRESET_TOP_DEBUG, radius, aspect).to_cols_array();
-        let low = view_projection(PRESET_LOW_OBLIQUE, radius, aspect).to_cols_array();
+        let hero =
+            view_projection(PRESET_HERO, radius, aspect, DEFAULT_WORLD_XZ_EXTENT).to_cols_array();
+        let top = view_projection(PRESET_TOP_DEBUG, radius, aspect, DEFAULT_WORLD_XZ_EXTENT)
+            .to_cols_array();
+        let low = view_projection(PRESET_LOW_OBLIQUE, radius, aspect, DEFAULT_WORLD_XZ_EXTENT)
+            .to_cols_array();
 
         assert!(
             hero.iter().zip(top.iter()).any(|(a, b)| a != b),

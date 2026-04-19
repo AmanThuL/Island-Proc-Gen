@@ -125,11 +125,23 @@ pub struct TerrainRenderer {
     /// `new`) so `update_sea_level` can re-upload it without a full
     /// `TerrainRenderer::new`.
     light_buf: wgpu::Buffer,
+    /// Horizontal world extent baked at construction time.
+    ///
+    /// Stored so `update_sea_level` can rebuild the sea quad with the correct
+    /// XZ extent (only Y changes, but `build_sea_quad` needs the full extent).
+    /// `apply_world_aspect` in `Runtime` always creates a fresh `TerrainRenderer`,
+    /// so this value is always consistent with the mesh currently on the GPU.
+    extent: f32,
 }
 
 impl TerrainRenderer {
     /// Construct the renderer from an already-initialised [`GpuContext`], the
-    /// simulated [`WorldState`], and the island preset (for `sea_level`).
+    /// simulated [`WorldState`], the island preset (for `sea_level`), and
+    /// `extent` — the horizontal world span in world units.
+    ///
+    /// Pass [`crate::DEFAULT_WORLD_XZ_EXTENT`] to reproduce the baseline-capture
+    /// geometry. Interactive `Runtime` passes `self.world_xz_extent` instead so
+    /// the aspect-ratio ComboBox takes effect without a sim re-run.
     ///
     /// # Panics
     ///
@@ -139,6 +151,7 @@ impl TerrainRenderer {
         gpu: &GpuContext,
         world: &island_core::world::WorldState,
         preset: &island_core::preset::IslandArchetypePreset,
+        extent: f32,
     ) -> Self {
         let device = &gpu.device;
 
@@ -150,8 +163,8 @@ impl TerrainRenderer {
             .expect("TerrainRenderer::new: world.derived.z_filled must be populated (Sprint 1A pipeline has not run)");
 
         // ── CPU mesh build ────────────────────────────────────────────────────
-        let terrain_mesh = build_terrain_mesh(z_filled);
-        let sea_mesh = build_sea_quad(preset.sea_level);
+        let terrain_mesh = build_terrain_mesh(z_filled, extent);
+        let sea_mesh = build_sea_quad(preset.sea_level, extent);
 
         // ── Shader ───────────────────────────────────────────────────────────
         // Path: crates/render/src/ + ../../../shaders/ = repo root shaders/
@@ -376,6 +389,7 @@ impl TerrainRenderer {
             bind_group,
             light: light_data,
             light_buf,
+            extent,
         }
     }
 
@@ -422,8 +436,9 @@ impl TerrainRenderer {
     /// calls `invalidate_from(Coastal)` → `run_from(Coastal)` → `overlay.refresh`
     /// before calling this method.
     pub fn update_sea_level(&mut self, gpu: &GpuContext, new_sea_level: f32) {
-        // Re-upload sea quad vertices — Y coordinates change with sea_level.
-        let sea_mesh = build_sea_quad(new_sea_level);
+        // Re-upload sea quad vertices — only Y changes, but build_sea_quad needs
+        // the full extent so use self.extent (baked at construction time).
+        let sea_mesh = build_sea_quad(new_sea_level, self.extent);
         gpu.queue
             .write_buffer(&self.sea_vbo, 0, bytemuck::cast_slice(&sea_mesh.vertices));
 
@@ -507,9 +522,16 @@ impl MeshData {
 /// Build a triangle mesh from a heightfield.
 ///
 /// Vertices are placed at every cell of `z_filled`.  World-space layout:
-/// `x / (W-1)` along X, `y / (H-1)` along Z, elevation on Y.  Matches the
-/// Y-up convention used by `camera::view_projection`.
-pub fn build_terrain_mesh(z_filled: &island_core::field::ScalarField2D<f32>) -> MeshData {
+/// `x / (W-1) * extent` along X, `y / (H-1) * extent` along Z, elevation on Y.
+/// Matches the Y-up convention used by `camera::view_projection`.
+///
+/// * `extent` — horizontal world span in world units. Pass
+///   [`crate::DEFAULT_WORLD_XZ_EXTENT`] to reproduce the baseline-capture
+///   geometry. Interactive `Runtime` passes `self.world_xz_extent`.
+pub fn build_terrain_mesh(
+    z_filled: &island_core::field::ScalarField2D<f32>,
+    extent: f32,
+) -> MeshData {
     let w = z_filled.width as usize;
     let h = z_filled.height as usize;
 
@@ -552,14 +574,14 @@ pub fn build_terrain_mesh(z_filled: &island_core::field::ScalarField2D<f32>) -> 
                 (z(xi, yi - 1), z(xi, yi + 1))
             };
 
-            // dz/dx in world units: X span grew by WORLD_XZ_EXTENT so divide out.
-            let dz_dx = (z_xp - z_xm) * 0.5 * inv_w / crate::WORLD_XZ_EXTENT;
-            let dz_dy = (z_yp - z_ym) * 0.5 * inv_h / crate::WORLD_XZ_EXTENT;
+            // dz/dx in world units: X span grew by `extent` so divide out.
+            let dz_dx = (z_xp - z_xm) * 0.5 * inv_w / extent;
+            let dz_dy = (z_yp - z_ym) * 0.5 * inv_h / extent;
 
-            // tangent_x = (inv_w * EXTENT, dz_dx, 0),  tangent_y = (0, dz_dy, inv_h * EXTENT)
+            // tangent_x = (inv_w * extent, dz_dx, 0),  tangent_y = (0, dz_dy, inv_h * extent)
             // normal = tangent_y × tangent_x  (yields +Y for a flat plane)
-            let tx = [inv_w * crate::WORLD_XZ_EXTENT, dz_dx, 0.0_f32];
-            let ty = [0.0_f32, dz_dy, inv_h * crate::WORLD_XZ_EXTENT];
+            let tx = [inv_w * extent, dz_dx, 0.0_f32];
+            let ty = [0.0_f32, dz_dy, inv_h * extent];
             let nx = ty[1] * tx[2] - ty[2] * tx[1];
             let ny = ty[2] * tx[0] - ty[0] * tx[2];
             let nz = ty[0] * tx[1] - ty[1] * tx[0];
@@ -568,9 +590,9 @@ pub fn build_terrain_mesh(z_filled: &island_core::field::ScalarField2D<f32>) -> 
 
             vertices.push(TerrainVertex {
                 position: [
-                    x as f32 * inv_w * crate::WORLD_XZ_EXTENT,
+                    x as f32 * inv_w * extent,
                     z_filled.get(x as u32, y as u32),
-                    y as f32 * inv_h * crate::WORLD_XZ_EXTENT,
+                    y as f32 * inv_h * extent,
                 ],
                 normal,
                 uv: [x as f32 * inv_w, y as f32 * inv_h],
@@ -600,11 +622,14 @@ pub fn build_terrain_mesh(z_filled: &island_core::field::ScalarField2D<f32>) -> 
 
 /// Build the sea-plane quad at `y = sea_level`.
 ///
-/// A single CCW 2-triangle quad covering `[0, WORLD_XZ_EXTENT] × [0, WORLD_XZ_EXTENT]`
+/// A single CCW 2-triangle quad covering `[0, extent] × [0, extent]`
 /// on XZ. Paired with `cull_mode: Back` the quad disappears when the camera dips
 /// below `sea_level`; Sprint 1A §3.2 A2 does not require underwater visibility.
-pub fn build_sea_quad(sea_level: f32) -> MeshData {
-    let e = crate::WORLD_XZ_EXTENT;
+///
+/// * `extent` — horizontal world span in world units. Pass
+///   [`crate::DEFAULT_WORLD_XZ_EXTENT`] to reproduce the baseline-capture
+///   geometry.
+pub fn build_sea_quad(sea_level: f32, extent: f32) -> MeshData {
     let vertices = vec![
         TerrainVertex {
             position: [0.0, sea_level, 0.0],
@@ -612,17 +637,17 @@ pub fn build_sea_quad(sea_level: f32) -> MeshData {
             uv: [0.0, 0.0],
         },
         TerrainVertex {
-            position: [e, sea_level, 0.0],
+            position: [extent, sea_level, 0.0],
             normal: [0.0, 1.0, 0.0],
             uv: [1.0, 0.0],
         },
         TerrainVertex {
-            position: [0.0, sea_level, e],
+            position: [0.0, sea_level, extent],
             normal: [0.0, 1.0, 0.0],
             uv: [0.0, 1.0],
         },
         TerrainVertex {
-            position: [e, sea_level, e],
+            position: [extent, sea_level, extent],
             normal: [0.0, 1.0, 0.0],
             uv: [1.0, 1.0],
         },
@@ -662,14 +687,14 @@ mod tests {
     #[test]
     fn mesh_vertex_count_matches_grid() {
         let field = flat_field(4, 4, 0.5);
-        let mesh = build_terrain_mesh(&field);
+        let mesh = build_terrain_mesh(&field, crate::DEFAULT_WORLD_XZ_EXTENT);
         assert_eq!(mesh.vertex_count(), 16);
     }
 
     #[test]
     fn mesh_triangle_count_matches_grid() {
         let field = flat_field(4, 4, 0.5);
-        let mesh = build_terrain_mesh(&field);
+        let mesh = build_terrain_mesh(&field, crate::DEFAULT_WORLD_XZ_EXTENT);
         // (W-1)*(H-1)*2 = 3*3*2 = 18
         assert_eq!(mesh.triangle_count(), 18);
     }
@@ -677,7 +702,7 @@ mod tests {
     #[test]
     fn flat_plane_normals_point_up() {
         let field = flat_field(8, 8, 0.5);
-        let mesh = build_terrain_mesh(&field);
+        let mesh = build_terrain_mesh(&field, crate::DEFAULT_WORLD_XZ_EXTENT);
         for v in &mesh.vertices {
             let [nx, ny, nz] = v.normal;
             let len = (nx * nx + ny * ny + nz * nz).sqrt();
@@ -693,7 +718,7 @@ mod tests {
     fn inclined_plane_normals_tilt_away() {
         // z = 0.1 * x — ramp in +x, so downhill is +x, normal tilts to -x.
         let field = ramp_x_field(8, 8, 0.1);
-        let mesh = build_terrain_mesh(&field);
+        let mesh = build_terrain_mesh(&field, crate::DEFAULT_WORLD_XZ_EXTENT);
         // Check interior vertices (avoid boundary rows/cols).
         let w = field.width as usize;
         for y in 1..7usize {
@@ -716,7 +741,7 @@ mod tests {
     #[test]
     fn uvs_cover_unit_square() {
         let field = flat_field(4, 4, 0.0);
-        let mesh = build_terrain_mesh(&field);
+        let mesh = build_terrain_mesh(&field, crate::DEFAULT_WORLD_XZ_EXTENT);
         let w = field.width as usize;
         let eps = 1e-6_f32;
 
@@ -749,7 +774,7 @@ mod tests {
     #[test]
     fn index_range_is_valid() {
         let field = flat_field(4, 4, 0.0);
-        let mesh = build_terrain_mesh(&field);
+        let mesh = build_terrain_mesh(&field, crate::DEFAULT_WORLD_XZ_EXTENT);
         let vcount = mesh.vertices.len();
         for &idx in &mesh.indices {
             assert!(
@@ -761,7 +786,7 @@ mod tests {
 
     #[test]
     fn sea_quad_has_4_vertices_and_2_triangles() {
-        let mesh = build_sea_quad(0.3);
+        let mesh = build_sea_quad(0.3, crate::DEFAULT_WORLD_XZ_EXTENT);
         assert_eq!(mesh.vertex_count(), 4);
         assert_eq!(mesh.triangle_count(), 2);
         for v in &mesh.vertices {
@@ -804,7 +829,7 @@ mod tests {
 
     #[test]
     fn sea_level_height_matches_input() {
-        let mesh = build_sea_quad(0.42);
+        let mesh = build_sea_quad(0.42, crate::DEFAULT_WORLD_XZ_EXTENT);
         assert!((mesh.vertices[0].position[1] - 0.42).abs() < 1e-6);
     }
 
@@ -826,7 +851,7 @@ mod tests {
     #[test]
     fn mesh_xz_extent_matches_world_const() {
         let field = flat_field(4, 4, 0.5);
-        let mesh = build_terrain_mesh(&field);
+        let mesh = build_terrain_mesh(&field, crate::DEFAULT_WORLD_XZ_EXTENT);
         let max_x = mesh
             .vertices
             .iter()
@@ -838,20 +863,20 @@ mod tests {
             .map(|v| v.position[2])
             .fold(f32::NEG_INFINITY, f32::max);
         assert!(
-            (max_x - crate::WORLD_XZ_EXTENT).abs() < 1e-5,
-            "max x = {max_x}, expected WORLD_XZ_EXTENT = {}",
-            crate::WORLD_XZ_EXTENT
+            (max_x - crate::DEFAULT_WORLD_XZ_EXTENT).abs() < 1e-5,
+            "max x = {max_x}, expected DEFAULT_WORLD_XZ_EXTENT = {}",
+            crate::DEFAULT_WORLD_XZ_EXTENT
         );
         assert!(
-            (max_z - crate::WORLD_XZ_EXTENT).abs() < 1e-5,
-            "max z = {max_z}, expected WORLD_XZ_EXTENT = {}",
-            crate::WORLD_XZ_EXTENT
+            (max_z - crate::DEFAULT_WORLD_XZ_EXTENT).abs() < 1e-5,
+            "max z = {max_z}, expected DEFAULT_WORLD_XZ_EXTENT = {}",
+            crate::DEFAULT_WORLD_XZ_EXTENT
         );
     }
 
     #[test]
     fn sea_quad_extent_matches_world_const() {
-        let mesh = build_sea_quad(0.3);
+        let mesh = build_sea_quad(0.3, crate::DEFAULT_WORLD_XZ_EXTENT);
         let max_x = mesh
             .vertices
             .iter()
@@ -862,8 +887,8 @@ mod tests {
             .iter()
             .map(|v| v.position[2])
             .fold(f32::NEG_INFINITY, f32::max);
-        assert!((max_x - crate::WORLD_XZ_EXTENT).abs() < 1e-5);
-        assert!((max_z - crate::WORLD_XZ_EXTENT).abs() < 1e-5);
+        assert!((max_x - crate::DEFAULT_WORLD_XZ_EXTENT).abs() < 1e-5);
+        assert!((max_z - crate::DEFAULT_WORLD_XZ_EXTENT).abs() < 1e-5);
     }
 
     /// Verifies that `update_sea_level` updates the CPU-side light mirror.

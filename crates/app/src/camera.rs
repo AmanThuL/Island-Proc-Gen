@@ -9,7 +9,7 @@
 //! then passed to [`Camera::process_drag`] / [`Camera::process_scroll`].
 
 use glam::{Mat4, Vec3};
-use render::{CameraPreset, WORLD_XZ_EXTENT};
+use render::CameraPreset;
 
 /// Hard pitch clamp (≈ 89°, just shy of +π/2) to keep `look_at_rh` non-singular
 /// at the zenith and nadir. Shared by interactive orbit and preset snap.
@@ -95,11 +95,16 @@ impl Camera {
     /// `fov_y` and `aspect` are left untouched — presets control geometry, not
     /// the interactive camera's FOV.
     ///
-    /// The target is placed at `(WORLD_XZ_EXTENT*0.5, 0.0, WORLD_XZ_EXTENT*0.5)`,
+    /// * `extent` — horizontal world span in world units. Pass
+    ///   [`render::DEFAULT_WORLD_XZ_EXTENT`] for the baseline geometry;
+    ///   `Runtime` passes `self.world_xz_extent` so the preset snap respects
+    ///   the current World-panel aspect selection.
+    ///
+    /// The target is placed at `(extent*0.5, 0.0, extent*0.5)`,
     /// matching `render::camera::view_projection`'s canonical island centre.
-    pub fn apply_preset(&mut self, preset: CameraPreset, island_radius: f32) {
-        self.target = Vec3::new(WORLD_XZ_EXTENT * 0.5, 0.0, WORLD_XZ_EXTENT * 0.5);
-        self.distance = preset.distance_factor * island_radius.max(0.01) * WORLD_XZ_EXTENT;
+    pub fn apply_preset(&mut self, preset: CameraPreset, island_radius: f32, extent: f32) {
+        self.target = Vec3::new(extent * 0.5, 0.0, extent * 0.5);
+        self.distance = preset.distance_factor * island_radius.max(0.01) * extent;
         self.yaw = preset.yaw;
         // Note: TopDebug's pitch (π/2 − 0.01 ≈ 1.5608) is clamped to ~89°
         // because look_at_rh becomes singular at exactly +π/2.
@@ -123,22 +128,27 @@ pub struct InputState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use render::{ALL_PRESETS, PRESET_HERO, PRESET_TOP_DEBUG, WORLD_XZ_EXTENT};
+    use render::{ALL_PRESETS, DEFAULT_WORLD_XZ_EXTENT, PRESET_HERO, PRESET_TOP_DEBUG};
 
     #[test]
     fn apply_preset_hero_sets_spherical_coords() {
         let mut cam = Camera::new(1.0);
         let default_fov = cam.fov_y;
-        cam.apply_preset(PRESET_HERO, 0.5);
+        cam.apply_preset(PRESET_HERO, 0.5, DEFAULT_WORLD_XZ_EXTENT);
 
-        let expected_centre = Vec3::new(WORLD_XZ_EXTENT * 0.5, 0.0, WORLD_XZ_EXTENT * 0.5);
+        let expected_centre = Vec3::new(
+            DEFAULT_WORLD_XZ_EXTENT * 0.5,
+            0.0,
+            DEFAULT_WORLD_XZ_EXTENT * 0.5,
+        );
         assert_eq!(
             cam.target, expected_centre,
             "target must be set to canonical island centre"
         );
         assert!(
-            (cam.distance - PRESET_HERO.distance_factor * 0.5 * WORLD_XZ_EXTENT).abs() < 1e-6,
-            "distance must equal distance_factor * island_radius * WORLD_XZ_EXTENT"
+            (cam.distance - PRESET_HERO.distance_factor * 0.5 * DEFAULT_WORLD_XZ_EXTENT).abs()
+                < 1e-6,
+            "distance must equal distance_factor * island_radius * DEFAULT_WORLD_XZ_EXTENT"
         );
         assert!(
             (cam.yaw - PRESET_HERO.yaw).abs() < 1e-6,
@@ -158,7 +168,7 @@ mod tests {
     #[test]
     fn apply_preset_top_debug_clamps_pitch() {
         let mut cam = Camera::new(1.0);
-        cam.apply_preset(PRESET_TOP_DEBUG, 0.5);
+        cam.apply_preset(PRESET_TOP_DEBUG, 0.5, DEFAULT_WORLD_XZ_EXTENT);
 
         assert!(
             cam.pitch <= PITCH_CLAMP,
@@ -177,7 +187,7 @@ mod tests {
         let island_radius = 0.45_f32;
         for preset in ALL_PRESETS {
             let mut cam = Camera::new(16.0 / 9.0);
-            cam.apply_preset(preset, island_radius);
+            cam.apply_preset(preset, island_radius, DEFAULT_WORLD_XZ_EXTENT);
 
             assert!(
                 cam.distance > 0.0,

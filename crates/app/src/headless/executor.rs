@@ -403,7 +403,10 @@ fn render_beauty_shot(
     // TerrainRenderer::new picks up `gpu.surface_format`, which on a headless
     // context is `HEADLESS_COLOR_FORMAT = Rgba8Unorm` — so all three pipelines
     // target `Rgba8Unorm` automatically. No fork between windowed / headless.
-    let terrain = render::TerrainRenderer::new(gpu, world, preset);
+    //
+    // Headless always uses DEFAULT_WORLD_XZ_EXTENT so baselines remain
+    // truth-identical regardless of any interactive aspect-ComboBox state.
+    let terrain = render::TerrainRenderer::new(gpu, world, preset, render::DEFAULT_WORLD_XZ_EXTENT);
     let overlay_renderer = render::OverlayRenderer::new(
         gpu,
         world,
@@ -415,11 +418,23 @@ fn render_beauty_shot(
     );
     let sky = render::SkyRenderer::new(gpu);
 
-    // ── Upload camera (live + headless both read WORLD_XZ_EXTENT automatically) ──
+    // ── Upload camera — headless uses DEFAULT_WORLD_XZ_EXTENT explicitly ──────
+    // Baselines were captured at DEFAULT_WORLD_XZ_EXTENT = 3.0. The interactive
+    // Runtime may use a different extent (aspect ComboBox), but the headless path
+    // has no UI state so it always uses the stable default.
     let (width, height) = beauty.resolution;
     let aspect = width as f32 / height.max(1) as f32;
-    let vp = view_projection(camera_preset, preset.island_radius, aspect);
-    let eye = eye_position(camera_preset, preset.island_radius);
+    let vp = view_projection(
+        camera_preset,
+        preset.island_radius,
+        aspect,
+        render::DEFAULT_WORLD_XZ_EXTENT,
+    );
+    let eye = eye_position(
+        camera_preset,
+        preset.island_radius,
+        render::DEFAULT_WORLD_XZ_EXTENT,
+    );
     terrain.update_view(&gpu.queue, vp, eye);
 
     // ── Offscreen capture ───────────────────────────────────────────────────

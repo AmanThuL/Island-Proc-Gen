@@ -470,14 +470,38 @@ app ──▶ render ──▶ gpu ──┐
   intentional deposition lakes unfilled. Do NOT remove the
   defensive code; it's pre-wired for Sprint 3's terrain
   vocabulary.
-- **Sprint 2.5.I / 2.5.L dither + blue-noise-size toggle are
-  deferred**, pending an interactive-display session. The
-  ±½ LSB dither stays in `shaders/terrain.wgsl`; do NOT add
-  `DITHER_ON` uniform plumbing or a blue-noise-size ComboBox in
-  a headless session — the decision has to be eyeballed on a live
-  display first. Audit memo
-  `docs/design/sprints/sprint_2_5_visual_acceptance/dither_ab_audit.md`
-  (Obsidian symlink, local-only).
+- **Sprint 2.6.D dither A/B decision: DROP the toggle, keep the
+  unconditional Sprint 1A dither.** The user's in-window A/B (2026-04-19,
+  `volcanic_single` seed 42 @ 128² Hero) reported no perceptible
+  difference between dither ON and OFF at the project's render scale,
+  so `DITHER_ON` uniform + Camera-panel checkbox + `TerrainRenderer::
+  update_dither` were all removed in `d39e2f3`. `shaders/terrain.wgsl`
+  reverts to the Sprint 1A unconditional dither (`dither_tile = 8.0`,
+  amplitude `1.0/255.0`, sampled from `blue_noise_2d_64.png`).
+  `crates/render/src/overlay_render.rs` was untouched throughout — its
+  own `load_blue_noise_2d(64)` dither path is the independent control
+  group. 2.6.E blue-noise-size ComboBox is closed as `n/a via upstream
+  2.6.D drop`. `assets/noise/blue_noise_2d_{128,256}.png` were deleted
+  (only `64` is still consumed). **Do NOT reintroduce a dither toggle
+  in future sprints without a fresh in-window A/B session** — the
+  decision was explicit, not a default.
+- **`render::DEFAULT_WORLD_XZ_EXTENT` is the baseline-capture value
+  (`3.0`); `Runtime::world_xz_extent` is the runtime field.** Sprint
+  2.6.A shipped the const; the 2.6.A follow-up converted every render
+  function (`build_terrain_mesh`, `build_sea_quad`,
+  `render::camera::view_projection / eye_position`,
+  `app::Camera::apply_preset`, `TerrainRenderer::new`) to take
+  `extent: f32` as an explicit parameter so the live app can A/B
+  several world-aspect presets (Pico-like 15.0, Fuji-like 5.0,
+  Moderate 3.0, Steep 2.0) via the World panel ComboBox. **Headless
+  always passes `DEFAULT_WORLD_XZ_EXTENT`** — the three `--headless`
+  baselines were captured at that value and must stay truth-identical.
+  `Runtime` passes its own `self.world_xz_extent` field, init from the
+  default, mutable via the panel. When a later sprint freezes the
+  final value, update `DEFAULT_WORLD_XZ_EXTENT` in-place and regen
+  the 3 baseline beauty PNGs in the same commit (truth hashes stay
+  bit-identical since sim is unaffected by extent; only beauty
+  byte_hashes drift with camera geometry).
 
 ---
 

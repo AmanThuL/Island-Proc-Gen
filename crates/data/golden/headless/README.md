@@ -28,6 +28,19 @@ harness locally.
 | `sprint_1b_acceptance/` | 9 | Migration of the default-wind subset of the 16-shot `docs/design/sprints/sprint_1b_visual_acceptance/` PNG archive. |
 | `sprint_2_erosion/` | 6 | Sprint 2 DD6 before/after erosion pairs: 3 presets × 2 (pre/post erosion) at seed 42, 128² resolution. `pre_*` shots use `schema_v2 preset_override.erosion.n_batch = 0` to make `ErosionOuterLoop` a noop; `post_*` shots run the locked 10×10 outer loop. Locked by Sprint 2 Task 2.6. |
 
+## World aspect ratio convention
+
+All three baselines were captured at `render::DEFAULT_WORLD_XZ_EXTENT =
+3.0` (the Sprint 2.6.A value). Headless always passes
+`DEFAULT_WORLD_XZ_EXTENT` to the camera math; the live app has a
+runtime override (`Runtime::world_xz_extent`) exposed via the World
+panel's aspect ComboBox so the user can A/B several values, but that
+override does NOT reach the headless path. Whenever the author freezes
+a different final aspect (Sprint 3+), update the const in-place and
+regen the 3 baseline beauty PNGs in a follow-up `chore(data):` commit;
+truth hashes stay bit-identical (sim is extent-agnostic), only beauty
+`byte_hash` values drift with the new camera framing.
+
 ## Regenerating a baseline (author workflow)
 
 ```bash

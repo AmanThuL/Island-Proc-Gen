@@ -152,10 +152,14 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
 1. **Sprint 2.6** — Editor Layout, World Proportions & Visual Tail.
    **User chose to execute 2.6 before Sprint 3** (2026-04-19 planning
    session). Fixes `vertical_scale` slider as debt by baking
-   `render::WORLD_XZ_EXTENT` (one const, live + headless auto-consistent,
-   slider deleted). Adds `egui_dock` viewport-as-tab layout with
-   persistence to `~/.island_proc_gen/dock_layout.ron`. Adds World
-   panel with preset ComboBox + seed + 3 geometry sliders + Regenerate.
+   `render::DEFAULT_WORLD_XZ_EXTENT` (baseline-capture const, live
+   runtime override via `Runtime::world_xz_extent` + World-panel
+   ComboBox so the final aspect can be A/B'd before freeze; slider
+   deleted). Adds `egui_dock` viewport-as-tab layout with persistence
+   to `~/.island_proc_gen/dock_layout.ron`. Adds World panel with
+   preset ComboBox + seed + 3 geometry sliders + Regenerate + world
+   aspect dropdown (Pico-like 15.0 / Fuji-like 5.0 / Moderate 3.0 /
+   Steep 2.0).
    **Absorbs Sprint 2.5.I + 2.5.L** (dither A/B + blue-noise size
    toggle) — they no longer live as "opportunistic tail", they're
    tasks 2.6.D / 2.6.E and must close with a decision memo. Sprint 3
@@ -1078,7 +1082,7 @@ doc gets authored.
 
 | Sprint | Focus | Source of truth |
 |---|---|---|
-| 2.6 | Editor Layout (egui_dock + viewport-as-tab + dock persistence), World Proportions (`render::WORLD_XZ_EXTENT` const replaces `vertical_scale` slider), World panel (preset picker + seed + 3 geometry sliders + Regenerate), absorbs Sprint 2.5.I dither A/B + 2.5.L blue-noise size toggle | [`sprint_2_6_editor_layout_and_visual_tail.md`](docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md) (Obsidian symlink, gitignored) |
+| 2.6 | Editor Layout (egui_dock + viewport-as-tab + dock persistence to `~/.island_proc_gen/dock_layout.ron`), World Proportions (`render::DEFAULT_WORLD_XZ_EXTENT` const + runtime-overridable `Runtime::world_xz_extent` field + World-panel aspect ComboBox; `vertical_scale` slider deleted), World panel (preset picker + seed + 3 geometry sliders + Regenerate + sea_level drag-release fast path), 2.5.I dither A/B decided DROP (in-window session 2026-04-19), 2.5.L blue-noise size toggle closed n/a via upstream drop | [`sprint_2_6_editor_layout_and_visual_tail.md`](docs/design/sprints/sprint_2_6_editor_layout_and_visual_tail.md) (Obsidian symlink, gitignored) |
 | 3 | Sediment v1 + SPACE-inspired dual-equation erosion with `K·g(hs)` modulation (unlocks Sprint 2's deferred "max_z drop 10-30 %" + CoastType Cliff bin), LFPM v3 precipitation, cloud-forest inversion, Coast v2 (fetch integral + LavaDelta) | Roadmap §Sprint 3 |
 | 4 | `crates/gpu/` + `ComputeBackend` refactor, 5 GPU passes, CLI productization (`island-gen`), parity framework, implicit SPIM (Braun 2023) | Roadmap §Sprint 4 |
 | 5 | Four subsystems: S1 Hex, S2 Semantic (rule-based + WFC stretch), S3 Web (trunk, curated subset), S4 Demo/Article/Gallery | Roadmap §Sprint 5 |

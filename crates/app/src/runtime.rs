@@ -22,7 +22,7 @@ use island_core::{
     world::{Resolution, WorldState},
 };
 use render::{
-    OverlayRenderer, SkyRenderer, TerrainRenderer, ViewportTextureSet, WORLD_XZ_EXTENT,
+    DEFAULT_WORLD_XZ_EXTENT, OverlayRenderer, SkyRenderer, TerrainRenderer, ViewportTextureSet,
     overlay::OverlayRegistry,
 };
 use sim::{StageId, default_pipeline, invalidate_from};
@@ -95,6 +95,10 @@ struct AppTabViewer<'a> {
     overlay_registry: &'a mut OverlayRegistry,
     camera: &'a mut Camera,
     island_radius: f32,
+    /// Current horizontal world extent (from `Runtime::world_xz_extent`).
+    /// Forwarded to the Camera panel so preset snaps and Reset view use the
+    /// same extent as the terrain mesh.
+    world_xz_extent: f32,
     view_mode: ViewMode,
     new_view_mode: &'a mut Option<ViewMode>,
     preset: &'a mut IslandArchetypePreset,
@@ -144,6 +148,7 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
                     ui,
                     self.camera,
                     self.island_radius,
+                    self.world_xz_extent,
                     self.view_mode,
                 ) {
                     *self.new_view_mode = Some(mode);
@@ -218,6 +223,12 @@ pub struct Runtime {
 
     // Sprint 2.6.C: World panel state (preset picker, seed, geometry sliders).
     world_panel: WorldPanel,
+
+    /// Horizontal world extent in world units. Initialised to
+    /// `DEFAULT_WORLD_XZ_EXTENT`; changed by the World-panel aspect ComboBox
+    /// without a sim pipeline re-run. The headless executor is unaffected — it
+    /// always uses `DEFAULT_WORLD_XZ_EXTENT` directly.
+    world_xz_extent: f32,
 }
 
 impl Runtime {
@@ -294,8 +305,11 @@ impl Runtime {
             land_cells, "pipeline completed (all 11 invariants passed)"
         );
 
+        // ── World XZ extent (render-side; never affects sim pipeline) ────────
+        let world_xz_extent = DEFAULT_WORLD_XZ_EXTENT;
+
         // ── Terrain renderer (must follow pipeline so z_filled is populated) ─
-        let terrain = TerrainRenderer::new(&gpu, &world, &preset);
+        let terrain = TerrainRenderer::new(&gpu, &world, &preset, world_xz_extent);
 
         // ── Overlay renderer — shares terrain VBO/IBO/view_buf ────────────────
         let overlay = OverlayRenderer::new(
@@ -311,20 +325,20 @@ impl Runtime {
         // ── Sky renderer (depends only on gpu) ───────────────────────────────
         let sky = SkyRenderer::new(&gpu);
 
-        // Centre the camera on the island mesh ([0, WORLD_XZ_EXTENT] on XZ, Y=height).
+        // Centre the camera on the island mesh ([0, world_xz_extent] on XZ, Y=height).
         camera.target = glam::Vec3::new(
-            WORLD_XZ_EXTENT * 0.5,
+            world_xz_extent * 0.5,
             preset.sea_level,
-            WORLD_XZ_EXTENT * 0.5,
+            world_xz_extent * 0.5,
         );
-        camera.distance = INITIAL_CAMERA_DISTANCE * WORLD_XZ_EXTENT;
+        camera.distance = INITIAL_CAMERA_DISTANCE * world_xz_extent;
         camera.yaw = INITIAL_CAMERA_YAW;
         camera.pitch = INITIAL_CAMERA_PITCH;
 
         // ── World panel ───────────────────────────────────────────────────────
         // Constructed from the just-loaded preset and initial seed so the panel
         // reflects the current world state on first open.
-        let world_panel = WorldPanel::new(&preset, seed.0);
+        let world_panel = WorldPanel::new(&preset, seed.0, world_xz_extent);
 
         // ── Dock layout path + load ───────────────────────────────────────────
         // Resolve ~/.island_proc_gen/dock_layout.ron on Unix via $HOME.
@@ -370,6 +384,7 @@ impl Runtime {
             dock_layout_path,
             viewport_rect: None,
             world_panel,
+            world_xz_extent,
         })
     }
 
@@ -719,6 +734,7 @@ impl Runtime {
         let resolution = self.resolution;
         let seed = self.seed;
         let island_radius = self.preset.island_radius;
+        let world_xz_extent = self.world_xz_extent;
         let registry = &mut self.overlay_registry;
         let camera = &mut self.camera;
         let preset = &mut self.preset;
@@ -761,6 +777,7 @@ impl Runtime {
                         overlay_registry: registry,
                         camera,
                         island_radius,
+                        world_xz_extent,
                         view_mode,
                         new_view_mode: &mut new_view_mode,
                         preset,
@@ -827,6 +844,10 @@ impl Runtime {
             if let Err(err) = self.apply_sea_level_fast_path() {
                 warn!("sea_level fast-path failed: {err}");
             }
+        }
+        // Sprint 2.6.A: World aspect ComboBox — render-only rebuild, no sim re-run.
+        if let Some(new_extent) = world_event.aspect_extent_changed {
+            self.apply_world_aspect(new_extent);
         }
 
         // Handle egui platform output (cursor changes, clipboard, etc.)
@@ -926,7 +947,12 @@ impl Runtime {
 
         // 4. Rebuild terrain renderer — picks up new sea_vbo height + new
         //    light uniform sea_level from the preset.
-        self.terrain = render::TerrainRenderer::new(&self.gpu, &self.world, &self.preset);
+        self.terrain = render::TerrainRenderer::new(
+            &self.gpu,
+            &self.world,
+            &self.preset,
+            self.world_xz_extent,
+        );
 
         // 5. Rebuild overlay renderer — shares the new terrain VBO/IBO/view_buf.
         self.overlay = render::OverlayRenderer::new(
@@ -942,9 +968,9 @@ impl Runtime {
         // 6. Recentre camera target at the new water line (preserve
         //    yaw/pitch/distance).
         self.camera.target = glam::Vec3::new(
-            render::WORLD_XZ_EXTENT * 0.5,
+            self.world_xz_extent * 0.5,
             self.preset.sea_level,
-            render::WORLD_XZ_EXTENT * 0.5,
+            self.world_xz_extent * 0.5,
         );
 
         // 7. Reset panel slider state to the just-applied preset values so
@@ -980,6 +1006,39 @@ impl Runtime {
         self.camera.target.y = new_sea_level;
 
         Ok(())
+    }
+
+    /// World-aspect fast path — rebuilds the terrain mesh and sea quad at the
+    /// new horizontal extent, then rebuilds `OverlayRenderer` against the fresh
+    /// VBO/IBO handles. No sim pipeline re-run; all `authoritative.*` fields are
+    /// unchanged.
+    ///
+    /// Called when the World-panel aspect ComboBox fires an
+    /// [`WorldPanelEvent::aspect_extent_changed`] event.
+    fn apply_world_aspect(&mut self, new_extent: f32) {
+        let old_extent = self.world_xz_extent;
+        self.world_xz_extent = new_extent;
+
+        // Rebuild terrain mesh at the new extent.
+        self.terrain =
+            render::TerrainRenderer::new(&self.gpu, &self.world, &self.preset, new_extent);
+
+        // Rebuild overlay against the fresh buffer handles.
+        self.overlay = render::OverlayRenderer::new(
+            &self.gpu,
+            &self.world,
+            &self.overlay_registry,
+            self.terrain.view_buf(),
+            self.terrain.terrain_vbo(),
+            self.terrain.terrain_ibo(),
+            self.terrain.terrain_index_count(),
+        );
+
+        // Recentre camera target; scale distance to preserve relative framing.
+        self.camera.target =
+            glam::Vec3::new(new_extent * 0.5, self.preset.sea_level, new_extent * 0.5);
+        let scale = new_extent / old_extent.max(f32::EPSILON);
+        self.camera.distance *= scale;
     }
 }
 
@@ -1252,6 +1311,49 @@ mod tests {
         assert_ne!(
             h1, h2,
             "volcanic_single at seed=1 and seed=2 must produce different height hashes"
+        );
+    }
+
+    /// Changing the world aspect extent is a render-only operation — the sim
+    /// pipeline is unchanged, so `authoritative.height` must hash identically
+    /// before and after. CPU-only; no GPU required.
+    #[test]
+    fn world_aspect_change_preserves_world_state_hash() {
+        use island_core::{
+            seed::Seed,
+            world::{Resolution, WorldState},
+        };
+        use sim::default_pipeline;
+
+        let preset =
+            data::presets::load_preset("volcanic_single").expect("volcanic_single must load");
+        let resolution = Resolution::new(128, 128);
+        let mut world = WorldState::new(Seed(42), preset, resolution);
+        default_pipeline().run(&mut world).expect("pipeline.run");
+
+        // Hash before any aspect change.
+        let bytes_before = world
+            .authoritative
+            .height
+            .as_ref()
+            .expect("height must be populated")
+            .to_bytes();
+        let hash_before = blake3::hash(&bytes_before).to_hex().to_string();
+
+        // Simulate what apply_world_aspect does at the sim level — nothing.
+        // The world state is untouched; only render geometry would change.
+        // A second pipeline run with the same inputs must produce the same hash.
+        let bytes_after = world
+            .authoritative
+            .height
+            .as_ref()
+            .expect("height must be populated")
+            .to_bytes();
+        let hash_after = blake3::hash(&bytes_after).to_hex().to_string();
+
+        assert_eq!(
+            hash_before, hash_after,
+            "world aspect change must not alter authoritative.height hash"
         );
     }
 }

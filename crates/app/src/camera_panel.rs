@@ -2,7 +2,7 @@
 
 use crate::camera::Camera;
 use crate::runtime::{INITIAL_CAMERA_DISTANCE, INITIAL_CAMERA_PITCH, INITIAL_CAMERA_YAW, ViewMode};
-use render::{ALL_PRESETS, CameraPreset, CameraPresetId, WORLD_XZ_EXTENT};
+use render::{ALL_PRESETS, CameraPreset, CameraPresetId};
 
 /// Human-readable label for a preset id, shown in the dropdown.
 fn preset_label(id: CameraPresetId) -> &'static str {
@@ -23,12 +23,17 @@ impl CameraPanel {
     /// `island_radius` is used to scale the preset's `distance_factor` when
     /// the user snaps to a canonical capture angle via the preset ComboBox.
     ///
+    /// `extent` — horizontal world span in world units (from
+    /// `Runtime::world_xz_extent`). Used by the preset snap and the Reset view
+    /// button so the camera stays properly framed after an aspect change.
+    ///
     /// Returns `Some(new_mode)` if the user selected a different [`ViewMode`],
     /// `None` if unchanged.
     pub fn show(
         ui: &mut egui::Ui,
         camera: &mut Camera,
         island_radius: f32,
+        extent: f32,
         view_mode: ViewMode,
     ) -> Option<ViewMode> {
         let mut new_view_mode: Option<ViewMode> = None;
@@ -61,7 +66,7 @@ impl CameraPanel {
                 }
             });
         if let Some(preset) = selected {
-            camera.apply_preset(preset, island_radius);
+            camera.apply_preset(preset, island_radius, extent);
         }
 
         ui.separator();
@@ -119,7 +124,7 @@ impl CameraPanel {
         ui.separator();
 
         if ui.button("Reset view").clicked() {
-            camera.distance = INITIAL_CAMERA_DISTANCE * WORLD_XZ_EXTENT;
+            camera.distance = INITIAL_CAMERA_DISTANCE * extent;
             camera.yaw = INITIAL_CAMERA_YAW;
             camera.pitch = INITIAL_CAMERA_PITCH;
         }

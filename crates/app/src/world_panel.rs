@@ -15,6 +15,10 @@ pub struct WorldPanel {
     pub island_radius: f32,
     pub max_relief: f32,
     pub sea_level: f32,
+    /// Currently selected world aspect extent (horizontal world span in world
+    /// units). Initialised to `Runtime::world_xz_extent` and updated when the
+    /// user selects a new option from the World aspect ComboBox.
+    pub aspect_extent: f32,
 }
 
 /// Events produced by one `WorldPanel::show` call.
@@ -31,17 +35,24 @@ pub struct WorldPanelEvent {
     /// The `sea_level` slider was released after a drag. Runtime should run
     /// the `Coastal` fast path instead of a full rebuild.
     pub sea_level_released: bool,
+    /// User selected a new world aspect from the ComboBox. `Runtime` should
+    /// call `apply_world_aspect(new_extent)` — a render-only operation that
+    /// does NOT re-run the sim pipeline.
+    pub aspect_extent_changed: Option<f32>,
 }
 
 impl WorldPanel {
-    /// Construct from the currently loaded preset and initial seed.
-    pub fn new(current: &IslandArchetypePreset, seed: u64) -> Self {
+    /// Construct from the currently loaded preset, initial seed, and current
+    /// world extent. `extent` is typically `Runtime::world_xz_extent` (init
+    /// `DEFAULT_WORLD_XZ_EXTENT`).
+    pub fn new(current: &IslandArchetypePreset, seed: u64, extent: f32) -> Self {
         Self {
             preset_name: current.name.clone(),
             seed,
             island_radius: current.island_radius,
             max_relief: current.max_relief,
             sea_level: current.sea_level,
+            aspect_extent: extent,
         }
     }
 
@@ -59,6 +70,46 @@ impl WorldPanel {
                         ui.selectable_value(&mut self.preset_name, name.to_string(), name);
                     }
                 });
+        });
+
+        // ── World aspect ComboBox ─────────────────────────────────────────────
+        // Four presets spanning Pico-like (0.06) to Steep (0.43). Selecting a
+        // new option fires `aspect_extent_changed` so Runtime can rebuild the
+        // terrain mesh and sea quad without re-running the sim pipeline.
+        //
+        // Aspect ratio = max_relief / extent; at max_relief ≈ 0.85:
+        //   extent 15.0 → aspect ≈ 0.056  (Pico-like)
+        //   extent  5.0 → aspect ≈ 0.17   (Fuji-like)
+        //   extent  3.0 → aspect ≈ 0.28   (Moderate, default)
+        //   extent  2.0 → aspect ≈ 0.43   (Steep)
+        const ASPECT_PRESETS: &[(&str, f32)] = &[
+            ("Pico-like (0.06) — extent 15.0", 15.0),
+            ("Fuji-like (0.17) — extent 5.0", 5.0),
+            ("Moderate (0.28) — default", 3.0),
+            ("Steep (0.43) — extent 2.0", 2.0),
+        ];
+        let current_label = ASPECT_PRESETS
+            .iter()
+            .find(|&&(_, e)| (e - self.aspect_extent).abs() < 1e-4)
+            .map(|&(label, _)| label)
+            .unwrap_or("Custom");
+        ui.horizontal(|ui| {
+            ui.label("World aspect:");
+            let mut new_extent: Option<f32> = None;
+            egui::ComboBox::from_id_salt("world_panel_aspect")
+                .selected_text(current_label)
+                .show_ui(ui, |ui| {
+                    for &(label, extent) in ASPECT_PRESETS {
+                        let selected = (extent - self.aspect_extent).abs() < 1e-4;
+                        if ui.selectable_label(selected, label).clicked() && !selected {
+                            new_extent = Some(extent);
+                        }
+                    }
+                });
+            if let Some(e) = new_extent {
+                self.aspect_extent = e;
+                event.aspect_extent_changed = Some(e);
+            }
         });
 
         // ── Seed ──────────────────────────────────────────────────────────────
@@ -117,17 +168,22 @@ impl WorldPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use render::DEFAULT_WORLD_XZ_EXTENT;
 
     #[test]
     fn new_copies_preset_fields() {
         let preset =
             data::presets::load_preset("volcanic_single").expect("volcanic_single must load");
-        let panel = WorldPanel::new(&preset, 42);
+        let panel = WorldPanel::new(&preset, 42, DEFAULT_WORLD_XZ_EXTENT);
         assert_eq!(panel.preset_name, preset.name);
         assert_eq!(panel.seed, 42);
         assert!((panel.island_radius - preset.island_radius).abs() < 1e-6);
         assert!((panel.max_relief - preset.max_relief).abs() < 1e-6);
         assert!((panel.sea_level - preset.sea_level).abs() < 1e-6);
+        assert!(
+            (panel.aspect_extent - DEFAULT_WORLD_XZ_EXTENT).abs() < 1e-6,
+            "aspect_extent should default to DEFAULT_WORLD_XZ_EXTENT"
+        );
     }
 
     #[test]
@@ -137,6 +193,20 @@ mod tests {
         for n in names {
             data::presets::load_preset(n)
                 .unwrap_or_else(|e| panic!("load_preset({n}) failed: {e}"));
+        }
+    }
+
+    /// The four ComboBox preset extent values must map to the advertised aspect
+    /// ratios within ±0.02. Locks the ComboBox labels against silent drift.
+    #[test]
+    fn aspect_extent_combobox_presets_span_aspect_range() {
+        let max_relief = 0.85_f32;
+        for (extent, expected_aspect) in [(15.0, 0.056), (5.0, 0.17), (3.0, 0.28), (2.0, 0.43)] {
+            let computed = max_relief / extent;
+            assert!(
+                (computed - expected_aspect).abs() < 0.02,
+                "extent {extent} max_relief {max_relief} → aspect {computed}, expected ~{expected_aspect}"
+            );
         }
     }
 
