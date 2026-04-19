@@ -447,11 +447,28 @@ impl Runtime {
 
     /// Handle a `WindowEvent` from winit.
     pub fn handle_window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
-        // Forward to egui first; it will consume keyboard/pointer events it owns.
+        // Forward to egui first so it can update its internal state (records
+        // the click, hover, drag, keyboard input, etc.). The `consumed` flag
+        // below only affects whether we skip OUR handler — egui has already
+        // recorded what it needs via this call.
         let response = self.egui_state.on_window_event(&self.window, &event);
 
-        if response.consumed {
-            return; // egui handled it
+        // egui claims `consumed = true` for pointer events whenever the
+        // cursor is over ANY egui widget — including the viewport `Image`
+        // and the dock chrome. Returning early on `consumed` for mouse
+        // events would therefore swallow every drag the user starts inside
+        // the Viewport tab. The viewport-rect gate inside each mouse arm
+        // already routes correctly (no camera drive when the cursor is over
+        // a panel), so we only honour `consumed` for non-mouse events like
+        // keyboard input into a future text field.
+        let is_mouse_event = matches!(
+            event,
+            WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::MouseWheel { .. }
+        );
+        if response.consumed && !is_mouse_event {
+            return;
         }
 
         let ppp = egui_winit::pixels_per_point(&self.egui_ctx, &self.window);
