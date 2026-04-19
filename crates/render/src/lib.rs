@@ -8,6 +8,7 @@ pub mod overlay_render;
 pub mod palette;
 pub mod sky;
 pub mod terrain;
+pub mod viewport;
 
 pub use camera::{
     ALL_PRESETS, CameraPreset, CameraPresetId, PRESET_HERO, PRESET_LOW_OBLIQUE, PRESET_TOP_DEBUG,
@@ -24,6 +25,7 @@ pub use palette::{
 };
 pub use sky::SkyRenderer;
 pub use terrain::{MeshData, TerrainRenderer, TerrainVertex, build_sea_quad, build_terrain_mesh};
+pub use viewport::ViewportTextureSet;
 
 /// Horizontal world extent applied to the terrain mesh and sea quad.
 ///

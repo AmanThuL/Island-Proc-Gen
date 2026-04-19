@@ -21,7 +21,8 @@ use island_core::{
     world::{Resolution, WorldState},
 };
 use render::{
-    OverlayRenderer, SkyRenderer, TerrainRenderer, WORLD_XZ_EXTENT, overlay::OverlayRegistry,
+    OverlayRenderer, SkyRenderer, TerrainRenderer, ViewportTextureSet, WORLD_XZ_EXTENT,
+    overlay::OverlayRegistry,
 };
 use sim::{StageId, default_pipeline, invalidate_from};
 
@@ -94,6 +95,9 @@ pub struct Runtime {
     egui_state: egui_winit::State,
     egui_renderer: egui_wgpu::Renderer,
 
+    // offscreen viewport texture — 3D scene renders here, egui Image displays it
+    viewport_tex: ViewportTextureSet,
+
     // camera
     camera: Camera,
     input: InputState,
@@ -153,11 +157,19 @@ impl Runtime {
             Some(gpu.device.limits().max_texture_dimension_2d as usize),
         );
 
-        let egui_renderer = egui_wgpu::Renderer::new(
+        let mut egui_renderer = egui_wgpu::Renderer::new(
             &gpu.device,
             gpu.surface_format,
             egui_wgpu::RendererOptions::default(),
         );
+
+        // ── Viewport texture — offscreen render target for the 3D scene ──────
+        // B.1: starts at window size. B.2 onwards: sized to the dock tab rect.
+        let PhysicalSize {
+            width: win_w,
+            height: win_h,
+        } = gpu.size;
+        let viewport_tex = ViewportTextureSet::new(&gpu, (win_w, win_h), &mut egui_renderer);
 
         // ── Camera ────────────────────────────────────────────────────────────
         let PhysicalSize { width, height } = gpu.size;
@@ -227,6 +239,7 @@ impl Runtime {
             egui_ctx,
             egui_state,
             egui_renderer,
+            viewport_tex,
             camera,
             input: InputState::default(),
             last_frame: Instant::now(),
@@ -333,6 +346,13 @@ impl Runtime {
                 self.gpu.resize(new_size);
                 let aspect = new_size.width as f32 / new_size.height.max(1) as f32;
                 self.camera.set_aspect(aspect);
+                // B.1: viewport fills the window. In B.3 the aspect source will
+                // move to the viewport tab rect, but for now they are equal.
+                self.viewport_tex.resize(
+                    &self.gpu,
+                    (new_size.width, new_size.height),
+                    &mut self.egui_renderer,
+                );
             }
 
             WindowEvent::RedrawRequested => {
@@ -442,12 +462,16 @@ impl Runtime {
                 label: Some("frame_encoder"),
             });
 
-        // ── Terrain pass ─────────────────────────────────────────────────────
+        // ── Terrain pass — renders into the offscreen viewport texture ────────
+        // B.1: colour target is viewport_tex.color_view() (not the window
+        // surface). egui will composite the result via egui::Image in the
+        // CentralPanel below. The clear colour is the fallback background
+        // visible under the sky renderer when sky doesn't cover the full quad.
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("terrain_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: self.viewport_tex.color_view(),
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
@@ -461,7 +485,7 @@ impl Runtime {
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.gpu.depth_view,
+                    view: self.viewport_tex.depth_view(),
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -494,7 +518,31 @@ impl Runtime {
         // Use begin_pass / end_pass (the non-deprecated path in egui 0.34).
         self.egui_ctx.begin_pass(raw_input);
 
-        // Five panels: Overlays → Camera (+ ViewMode) → Params → Stats.
+        // ── CentralPanel — displays the offscreen viewport texture ────────────
+        // Painted first so the four floating Window panels sit on top.
+        // egui::Window always draws after Panels (egui painter ordering).
+        // Frame::NONE removes the default panel margin so the image is
+        // edge-to-edge with the window client area.
+        //
+        // `CentralPanel::show(&ctx, ...)` is deprecated in egui 0.34 in favour
+        // of `show_inside(&mut ui, ...)`, but `show_inside` requires an existing
+        // `&mut Ui` which is unavailable in the `begin_pass / end_pass` call
+        // pattern. The `#[allow(deprecated)]` is targeted here; the migration to
+        // `run_ui` (which would provide a top-level `&mut Ui`) is deferred to B.2.
+        {
+            #[allow(deprecated)]
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(&self.egui_ctx, |ui| {
+                    let avail = ui.available_size();
+                    ui.add(egui::Image::new(egui::load::SizedTexture::new(
+                        self.viewport_tex.egui_texture_id(),
+                        avail,
+                    )));
+                });
+        }
+
+        // Four floating panels: Overlays → Camera (+ ViewMode) → Params → Stats.
         ui::OverlayPanel::show(&self.egui_ctx, registry);
         let new_view_mode = crate::camera_panel::CameraPanel::show(
             &self.egui_ctx,
@@ -591,7 +639,17 @@ impl Runtime {
                         resolve_target: None,
                         depth_slice: None,
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load, // keep terrain underneath
+                            // B.1: terrain now renders into the offscreen
+                            // viewport texture; the egui pass composites that
+                            // image onto the window surface via the CentralPanel
+                            // Image widget. Clear to dark slate so stale pixels
+                            // are never visible at window edges or between frames.
+                            load: wgpu::LoadOp::Clear(wgpu::Color {
+                                r: 0.08,
+                                g: 0.08,
+                                b: 0.12,
+                                a: 1.0,
+                            }),
                             store: wgpu::StoreOp::Store,
                         },
                     })],
