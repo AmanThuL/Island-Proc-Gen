@@ -13,9 +13,14 @@ use island_core::world::WorldState;
 /// `SimulationPipeline::run_from(&mut world, from as usize)` to rebuild
 /// them.
 ///
-/// Does NOT mutate `authoritative.*` — those are world truth and belong to
-/// whichever code path just wrote them (e.g. `StreamPowerIncisionStage`
-/// writing back to `authoritative.height` in Sprint 2).
+/// Does NOT mutate `authoritative.height` — that is world truth written by
+/// `TopographyStage` and `ErosionOuterLoop`.
+///
+/// **Exception (Task 3.1):** `authoritative.sediment` IS cleared by the
+/// `Coastal` arm because its initial condition `hs_init = 0.1 * is_land`
+/// is computed by `CoastMaskStage`. Any frontier at or before `Coastal`
+/// (including `Topography`) therefore resets sediment; the next
+/// `run_from(Coastal)` re-populates it.
 ///
 /// Does NOT call the pipeline. The name is `invalidate_from`, not
 /// `rerun_from` — keep the two actions separate so the caller can batch
@@ -129,10 +134,18 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
             world.derived.erosion_baseline = None;
         }
 
-        // CoastMaskStage: writes derived.coast_mask + derived.shoreline_normal.
+        // CoastMaskStage: writes derived.coast_mask + derived.shoreline_normal
+        // + authoritative.sediment (Task 3.1 initial condition).
+        //
+        // Sediment is cleared here (not in the Topography arm) because its
+        // initial condition `hs_init(p) = 0.1 * is_land(p)` requires the
+        // coast mask to be computed first. Any `invalidate_from(Topography)`
+        // cascade propagates through here, so the sticky snapshot behaviour
+        // is automatic: the next `run_from(Coastal)` will re-populate sediment.
         StageId::Coastal => {
             world.derived.coast_mask = None;
             world.derived.shoreline_normal = None;
+            world.authoritative.sediment = None;
         }
 
         // PitFillStage: writes derived.z_filled.
@@ -278,12 +291,19 @@ mod tests {
 
     /// After a full pipeline run, `invalidate_from(Topography)` must set every
     /// `derived.*` and `baked.*` Option field to `None`. `seed`, `preset`,
-    /// `resolution`, and `authoritative.*` must be unchanged.
+    /// `resolution`, and `authoritative.height` must be unchanged.
+    ///
+    /// **Task 3.1 exception**: `authoritative.sediment` IS cleared by a
+    /// Topography-level invalidation because it cascades through the Coastal
+    /// arm, which owns sediment's initial condition. This is intentional:
+    /// sediment's init (`hs_init = 0.1 * is_land`) depends on `is_land`, which
+    /// is computed by `CoastMaskStage`. Re-running `Coastal` after a Topography
+    /// invalidation will re-populate sediment correctly.
     #[test]
     fn invalidate_from_topography_clears_every_derived_and_baked_field() {
         let mut world = run_full(42);
 
-        // Sanity: authoritative fields were populated by TopographyStage.
+        // Sanity: authoritative fields were populated by the full pipeline.
         assert!(world.authoritative.height.is_some());
         assert!(world.authoritative.sediment.is_some());
         // Sanity: CoastTypeStage (9) ran and produced a coast_type field.
@@ -294,25 +314,29 @@ mod tests {
         let orig_seed = world.seed;
         let orig_preset = world.preset.clone();
         let orig_resolution = world.resolution;
-        // Capture authoritative bytes to prove they are untouched.
+        // Capture authoritative.height bytes to prove they are untouched.
         let height_bytes = world.authoritative.height.as_ref().unwrap().data.clone();
-        let sediment_bytes = world.authoritative.sediment.as_ref().unwrap().data.clone();
 
         invalidate_from(&mut world, StageId::Topography);
 
-        // ── authoritative is UNCHANGED ────────────────────────────────────────
+        // ── seed / preset / resolution are UNCHANGED ─────────────────────────
         assert_eq!(world.seed, orig_seed);
         assert_eq!(world.preset, orig_preset);
         assert_eq!(world.resolution, orig_resolution);
+        // authoritative.height is NOT a cache — it is world truth and must
+        // never be cleared by invalidate_from.
         assert_eq!(
             world.authoritative.height.as_ref().unwrap().data,
             height_bytes,
             "authoritative.height must not be touched by invalidate_from"
         );
-        assert_eq!(
-            world.authoritative.sediment.as_ref().unwrap().data,
-            sediment_bytes,
-            "authoritative.sediment must not be touched by invalidate_from"
+        // authoritative.sediment IS cleared: its initial condition is produced
+        // by CoastMaskStage, so invalidate_from(Topography) cascades through
+        // the Coastal arm and resets it. The next run_from(Coastal) will
+        // re-populate it from scratch (Task 3.1 spec lock).
+        assert!(
+            world.authoritative.sediment.is_none(),
+            "authoritative.sediment must be cleared by invalidate_from(Topography) cascade"
         );
 
         // ── every derived.* field is None ─────────────────────────────────────
@@ -844,5 +868,42 @@ mod tests {
     #[test]
     fn invalidate_plus_run_from_equals_fresh_run_hex_projection() {
         invalidate_plus_run_from_equals_fresh_run_at(StageId::HexProjection);
+    }
+
+    // ── Task 3.1: sediment invalidation tests ────────────────────────────────
+
+    /// `invalidate_from(Coastal)` must clear `authoritative.sediment`.
+    #[test]
+    fn invalidation_clears_sediment() {
+        let mut world = run_full(42);
+        assert!(
+            world.authoritative.sediment.is_some(),
+            "sediment must be Some after a full pipeline run"
+        );
+
+        invalidate_from(&mut world, StageId::Coastal);
+
+        assert!(
+            world.authoritative.sediment.is_none(),
+            "authoritative.sediment must be None after invalidate_from(Coastal)"
+        );
+    }
+
+    /// `invalidate_from(Topography)` cascades through the Coastal arm and
+    /// must also clear `authoritative.sediment`.
+    #[test]
+    fn invalidate_from_topography_cascades_to_sediment() {
+        let mut world = run_full(42);
+        assert!(
+            world.authoritative.sediment.is_some(),
+            "sediment must be Some after a full pipeline run"
+        );
+
+        invalidate_from(&mut world, StageId::Topography);
+
+        assert!(
+            world.authoritative.sediment.is_none(),
+            "authoritative.sediment must be None after invalidate_from(Topography) cascade"
+        );
     }
 }

@@ -1,14 +1,23 @@
 //! Coast classification — Task 1A.2.
 //!
 //! Reads `world.authoritative.height` (z_raw, pre-pit-fill) and writes
-//! `world.derived.coast_mask` and `world.derived.shoreline_normal`.
+//! `world.derived.coast_mask`, `world.derived.shoreline_normal`, and
+//! `world.authoritative.sediment` (Task 3.1 initial condition).
 //!
 //! Coast semantics must lock onto pre-pit-fill truth: PitFillStage may raise
 //! interior cells above sea_level, which would fabricate coastline where none
 //! exists in the authoritative heightfield.  By reading z_raw we ensure coast
 //! classification is independent of the routing correction.
+//!
+//! ## Sediment initialization (Task 3.1)
+//!
+//! After coast classification, `authoritative.sediment` is initialized to the
+//! locked initial condition `hs_init(p) = 0.1 * is_land(p)` (sea cells = 0.0,
+//! land cells = 0.1). Allocation is skipped when an existing field already has
+//! the correct resolution; in that case only the values are overwritten in
+//! place.
 
-use island_core::field::{MaskField2D, VectorField2D};
+use island_core::field::{MaskField2D, ScalarField2D, VectorField2D};
 use island_core::neighborhood::COAST_DETECT_NEIGHBORHOOD;
 use island_core::pipeline::SimulationStage;
 use island_core::world::{CoastMask, WorldState};
@@ -127,6 +136,30 @@ impl SimulationStage for CoastMaskStage {
             river_mouth_mask: None, // backfilled by RiverExtractionStage (Task 1A.8)
         });
         world.derived.shoreline_normal = Some(shoreline_normal);
+
+        // ── Sediment initialization (Task 3.1) ───────────────────────────────
+        // hs_init(p) = 0.1 * is_land(p): land cells start with a uniform 0.1
+        // weathering layer; sea cells are 0.0.
+        //
+        // Re-allocation rule: reuse the existing Vec if the field is already
+        // the correct resolution; otherwise allocate fresh. This avoids a heap
+        // allocation on every run_from(Coastal) while still handling resolution
+        // changes correctly.
+        //
+        // The borrow on `derived.coast_mask` above already moved the CoastMask
+        // into place, so we re-read is_land from the new derived field.
+        let is_land_ref = &world.derived.coast_mask.as_ref().unwrap().is_land;
+        let needs_alloc = match &world.authoritative.sediment {
+            Some(s) => s.width != w || s.height != h,
+            None => true,
+        };
+        if needs_alloc {
+            world.authoritative.sediment = Some(ScalarField2D::<f32>::new(w, h));
+        }
+        let sediment = world.authoritative.sediment.as_mut().unwrap();
+        for i in 0..n {
+            sediment.data[i] = if is_land_ref.data[i] == 1 { 0.1 } else { 0.0 };
+        }
 
         Ok(())
     }
@@ -422,5 +455,110 @@ mod tests {
         // height is None by default
         let result = CoastMaskStage.run(&mut world);
         assert!(result.is_err(), "expected Err when height is None");
+    }
+
+    // 8. (Task 3.1) sediment is initialized after CoastMaskStage runs:
+    //    land cells = 0.1, sea cells = 0.0.
+    #[test]
+    fn sediment_initialized_on_land_cells() {
+        // 4×4 field: centre 2×2 = land (0.8), border ring = sea (0.2); sea_level = 0.5.
+        let mut world = world_with_height(make_4x4_field(), 0.5);
+        CoastMaskStage
+            .run(&mut world)
+            .expect("CoastMaskStage failed");
+
+        let sediment = world
+            .authoritative
+            .sediment
+            .as_ref()
+            .expect("authoritative.sediment must be Some after CoastMaskStage");
+
+        for y in 0..4_u32 {
+            for x in 0..4_u32 {
+                let is_centre = (1..=2).contains(&x) && (1..=2).contains(&y);
+                let idx = (y * 4 + x) as usize;
+                let expected = if is_centre { 0.1 } else { 0.0 };
+                assert!(
+                    (sediment.data[idx] - expected).abs() < f32::EPSILON,
+                    "({x},{y}) sediment must be {expected}, got {}",
+                    sediment.data[idx]
+                );
+            }
+        }
+    }
+
+    // 9. (Task 3.1) sediment is reallocated when resolution changes.
+    #[test]
+    fn sediment_reallocated_on_resolution_change() {
+        let mut world = world_with_height(make_4x4_field(), 0.5);
+        CoastMaskStage.run(&mut world).expect("first run failed");
+
+        let first_len = world.authoritative.sediment.as_ref().unwrap().data.len();
+        assert_eq!(
+            first_len, 16,
+            "4×4 field should produce 16-element sediment"
+        );
+
+        // Switch to an 8×8 resolution with a matching height field.
+        let mut f8 = ScalarField2D::<f32>::new(8, 8);
+        for y in 0..8_u32 {
+            for x in 0..8_u32 {
+                let is_centre = (2..=5).contains(&x) && (2..=5).contains(&y);
+                f8.set(x, y, if is_centre { 0.8 } else { 0.2 });
+            }
+        }
+        world.resolution = island_core::world::Resolution::new(8, 8);
+        world.authoritative.height = Some(f8);
+
+        CoastMaskStage.run(&mut world).expect("second run failed");
+
+        let sediment = world.authoritative.sediment.as_ref().unwrap();
+        assert_eq!(
+            sediment.data.len(),
+            64,
+            "sediment must be reallocated to 8×8 = 64 elements after resolution change"
+        );
+        assert_eq!(sediment.width, 8);
+        assert_eq!(sediment.height, 8);
+    }
+
+    // 10. (Task 3.1) sediment buffer is reused (not reallocated) across reruns
+    //     at the same resolution.
+    #[test]
+    fn sediment_reused_across_reruns_when_resolution_unchanged() {
+        let mut world = world_with_height(make_4x4_field(), 0.5);
+        CoastMaskStage.run(&mut world).expect("first run failed");
+
+        // Capture the capacity and pointer of the backing Vec before the second run.
+        let sediment_before = world.authoritative.sediment.as_ref().unwrap();
+        let cap_before = sediment_before.data.capacity();
+        let ptr_before = sediment_before.data.as_ptr();
+
+        CoastMaskStage.run(&mut world).expect("second run failed");
+
+        let sediment = world.authoritative.sediment.as_ref().unwrap();
+        assert_eq!(
+            sediment.data.capacity(),
+            cap_before,
+            "sediment Vec capacity must be unchanged (no reallocation)"
+        );
+        assert_eq!(
+            sediment.data.as_ptr(),
+            ptr_before,
+            "sediment Vec pointer must be unchanged (same backing store reused)"
+        );
+        // Values must still be correct after the reuse.
+        for y in 0..4_u32 {
+            for x in 0..4_u32 {
+                let is_centre = (1..=2).contains(&x) && (1..=2).contains(&y);
+                let idx = (y * 4 + x) as usize;
+                let expected = if is_centre { 0.1 } else { 0.0 };
+                assert!(
+                    (sediment.data[idx] - expected).abs() < f32::EPSILON,
+                    "({x},{y}) sediment must be {expected} after reuse, got {}",
+                    sediment.data[idx]
+                );
+            }
+        }
     }
 }
