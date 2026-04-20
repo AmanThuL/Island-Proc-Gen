@@ -37,3 +37,26 @@ Models of landscape evolution by river erosion are often either transport-limite
 - TODO (Sprint 1A)
 - SPACE is implemented in Python (Landlab); the Rust port requires careful numerical stability analysis especially for the `H/(H+H*)` alluvium coverage term
 - Landlab uses a graph-based grid; our `ScalarField2D<T>` is a regular raster — port requires re-deriving the flux conservation at cell boundaries
+
+---
+
+### Sprint 3 落地点
+
+Sprint 3 implements SPACE-lite, a two-equation subset of SPACE 1.0, in `crates/sim/src/geomorph/sediment.rs` (per DD2). Here is an explicit map of what v1 keeps vs drops from the full paper:
+
+**Kept from SPACE 1.0:**
+
+- `E_bed = K_bed · A^m · S^n · exp(-hs / H*)` — the bedrock incision equation with sediment cover damping. The `exp(-hs/H*)` term is SPACE's key insight: sediment cover suppresses bedrock incision nonlinearly. `H* = H_STAR = 0.05` (normalized) is the e-folding scale; at `hs = 0.1` (Sprint 3 init) the damping factor is `exp(-2) ≈ 0.14`.
+- `E_sed = K_sed · A^m · S^n · min(hs, HS_ENTRAIN_MAX)` — sediment entrainment equation. `min(hs, HS_ENTRAIN_MAX)` is a saturation cap rather than SPACE's `H / (H + H*)` coverage fraction, but serves the same role: entrainment cannot exceed available sediment.
+- The `hs` mass-balance update: `dhs = E_bed · dt - E_sed · dt + D · dt`. Each inner step produces bedrock material (→ increase hs), removes entrained sediment (→ decrease hs), and adds deposited sediment (→ increase hs). Physically equivalent to SPACE's alluvium conservation equation.
+- `K_sed / K_bed ≈ 3`: SPACE 1.0 empirical calibration shows sediment is ~3× easier to entrain than bedrock in temperate lithologies. Sprint 3 uses `K_bed = 5e-3`, `K_sed = 1.5e-2` (ratio 3), matching this ratio. The `K_bed` value is 3× Sprint 2's `K_SPIM = 1.5e-3` because `exp(-hs/H*)` damping suppresses effective K at the coast to below Sprint 2 safe levels (per DD2 §定标逻辑).
+
+**Dropped from SPACE 1.0 (deferred to Sprint 4+):**
+
+- Explicit transport-capacity implicit solver (tridiagonal linear algebra for long-time-step stability under `n > 1`). Sprint 3 uses forward-Euler with `n = 1.0` (per Sprint 2 Kwang & Parker constraint), so CFL is manageable without implicit integration.
+- SPACE's `V_s / q` deposition term (settling velocity / unit discharge ratio). Sprint 3 uses a simpler transport-capacity excess rule: `D = max(0, Qs_in - Qs_cap)` with `Qs_cap = K_Q · A^m_q · S^n_q`. This is physically defensible as a v1 approximation — deposition is triggered by the same supply–capacity mismatch as in SPACE, just parameterized differently.
+- The `(1 - F_f)` fine-sediment fraction term in SPACE's bedrock erosion equation. Sprint 3 omits fine vs coarse partitioning; all eroded material is treated as a single `hs` proxy field.
+
+**Why `K_sed / K_bed ≈ 3` is defensible (Kwang & Parker confirmation):**
+
+Kwang & Parker 2017 established that the `(m, n) = (0.35, 1.0)` combination avoids the pathological instability that occurs near `m/n = 0.5`. Sprint 3's K_sed change (K_bed × 3) does NOT change `(m, n)` — it is a scaling of the prefactor only. The effective K felt by the D8-downstream routing is `K_bed · exp(-hs/H*)` for bedrock and `K_sed · min(hs, max)` for sediment; neither modifies the `m/n` ratio. The Kwang–Parker pathology domain is invariant to K scaling; `m/n = 0.35` remains well outside it regardless of K_bed / K_sed magnitude.
