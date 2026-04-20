@@ -1,24 +1,49 @@
-//! Stream Power Incision Model — Sprint 2 DD1.
+//! Stream Power Incision Model — Sprint 2 DD1 + Sprint 3 DD2.
 //!
 //! Applies one SPIM iteration to `authoritative.height` in place for every
-//! land cell.  The incision flux is `Ef = K · A^m · S^n` (Whipple & Tucker
-//! 1999; KP17 §3.1). Parameters are read from `world.preset.erosion` at
-//! run time so slider changes take effect on the next re-run.
+//! land cell.  Two variants are selected via
+//! [`island_core::preset::SpimVariant`]:
 //!
-//! This stage is in-place-on-height only.  It does **not** update any
-//! `derived.*` field — `ErosionOuterLoop` (Task 2.3) handles cache
-//! invalidation and flow-network rebuilds around repeated SPIM calls.
+//! * `Plain` (Sprint 2) — `E_f = K · A^m · S^n` (Whipple & Tucker 1999;
+//!   KP17 §3.1). Mutates height only; does not touch `authoritative.sediment`.
+//! * `SpaceLite` (Sprint 3, default) — dual equation:
+//!   - `E_bed = K_bed · A^m · S^n · exp(-hs / H*)` mutates height;
+//!   - `E_sed = K_sed · A^m · S^n · min(hs, HS_ENTRAIN_MAX)` controls
+//!     sediment-layer entrainment.
+//!
+//!   `hs` is updated in-place: `hs_new = clamp(hs + E_bed·dt − E_sed·dt,
+//!   0, 1)`. Task 3.3 adds the deposition term `+ Qs_in/A_cell · dt`.
+//!
+//! Parameters are read from `world.preset.erosion` at run time so slider
+//! changes take effect on the next re-run.
+//!
+//! This stage is in-place-on-height (and, under `SpaceLite`, also
+//! in-place-on-sediment). It does **not** update any `derived.*` field —
+//! `ErosionOuterLoop` (Task 2.3) handles cache invalidation and
+//! flow-network rebuilds around repeated SPIM calls.
 
 use island_core::pipeline::SimulationStage;
+use island_core::preset::SpimVariant;
 use island_core::world::WorldState;
 
-/// Sprint 2 DD1: Stream Power Incision Model (SPIM).
+use crate::geomorph::sediment::{H_STAR, HS_ENTRAIN_MAX};
+
+/// Sprint 2 DD1 + Sprint 3 DD2: Stream Power Incision Model (SPIM).
 ///
-/// `Ef = K · A^m · S^n`, with `(m, n) = (0.35, 1.0)` locked in v1 to
-/// avoid the KP17 pathological `m/n = 0.5` regime. Mutates
-/// `authoritative.height` in place for every land cell; clamps new height
-/// at `sea_level` to prevent negative / below-sea heights that would
-/// produce NaN slopes downstream.
+/// Dispatches to one of two inner routines based on
+/// `world.preset.erosion.spim_variant`:
+///
+/// * [`SpimVariant::Plain`] — Sprint 2 single-equation fallback:
+///   `E_f = K · A^m · S^n`, with `(m, n) = (0.35, 1.0)` locked in v1 to
+///   avoid the KP17 pathological `m/n = 0.5` regime.
+/// * [`SpimVariant::SpaceLite`] — Sprint 3 dual equation (default), see
+///   [`run_space_lite`].
+///
+/// Both branches mutate `authoritative.height` in place for every land
+/// cell and clamp new height at `sea_level` to prevent negative /
+/// below-sea heights that would produce NaN slopes downstream. The
+/// `SpaceLite` branch additionally mutates `authoritative.sediment` in
+/// place (clamped to `[0, 1]`).
 ///
 /// Unit struct — all params read from `world.preset.erosion` at run time
 /// so mid-session slider changes take effect on the next rerun.
@@ -30,16 +55,9 @@ impl SimulationStage for StreamPowerIncisionStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
-        let k = world.preset.erosion.spim_k;
-        let m = world.preset.erosion.spim_m;
-        let n = world.preset.erosion.spim_n;
-        let sea_level = world.preset.sea_level;
-
         // ── prerequisite checks ───────────────────────────────────────────────
-        // Verify derived prerequisites exist before taking &mut on height.
-        // The length checks use Option::is_none() so the borrow checker is
-        // happy: we don't hold references into `world` across the mutable
-        // borrow below.
+        // Shared across both branches. Kept here (not in per-branch helpers)
+        // so the bail-out message cites the stage name consistently.
         if world.derived.accumulation.is_none() {
             anyhow::bail!(
                 "StreamPowerIncisionStage prerequisite missing: \
@@ -58,8 +76,6 @@ impl SimulationStage for StreamPowerIncisionStage {
                  derived.coast_mask (run CoastMask first)"
             );
         }
-
-        // Verify authoritative height exists.
         if world.authoritative.height.is_none() {
             anyhow::bail!(
                 "StreamPowerIncisionStage: authoritative.height is None \
@@ -67,37 +83,158 @@ impl SimulationStage for StreamPowerIncisionStage {
             );
         }
 
-        // ── cell loop ─────────────────────────────────────────────────────────
-        // Split borrow: `world.derived` and `world.authoritative` are disjoint
-        // struct fields so the compiler accepts shared refs into `derived` held
-        // simultaneously with the `&mut` into `authoritative.height`.
-        let n_cells = world.resolution.sim_width as usize * world.resolution.sim_height as usize;
+        match world.preset.erosion.spim_variant {
+            SpimVariant::Plain => run_plain(world),
+            SpimVariant::SpaceLite => run_space_lite(world),
+        }
+    }
+}
 
-        let accumulation = &world.derived.accumulation.as_ref().unwrap().data;
-        let slope = &world.derived.slope.as_ref().unwrap().data;
-        let is_land = &world.derived.coast_mask.as_ref().unwrap().is_land.data;
-        let h_field = world.authoritative.height.as_mut().unwrap();
+/// Raw stream-power kernel `K · A^m · S^n`, with the non-finite guard that
+/// protects against `f32::MAX`-magnitude accumulations combined with
+/// `m > 1` parameter overrides. Returns `0.0` whenever the product is
+/// non-finite — same defensive behaviour as Sprint 2.
+#[inline]
+fn stream_power_kernel(k: f32, a: f32, s: f32, m: f32, n: f32) -> f32 {
+    let ef = k * a.powf(m) * s.powf(n);
+    if ef.is_finite() { ef } else { 0.0 }
+}
 
-        for i in 0..n_cells {
-            // Sea cells: erosion noop.
-            if is_land[i] == 0 {
-                continue;
-            }
+/// Sprint 2 DD1 — single-equation SPIM (`SpimVariant::Plain`).
+///
+/// Preserved verbatim for baseline regeneration (Task 3.10's `pre_*`
+/// shots rely on `preset_override.erosion.spim_variant = Some(Plain)`)
+/// and for Sprint 3 ablations against the old physics.
+fn run_plain(world: &mut WorldState) -> anyhow::Result<()> {
+    let k = world.preset.erosion.spim_k;
+    let m = world.preset.erosion.spim_m;
+    let n = world.preset.erosion.spim_n;
+    let sea_level = world.preset.sea_level;
 
-            let a = accumulation[i];
-            let s = slope[i];
+    // Split borrow: `world.derived` and `world.authoritative` are disjoint
+    // struct fields so the compiler accepts shared refs into `derived` held
+    // simultaneously with the `&mut` into `authoritative.height`.
+    let n_cells = world.resolution.sim_width as usize * world.resolution.sim_height as usize;
 
-            // `ef` = K * A^m * S^n. Non-finite → 0.0 so extreme accumulation
-            // (e.g. f32::MAX) doesn't silently NaN-propagate into the height field.
-            let ef = k * a.powf(m) * s.powf(n);
-            let ef = if ef.is_finite() { ef } else { 0.0 };
+    let accumulation = &world.derived.accumulation.as_ref().unwrap().data;
+    let slope = &world.derived.slope.as_ref().unwrap().data;
+    let is_land = &world.derived.coast_mask.as_ref().unwrap().is_land.data;
+    let h_field = world.authoritative.height.as_mut().unwrap();
 
-            // In-place incision; clamp at sea_level (dt = 1.0 in v1).
-            h_field.data[i] = (h_field.data[i] - ef).max(sea_level);
+    for i in 0..n_cells {
+        if is_land[i] == 0 {
+            continue;
+        }
+        let ef = stream_power_kernel(k, accumulation[i], slope[i], m, n);
+        // In-place incision; clamp at sea_level (dt = 1.0 in v1).
+        h_field.data[i] = (h_field.data[i] - ef).max(sea_level);
+    }
+
+    Ok(())
+}
+
+/// Sprint 3 DD2 — SPACE-lite dual-equation SPIM (`SpimVariant::SpaceLite`).
+///
+/// For each land cell `p`:
+///
+/// ```text
+/// A  = derived.accumulation[p]
+/// S  = derived.slope[p]
+/// hs = authoritative.sediment[p]
+///
+/// E_bed  = K_bed · A^m · S^n · exp(-hs / H*)
+/// hs_eff = min(hs, HS_ENTRAIN_MAX)
+/// E_sed  = K_sed · A^m · S^n · hs_eff
+///
+/// z[p]  -= E_bed · dt;  z[p] = max(z[p], sea_level)
+/// hs[p]  = clamp(hs + E_bed·dt − E_sed·dt, 0, 1)
+/// ```
+///
+/// `dt = 1.0` in v1 (matches Sprint 2). Task 3.3 will add a deposition
+/// term `+ Qs_in/A_cell · dt` into the `hs` update, routed from
+/// `SedimentUpdateStage`.
+///
+/// Non-finite guard semantics match `run_plain`: if any intermediate
+/// product overflows (e.g. `A = f32::MAX` combined with a parameter
+/// override `m > 1`), the corresponding flux is clamped to `0.0` and
+/// neither `z` nor `hs` is corrupted.
+///
+/// # Prerequisite: `authoritative.sediment` must be `Some`.
+///
+/// Task 3.1 sets `hs_init(p) = 0.1 · is_land(p)` at the end of
+/// `CoastMaskStage`, so by the time `ErosionOuterLoop` runs SPIM the
+/// sediment field is always populated. A missing sediment field here is a
+/// bug (Coastal stage didn't run, or `invalidate_from(Coastal)` was
+/// called without a follow-up `run_from(Coastal)`); bail with a clear
+/// message rather than silently skip.
+fn run_space_lite(world: &mut WorldState) -> anyhow::Result<()> {
+    if world.authoritative.sediment.is_none() {
+        anyhow::bail!(
+            "StreamPowerIncisionStage(SpaceLite): authoritative.sediment is None \
+             (CoastMaskStage must run first — Task 3.1 sets hs_init)"
+        );
+    }
+
+    let k_bed = world.preset.erosion.space_k_bed;
+    let k_sed = world.preset.erosion.space_k_sed;
+    let h_star = world.preset.erosion.h_star;
+    let m = world.preset.erosion.spim_m;
+    let n = world.preset.erosion.spim_n;
+    let sea_level = world.preset.sea_level;
+
+    // Guard against a pathological h_star ≤ 0 from a misconfigured preset.
+    // exp(-hs / 0) is undefined; fall back to the locked default rather
+    // than propagating NaN through every land cell.
+    let h_star = if h_star > 0.0 { h_star } else { H_STAR };
+
+    let n_cells = world.resolution.sim_width as usize * world.resolution.sim_height as usize;
+
+    // Triple split borrow: derived is shared (&), authoritative.height and
+    // authoritative.sediment are both &mut, but since they're distinct
+    // struct fields the compiler accepts the split via destructuring.
+    let accumulation = &world.derived.accumulation.as_ref().unwrap().data;
+    let slope = &world.derived.slope.as_ref().unwrap().data;
+    let is_land = &world.derived.coast_mask.as_ref().unwrap().is_land.data;
+
+    // Split the authoritative fields into two disjoint &muts.
+    let auth = &mut world.authoritative;
+    let h_field = auth.height.as_mut().unwrap();
+    let hs_field = auth.sediment.as_mut().unwrap();
+
+    debug_assert_eq!(
+        h_field.data.len(),
+        hs_field.data.len(),
+        "authoritative.height and authoritative.sediment must share resolution"
+    );
+
+    for i in 0..n_cells {
+        if is_land[i] == 0 {
+            continue;
         }
 
-        Ok(())
+        let a = accumulation[i];
+        let s = slope[i];
+        let hs = hs_field.data[i];
+
+        // Shielded bedrock incision: exp(-hs / H*) ∈ (0, 1] for hs ≥ 0.
+        let shield = (-hs / h_star).exp();
+        let e_bed = stream_power_kernel(k_bed, a, s, m, n) * shield;
+        let e_bed = if e_bed.is_finite() { e_bed } else { 0.0 };
+
+        // Sediment entrainment, capped on hs_eff so thick piles don't
+        // produce unbounded stripping flux.
+        let hs_eff = hs.min(HS_ENTRAIN_MAX);
+        let e_sed = stream_power_kernel(k_sed, a, s, m, n) * hs_eff;
+        let e_sed = if e_sed.is_finite() { e_sed } else { 0.0 };
+
+        // dt = 1.0 in v1.
+        h_field.data[i] = (h_field.data[i] - e_bed).max(sea_level);
+        // Sediment mass balance: bedrock erosion sheds into hs, entrainment
+        // strips hs. Task 3.3 adds + Qs_in/A_cell for deposition.
+        hs_field.data[i] = (hs + e_bed - e_sed).clamp(0.0, 1.0);
     }
+
+    Ok(())
 }
 
 // ─── tests ───────────────────────────────────────────────────────────────────
@@ -106,15 +243,21 @@ impl SimulationStage for StreamPowerIncisionStage {
 mod tests {
     use island_core::field::{MaskField2D, ScalarField2D};
     use island_core::pipeline::SimulationStage;
-    use island_core::preset::{ErosionParams, IslandAge, IslandArchetypePreset};
+    use island_core::preset::{ErosionParams, IslandAge, IslandArchetypePreset, SpimVariant};
     use island_core::seed::Seed;
     use island_core::world::{CoastMask, Resolution, WorldState};
 
     use super::StreamPowerIncisionStage;
+    use super::{H_STAR, HS_ENTRAIN_MAX};
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    fn base_preset(sea_level: f32) -> IslandArchetypePreset {
+    /// Shared test preset: pick the SPIM variant, everything else is a fixed
+    /// neutral fixture. Sprint 2 tests pass `Plain` to keep their Sprint 2
+    /// numerical invariants (which rely on `spim_k` / `spim_m` / `spim_n`)
+    /// unaffected by Sprint 3's SPACE-lite default; Sprint 3 tests pass
+    /// `SpaceLite`.
+    fn preset_for(sea_level: f32, variant: SpimVariant) -> IslandArchetypePreset {
         IslandArchetypePreset {
             name: "spim_test".into(),
             island_radius: 0.5,
@@ -124,14 +267,26 @@ mod tests {
             prevailing_wind_dir: 0.0,
             marine_moisture_strength: 0.5,
             sea_level,
-            erosion: ErosionParams::default(),
+            erosion: ErosionParams {
+                spim_variant: variant,
+                ..ErosionParams::default()
+            },
         }
+    }
+
+    fn base_preset(sea_level: f32) -> IslandArchetypePreset {
+        preset_for(sea_level, SpimVariant::Plain)
+    }
+
+    fn space_lite_preset(sea_level: f32) -> IslandArchetypePreset {
+        preset_for(sea_level, SpimVariant::SpaceLite)
     }
 
     fn preset_with_k(sea_level: f32, spim_k: f32) -> IslandArchetypePreset {
         IslandArchetypePreset {
             erosion: ErosionParams {
                 spim_k,
+                spim_variant: SpimVariant::Plain,
                 ..ErosionParams::default()
             },
             ..base_preset(sea_level)
@@ -173,7 +328,9 @@ mod tests {
         }
     }
 
-    /// Build a world with the three required derived fields pre-set.
+    /// Build a world with the three required derived fields pre-set. Also
+    /// seeds `authoritative.sediment = 0.0` everywhere so SPACE-lite tests
+    /// can override specific cells before the run; Plain tests ignore it.
     fn make_world(
         w: u32,
         h: u32,
@@ -188,6 +345,10 @@ mod tests {
         let mut height = ScalarField2D::<f32>::new(w, h);
         height.data.fill(height_val);
         world.authoritative.height = Some(height);
+
+        // Sediment field starts at 0.0 — Sprint 2 Plain tests don't care;
+        // Sprint 3 SPACE-lite tests can overwrite specific cells.
+        world.authoritative.sediment = Some(ScalarField2D::<f32>::new(w, h));
 
         let mut slope = ScalarField2D::<f32>::new(w, h);
         slope.data.fill(slope_val);
@@ -393,5 +554,250 @@ mod tests {
             result.is_err(),
             "expected Err when derived.accumulation is None"
         );
+    }
+
+    // ─── Sprint 3 DD2: SPACE-lite dual-equation tests ────────────────────────
+
+    /// Helper: run a full Plain world + a full SPACE-lite world with `hs`
+    /// identically zero on all land, identical everything else, one SPIM
+    /// step, compare resulting heights.
+    ///
+    /// With `hs = 0`:
+    /// * `exp(-0/H*) = 1`, so SPACE-lite's bedrock incision reduces to
+    ///   `K_bed · A^m · S^n`.
+    /// * Plain's incision is `K · A^m · S^n`.
+    ///
+    /// When `K_bed == K`, the two height updates are bit-identical. We
+    /// pin `Plain.spim_k` to `space_k_bed` so the forms collapse to the
+    /// same numeric path, isolating the physical reduction from the
+    /// constant difference.
+    #[test]
+    fn space_lite_reduces_to_plain_when_hs_is_zero() {
+        let (w, h) = (8u32, 8u32);
+        let sea_level = 0.0;
+        // Build a SPACE-lite preset with default SPACE-lite constants …
+        let space_preset = space_lite_preset(sea_level);
+        let k_bed = space_preset.erosion.space_k_bed;
+
+        // … and a Plain preset whose `spim_k == space_k_bed` so the kernel
+        // `K · A^m · S^n` is numerically identical.
+        let plain_preset = IslandArchetypePreset {
+            erosion: ErosionParams {
+                spim_variant: SpimVariant::Plain,
+                spim_k: k_bed,
+                ..ErosionParams::default()
+            },
+            ..space_lite_preset(sea_level)
+        };
+
+        let mut space_world = make_world(w, h, space_preset, 0.5, 0.1, 1.0, all_land_coast(w, h));
+        // `hs = 0` everywhere (make_world already does this).
+        let mut plain_world = make_world(w, h, plain_preset, 0.5, 0.1, 1.0, all_land_coast(w, h));
+
+        StreamPowerIncisionStage
+            .run(&mut space_world)
+            .expect("space-lite run");
+        StreamPowerIncisionStage
+            .run(&mut plain_world)
+            .expect("plain run");
+
+        let h_space = &space_world.authoritative.height.as_ref().unwrap().data;
+        let h_plain = &plain_world.authoritative.height.as_ref().unwrap().data;
+
+        // Both branches compute `K · A^m · S^n` identically when hs = 0,
+        // so heights should be bit-exact. `f32::EPSILON · max(K_bed, K)`
+        // is the theoretical bound per the task brief; give a tiny safety
+        // margin for compiler reordering.
+        let tol = f32::EPSILON * k_bed.max(plain_world.preset.erosion.spim_k) * 8.0;
+        for i in 0..(w * h) as usize {
+            let d = (h_space[i] - h_plain[i]).abs();
+            assert!(
+                d <= tol,
+                "cell {i}: space-lite height {} != plain height {}, \
+                 delta={d}, tol={tol}",
+                h_space[i],
+                h_plain[i]
+            );
+        }
+    }
+
+    /// SPACE-lite must keep `hs ∈ [0, 1]` after one inner step, with no
+    /// NaN / Inf on any land cell. Uses a mid-range hs to exercise both
+    /// the `e_bed` deposition into hs and the `e_sed` entrainment out of
+    /// hs.
+    #[test]
+    fn space_lite_respects_hs_bounds() {
+        let (w, h) = (8u32, 8u32);
+        let preset = space_lite_preset(0.0);
+        let mut world = make_world(w, h, preset, 0.5, 0.2, 2.0, all_land_coast(w, h));
+
+        // Seed hs with a pattern crossing the HS_ENTRAIN_MAX boundary.
+        {
+            let hs = world.authoritative.sediment.as_mut().unwrap();
+            for (i, v) in hs.data.iter_mut().enumerate() {
+                // 0.0, 0.1, 0.25, 0.5, 0.75, … wrapping modulo 8
+                *v = (i as f32 * 0.125) % 1.0;
+            }
+        }
+
+        StreamPowerIncisionStage
+            .run(&mut world)
+            .expect("space-lite run");
+
+        let hs_after = world.authoritative.sediment.as_ref().unwrap();
+        for (i, &v) in hs_after.data.iter().enumerate() {
+            assert!(
+                v.is_finite(),
+                "cell {i}: hs non-finite after SPACE-lite: {v}"
+            );
+            assert!(
+                (0.0..=1.0).contains(&v),
+                "cell {i}: hs out of [0,1] after SPACE-lite: {v}"
+            );
+        }
+    }
+
+    /// With `K_sed = 0.0` the entrainment term vanishes, so the `hs`
+    /// update reduces to `hs += E_bed · dt`. Bedrock incision always
+    /// yields `E_bed ≥ 0` on land, so `hs` monotonically increases
+    /// (until the upper clamp at 1.0 bites).
+    ///
+    /// Uses a small `hs_init` well below the clamp, a single step, and
+    /// checks every land cell strictly increased by roughly `E_bed` (the
+    /// exact `E_bed` is `K_bed · 1 · 0.1 · exp(-0.1/H*)`).
+    #[test]
+    fn space_lite_thickens_sediment_on_bedrock_incision_when_entrainment_is_weak() {
+        let (w, h) = (8u32, 8u32);
+        let mut preset = space_lite_preset(0.0);
+        preset.erosion.space_k_sed = 0.0; // disable entrainment
+        let mut world = make_world(w, h, preset, 0.5, 0.1, 1.0, all_land_coast(w, h));
+
+        // Uniform small hs so the e_bed shield `exp(-0.1/0.05)` is strong
+        // but the cells are well below the 1.0 upper clamp.
+        world
+            .authoritative
+            .sediment
+            .as_mut()
+            .unwrap()
+            .data
+            .fill(0.1);
+
+        let hs_before: Vec<f32> = world.authoritative.sediment.as_ref().unwrap().data.clone();
+
+        StreamPowerIncisionStage
+            .run(&mut world)
+            .expect("space-lite run");
+
+        let hs_after = world.authoritative.sediment.as_ref().unwrap();
+        for i in 0..(w * h) as usize {
+            assert!(
+                hs_after.data[i] > hs_before[i],
+                "cell {i}: hs must strictly increase (no entrainment): \
+                 before={}, after={}",
+                hs_before[i],
+                hs_after.data[i]
+            );
+            assert!(
+                hs_after.data[i] <= 1.0,
+                "cell {i}: hs exceeded 1.0 clamp: {}",
+                hs_after.data[i]
+            );
+        }
+    }
+
+    /// Determinism lock: running Plain twice on a fresh identical world
+    /// must produce a byte-identical height field. This is the
+    /// Sprint-2-bit-exact property that Task 3.10's baseline
+    /// regeneration relies on.
+    ///
+    /// If Sprint 2 snapshot infrastructure were in-crate we'd compare a
+    /// stored blake3 against the current output; in its absence the
+    /// "run twice, same bytes" form is the strongest local check.
+    #[test]
+    fn plain_branch_is_deterministic_across_repeated_runs() {
+        let (w, h) = (8u32, 8u32);
+        let preset = base_preset(0.0); // Plain variant
+
+        let mut world_a = make_world(w, h, preset.clone(), 0.5, 0.1, 1.0, all_land_coast(w, h));
+        let mut world_b = make_world(w, h, preset, 0.5, 0.1, 1.0, all_land_coast(w, h));
+
+        StreamPowerIncisionStage.run(&mut world_a).expect("run A");
+        StreamPowerIncisionStage.run(&mut world_b).expect("run B");
+
+        let h_a = &world_a.authoritative.height.as_ref().unwrap().data;
+        let h_b = &world_b.authoritative.height.as_ref().unwrap().data;
+
+        // Byte-for-byte identical, not just ε-close.
+        for i in 0..(w * h) as usize {
+            assert_eq!(
+                h_a[i].to_bits(),
+                h_b[i].to_bits(),
+                "cell {i}: plain SPIM not deterministic ({} vs {})",
+                h_a[i],
+                h_b[i]
+            );
+        }
+    }
+
+    /// SPACE-lite without sediment must bail with a clear error — the
+    /// safety rail against Coastal being invalidated without a rerun.
+    #[test]
+    fn space_lite_missing_sediment_returns_error() {
+        let (w, h) = (4u32, 4u32);
+        let preset = space_lite_preset(0.0);
+        let mut world = make_world(w, h, preset, 0.5, 0.1, 1.0, all_land_coast(w, h));
+        world.authoritative.sediment = None;
+
+        let result = StreamPowerIncisionStage.run(&mut world);
+        assert!(
+            result.is_err(),
+            "SPACE-lite must error when authoritative.sediment is None"
+        );
+    }
+
+    /// SPACE-lite's `e_bed` shield `exp(-hs / H*)` decays with thicker
+    /// sediment. Two synthetic worlds, identical in every way except `hs`
+    /// (one with `hs = 0.0`, the other with `hs = 0.5 = H_STAR · 10`),
+    /// should show the thick-sediment world incising strictly less.
+    /// Verifies the cover-effect physics is wired correctly (not just
+    /// that `hs` is being read).
+    #[test]
+    fn space_lite_bedrock_shield_reduces_incision_with_thicker_sediment() {
+        let (w, h) = (4u32, 4u32);
+        let sea_level = 0.0;
+        let preset = space_lite_preset(sea_level);
+
+        let mut thin = make_world(w, h, preset.clone(), 0.5, 0.1, 1.0, all_land_coast(w, h));
+        let mut thick = make_world(w, h, preset, 0.5, 0.1, 1.0, all_land_coast(w, h));
+        // thin keeps hs = 0.0 (make_world default); thick overrides to 0.5.
+        thick
+            .authoritative
+            .sediment
+            .as_mut()
+            .unwrap()
+            .data
+            .fill(0.5);
+
+        StreamPowerIncisionStage.run(&mut thin).expect("thin run");
+        StreamPowerIncisionStage.run(&mut thick).expect("thick run");
+
+        let h_thin = &thin.authoritative.height.as_ref().unwrap().data;
+        let h_thick = &thick.authoritative.height.as_ref().unwrap().data;
+        // Thick sediment shields bedrock → thick height drops less → is
+        // higher than thin height.
+        for i in 0..(w * h) as usize {
+            assert!(
+                h_thick[i] > h_thin[i],
+                "cell {i}: shielding failed — thick hs should leave higher z; \
+                 h_thick={}, h_thin={}",
+                h_thick[i],
+                h_thin[i]
+            );
+        }
+
+        // And the HS_ENTRAIN_MAX / H_STAR sanity constants are reachable
+        // from this module.
+        assert!(HS_ENTRAIN_MAX > 0.0);
+        assert!(H_STAR > 0.0);
     }
 }

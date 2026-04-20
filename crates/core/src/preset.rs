@@ -31,6 +31,27 @@ pub enum IslandAge {
     Old,
 }
 
+/// Sprint 3 DD2: which Stream Power Incision Model variant to use inside
+/// [`crate::pipeline::SimulationPipeline`].
+///
+/// * [`SpimVariant::Plain`] — Sprint 2 single-equation fallback
+///   (`E_f = K · A^m · S^n`, no coupling to sediment thickness). Preserved
+///   for baseline regeneration (Task 3.10's `pre_*` shots rely on
+///   `preset_override.erosion.spim_variant = Some(Plain)`) and for Sprint 3
+///   ablations against the old physics.
+/// * [`SpimVariant::SpaceLite`] — Sprint 3 SPACE-lite dual equation
+///   (default). Incises bedrock with a sediment-cover exponential shield
+///   `exp(-hs / H*)` and separately entrains sediment proportional to
+///   `min(hs, HS_ENTRAIN_MAX)`. Deposition is added in Task 3.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum SpimVariant {
+    /// Sprint 2 single-equation SPIM (no `hs` coupling).
+    Plain,
+    /// Sprint 3 SPACE-lite dual-equation SPIM (default).
+    #[default]
+    SpaceLite,
+}
+
 // ─── ErosionParams ────────────────────────────────────────────────────────────
 
 /// Sprint 2 DD1: parameters for the two-pass erosion loop
@@ -97,6 +118,30 @@ pub struct ErosionParams {
     /// Number of SPIM iterations per outer batch before flow-network rebuild.
     #[serde(default = "default_n_inner")]
     pub n_inner: u32,
+
+    /// Sprint 3 DD2: SPACE-lite bedrock erodibility `K_bed`. Used in the
+    /// `SpimVariant::SpaceLite` branch; ignored under `SpimVariant::Plain`.
+    /// Dimensionless proxy in v1; typical value `5e-3`.
+    #[serde(default = "default_space_k_bed")]
+    pub space_k_bed: f32,
+
+    /// Sprint 3 DD2: SPACE-lite sediment entrainability `K_sed`. Larger
+    /// `K_sed` ⇒ faster erosion of the sediment layer. Dimensionless proxy
+    /// in v1; typical value `1.5e-2`.
+    #[serde(default = "default_space_k_sed")]
+    pub space_k_sed: f32,
+
+    /// Sprint 3 DD2: cover-thickness `H*` in the bedrock shielding term
+    /// `exp(-hs / H*)`. Controls how quickly bedrock incision decays as
+    /// sediment thickens; typical value `0.05` (in normalised height units).
+    #[serde(default = "default_h_star")]
+    pub h_star: f32,
+
+    /// Sprint 3 DD2: which SPIM variant drives the inner erosion step.
+    /// Defaults to [`SpimVariant::SpaceLite`]; Sprint 2 `.ron` presets
+    /// without this field deserialize to the default via `#[serde(default)]`.
+    #[serde(default)]
+    pub spim_variant: SpimVariant,
 }
 
 fn default_spim_k() -> f32 {
@@ -128,6 +173,19 @@ fn default_n_batch() -> u32 {
 fn default_n_inner() -> u32 {
     10
 }
+fn default_space_k_bed() -> f32 {
+    // Sprint 3 DD2 locked constant: SPACE_K_BED_DEFAULT. See
+    // `crates/sim/src/geomorph/sediment.rs` for the canonical const.
+    5.0e-3
+}
+fn default_space_k_sed() -> f32 {
+    // Sprint 3 DD2 locked constant: SPACE_K_SED_DEFAULT.
+    1.5e-2
+}
+fn default_h_star() -> f32 {
+    // Sprint 3 DD2 locked constant: H_STAR.
+    0.05
+}
 
 impl Default for ErosionParams {
     fn default() -> Self {
@@ -139,6 +197,10 @@ impl Default for ErosionParams {
             n_diff_substep: default_n_diff_substep(),
             n_batch: default_n_batch(),
             n_inner: default_n_inner(),
+            space_k_bed: default_space_k_bed(),
+            space_k_sed: default_space_k_sed(),
+            h_star: default_h_star(),
+            spim_variant: SpimVariant::default(),
         }
     }
 }
@@ -236,6 +298,11 @@ mod tests {
         assert_eq!(ep.n_diff_substep, 4, "n_diff_substep");
         assert_eq!(ep.n_batch, 10, "n_batch");
         assert_eq!(ep.n_inner, 10, "n_inner");
+        // Sprint 3 DD2 SPACE-lite defaults.
+        assert_eq!(ep.space_k_bed, 5.0e-3, "space_k_bed");
+        assert_eq!(ep.space_k_sed, 1.5e-2, "space_k_sed");
+        assert_eq!(ep.h_star, 0.05, "h_star");
+        assert_eq!(ep.spim_variant, SpimVariant::SpaceLite, "spim_variant");
     }
 
     // 4. A RON string without an `erosion` field deserialises with ErosionParams::default().
@@ -281,6 +348,10 @@ mod tests {
                 n_diff_substep: 8,
                 n_batch: 5,
                 n_inner: 20,
+                space_k_bed: 6.0e-3,
+                space_k_sed: 2.0e-2,
+                h_star: 0.04,
+                spim_variant: SpimVariant::Plain,
             },
         };
         let serialized = ron::to_string(&original).expect("serialize failed");
@@ -321,5 +392,48 @@ mod tests {
         assert_eq!(preset.erosion.hillslope_d, 1.0e-3);
         assert_eq!(preset.erosion.n_diff_substep, 4);
         assert_eq!(preset.erosion.n_inner, 10);
+        // Sprint 3 DD2 SPACE-lite fields: missing → defaults.
+        assert_eq!(preset.erosion.space_k_bed, 5.0e-3);
+        assert_eq!(preset.erosion.space_k_sed, 1.5e-2);
+        assert_eq!(preset.erosion.h_star, 0.05);
+        assert_eq!(preset.erosion.spim_variant, SpimVariant::SpaceLite);
+    }
+
+    // 7. Sprint 3 DD2: a Sprint-2-style RON preset (no `spim_variant`, no
+    //    `space_k_*`, no `h_star`) deserialises to SPACE-lite defaults.
+    //    Proves `#[serde(default)]` wiring for every new Sprint 3 field.
+    #[test]
+    fn spim_variant_deserializes_from_legacy_ron() {
+        // Sprint 2-vintage preset: only the Sprint 2 erosion keys are set.
+        let ron_str = r#"IslandArchetypePreset(
+            name: "legacy_sprint_2",
+            island_radius: 0.55,
+            max_relief: 0.85,
+            volcanic_center_count: 1,
+            island_age: Young,
+            prevailing_wind_dir: 0.0,
+            marine_moisture_strength: 0.75,
+            sea_level: 0.30,
+            erosion: (
+                spim_k: 1.5e-3,
+                spim_m: 0.35,
+                spim_n: 1.0,
+                hillslope_d: 1.0e-3,
+                n_diff_substep: 4,
+                n_batch: 10,
+                n_inner: 10,
+            ),
+        )"#;
+        let preset: IslandArchetypePreset =
+            ron::from_str(ron_str).expect("Sprint 2 RON must deserialize under Sprint 3 binary");
+        // Legacy Sprint 2 fields round-trip unchanged.
+        assert_eq!(preset.erosion.spim_k, 1.5e-3);
+        assert_eq!(preset.erosion.spim_m, 0.35);
+        assert_eq!(preset.erosion.spim_n, 1.0);
+        // New Sprint 3 fields fall back to SPACE-lite defaults.
+        assert_eq!(preset.erosion.space_k_bed, 5.0e-3);
+        assert_eq!(preset.erosion.space_k_sed, 1.5e-2);
+        assert_eq!(preset.erosion.h_star, 0.05);
+        assert_eq!(preset.erosion.spim_variant, SpimVariant::SpaceLite);
     }
 }

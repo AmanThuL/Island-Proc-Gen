@@ -27,6 +27,7 @@ pub use geomorph::DerivedGeomorphStage;
 pub use geomorph::ErosionOuterLoop;
 pub use geomorph::HillslopeDiffusionStage;
 pub use geomorph::PitFillStage;
+pub use geomorph::SedimentUpdateStage;
 pub use geomorph::StreamPowerIncisionStage;
 pub use geomorph::TopographyStage;
 pub use hex_projection::HexProjectionStage;

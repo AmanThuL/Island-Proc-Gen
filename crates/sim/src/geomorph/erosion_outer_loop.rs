@@ -22,7 +22,7 @@ use island_core::world::{ErosionBaseline, WorldState};
 
 use crate::geomorph::{
     CoastMaskStage, DerivedGeomorphStage, HillslopeDiffusionStage, PitFillStage,
-    StreamPowerIncisionStage,
+    SedimentUpdateStage, StreamPowerIncisionStage,
 };
 use crate::hydro::{AccumulationStage, BasinsStage, FlowRoutingStage, RiverExtractionStage};
 
@@ -60,6 +60,12 @@ use crate::hydro::{AccumulationStage, BasinsStage, FlowRoutingStage, RiverExtrac
 /// `dyn SimulationStage` type ids.
 pub struct ErosionOuterLoop {
     pub(crate) stream_power: StreamPowerIncisionStage,
+    /// Sprint 3 Task 3.2 placeholder slot — runs between SPIM and hillslope
+    /// inside the inner step. Task 3.3 fills in Qs routing + deposition
+    /// flux; Task 3.2 keeps the `run` a no-op. Field position is
+    /// load-bearing: the `erosion_inner_step_canonical_order` test pins
+    /// the three-stage sequence.
+    pub(crate) sediment_update: SedimentUpdateStage,
     pub(crate) hillslope: HillslopeDiffusionStage,
     pub(crate) coast_mask: CoastMaskStage,
     pub(crate) pit_fill: PitFillStage,
@@ -74,6 +80,7 @@ impl Default for ErosionOuterLoop {
     fn default() -> Self {
         Self {
             stream_power: StreamPowerIncisionStage,
+            sediment_update: SedimentUpdateStage,
             hillslope: HillslopeDiffusionStage,
             coast_mask: CoastMaskStage,
             pit_fill: PitFillStage,
@@ -151,10 +158,17 @@ impl SimulationStage for ErosionOuterLoop {
         }
 
         // ── outer batch loop ──────────────────────────────────────────────────
-        // Byte-for-byte identical to sprint §2 DD3 scheme B pseudo-code.
+        // Sprint 3 Task 3.2 inserts `SedimentUpdateStage` between SPIM and
+        // hillslope; Task 3.2's stage body is a no-op, so this is
+        // behaviourally identical to Sprint 2 DD3 scheme B. Task 3.3 will
+        // fill in the Qs routing + deposition flux inside
+        // `SedimentUpdateStage::run`, at which point the inner step
+        // semantically becomes "erode bedrock, route sediment, smooth
+        // terrain".
         for _batch in 0..n_batch {
             for _inner in 0..n_inner {
-                self.stream_power.run(world)?; // mutates authoritative.height
+                self.stream_power.run(world)?; // mutates authoritative.height + sediment (SpaceLite)
+                self.sediment_update.run(world)?; // Task 3.2 placeholder; Task 3.3 Qs routing
                 self.hillslope.run(world)?; // mutates authoritative.height
             }
             // Default conservative frontier per Sprint 1D Task 1D.2
@@ -198,6 +212,36 @@ mod tests {
             sea_level: 0.25,
             erosion: ErosionParams::default(),
         }
+    }
+
+    /// Sprint 3 Task 3.2 DD3: lock the canonical inner-step order to
+    /// `[stream_power_incision, sediment_update, hillslope_diffusion]`.
+    ///
+    /// Task 3.2 inserts `SedimentUpdateStage` (placeholder) between SPIM
+    /// and hillslope; Task 3.3 fills in Qs routing + deposition flux.
+    /// If a future task silently reorders these three stages in the inner
+    /// loop, this test fails immediately and forces a deliberate update
+    /// — matches the spirit of
+    /// `erosion_outer_loop_uses_canonical_routing_chain` for the outer
+    /// routing chain.
+    #[test]
+    fn erosion_inner_step_canonical_order() {
+        let loop_stage = ErosionOuterLoop::default();
+        let inner_order = [
+            loop_stage.stream_power.name(),
+            loop_stage.sediment_update.name(),
+            loop_stage.hillslope.name(),
+        ];
+        assert_eq!(
+            inner_order,
+            [
+                "stream_power_incision",
+                "sediment_update",
+                "hillslope_diffusion"
+            ],
+            "ErosionOuterLoop inner step order drifted — Sprint 3 DD3 locks \
+             [stream_power_incision, sediment_update, hillslope_diffusion]"
+        );
     }
 
     /// Mechanical lockstep test: assert the stage refs held by
