@@ -496,6 +496,18 @@ pub struct DerivedCaches {
     /// (all-zero when no river hexes exist or when `derived.accumulation` was
     /// absent).
     pub hex_river_crossing_mask: Option<MaskField2D>,
+
+    /// Sprint 3 DD3: per-cell sediment deposition rate `D[p]` produced by
+    /// `SedimentUpdateStage` during the `ErosionOuterLoop` inner step.
+    ///
+    /// `D[p] = max(0, Qs_in[p] − Qs_cap[p])` in normalised flux units; the
+    /// same value that is added to `authoritative.sediment[p]` inside the
+    /// topo-order sweep. Populated every inner iteration; the final value
+    /// after the last inner step is what the `deposition_flux` overlay
+    /// (Task 3.7) and any validation invariants read.
+    ///
+    /// Not part of the save codec — this is pure runtime-derived state.
+    pub deposition_flux: Option<ScalarField2D<f32>>,
 }
 
 // ─── WorldState ──────────────────────────────────────────────────────────────

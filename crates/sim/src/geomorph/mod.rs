@@ -25,6 +25,7 @@ pub use derived_geomorph::DerivedGeomorphStage;
 pub use erosion_outer_loop::ErosionOuterLoop;
 pub use hillslope::HillslopeDiffusionStage;
 pub use pit_fill::PitFillStage;
+pub use sediment::DepositionStage;
 pub use sediment::SedimentUpdateStage;
 pub use stream_power::StreamPowerIncisionStage;
 pub use topography::TopographyStage;

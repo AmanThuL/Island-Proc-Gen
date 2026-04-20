@@ -23,6 +23,7 @@ pub use climate::TemperatureStage;
 pub use ecology::BiomeWeightsStage;
 pub use geomorph::CoastMaskStage;
 pub use geomorph::CoastTypeStage;
+pub use geomorph::DepositionStage;
 pub use geomorph::DerivedGeomorphStage;
 pub use geomorph::ErosionOuterLoop;
 pub use geomorph::HillslopeDiffusionStage;

@@ -132,6 +132,34 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
         StageId::Topography => {
             world.derived.initial_uplift = None;
             world.derived.erosion_baseline = None;
+            // Task 3.3: `derived.deposition_flux` is a byproduct of
+            // `ErosionOuterLoop`'s inner `SedimentUpdateStage`. It is
+            // cleared here (Topography arm) — NOT in the Coastal arm —
+            // because `ErosionOuterLoop` itself invokes
+            // `invalidate_from(Coastal)` mid-batch, and if we cleared
+            // `deposition_flux` there it would be wiped as the last
+            // action of the outer loop (after the final batch's
+            // routing-chain rebuild), leaving consumers with a None
+            // field at the end of a successful pipeline run. Clearing
+            // only on a full Topography-level reset means:
+            //
+            //   * `invalidate_from(Topography)` → df cleared + rerun
+            //     repopulates it (this arm + ErosionOuterLoop output).
+            //   * `invalidate_from(Coastal)` or later without rerun →
+            //     df stays at its last-inner-step value (stale but
+            //     consistent with the pre-invalidation sediment field).
+            //   * `invalidate_from(Coastal)` + `run_from(Coastal)` →
+            //     the downstream ErosionOuterLoop re-run overwrites df
+            //     on its first inner step, so observable semantics
+            //     match the "cleared" intent.
+            //   * Outer loop's own mid-batch `invalidate_from(Coastal)`
+            //     → df preserved, overwritten on next inner step (or
+            //     kept as final state if this was the last batch).
+            //
+            // This is the same "produced by a late stage, safe to
+            // stale-read" pattern that `erosion_baseline` above uses,
+            // just with a different downstream-rerun side effect.
+            world.derived.deposition_flux = None;
         }
 
         // CoastMaskStage: writes derived.coast_mask + derived.shoreline_normal
@@ -378,6 +406,13 @@ mod tests {
         assert!(
             world.derived.hex_river_crossing_mask.is_none(),
             "hex_river_crossing_mask"
+        );
+        // Task 3.3: deposition_flux is cleared by the Topography arm (not
+        // Coastal — see the arm comment in `clear_stage_outputs` and the
+        // dedicated `invalidate_from_coastal_preserves_deposition_flux` test).
+        assert!(
+            world.derived.deposition_flux.is_none(),
+            "deposition_flux must be cleared by invalidate_from(Topography) cascade"
         );
 
         // ── every baked.* field is None ───────────────────────────────────────
@@ -904,6 +939,62 @@ mod tests {
         assert!(
             world.authoritative.sediment.is_none(),
             "authoritative.sediment must be None after invalidate_from(Topography) cascade"
+        );
+    }
+
+    // ── Task 3.3: deposition_flux invalidation ───────────────────────────────
+
+    /// `invalidate_from(Topography)` must clear `derived.deposition_flux`.
+    ///
+    /// The field is cleared under the Topography arm (NOT Coastal), matching
+    /// the `erosion_baseline` placement pattern: both are byproducts of
+    /// `ErosionOuterLoop` which itself calls `invalidate_from(Coastal)` mid-
+    /// batch, so attaching the clear to the Coastal arm would wipe the field
+    /// as the last action of the outer loop (after the final batch's
+    /// routing-chain rebuild) and leave consumers with a None field at the
+    /// end of a successful pipeline run. See the `StageId::Topography` arm
+    /// comment in `clear_stage_outputs` for the full reasoning.
+    ///
+    /// Observable semantics under `invalidate_from(Coastal) + run_from(Coastal)`
+    /// are still correct: the downstream `ErosionOuterLoop` re-run
+    /// overwrites `deposition_flux` on its first inner step, so the
+    /// "coast-level" invalidation's consumers see fresh values.
+    #[test]
+    fn invalidate_from_topography_clears_deposition_flux() {
+        let mut world = run_full(42);
+        assert!(
+            world.derived.deposition_flux.is_some(),
+            "deposition_flux must be Some after a full pipeline run \
+             (erosion inner step populates it)"
+        );
+
+        invalidate_from(&mut world, StageId::Topography);
+
+        assert!(
+            world.derived.deposition_flux.is_none(),
+            "derived.deposition_flux must be None after invalidate_from(Topography)"
+        );
+    }
+
+    /// Defensive: `invalidate_from(Coastal)` must NOT clear
+    /// `derived.deposition_flux`. This is the counterpart to the Topography
+    /// test above — the field lives across Coastal-level invalidations
+    /// because `ErosionOuterLoop`'s own per-batch
+    /// `invalidate_from(Coastal)` mid-loop would otherwise wipe it as the
+    /// last action of a successful pipeline run. Downstream consumers can
+    /// rely on the field being populated after any pipeline run that
+    /// reaches `ErosionOuterLoop`.
+    #[test]
+    fn invalidate_from_coastal_preserves_deposition_flux() {
+        let mut world = run_full(42);
+        assert!(world.derived.deposition_flux.is_some());
+
+        invalidate_from(&mut world, StageId::Coastal);
+
+        assert!(
+            world.derived.deposition_flux.is_some(),
+            "derived.deposition_flux must be preserved across invalidate_from(Coastal) \
+             — see ErosionOuterLoop mid-batch invalidation rationale"
         );
     }
 }
