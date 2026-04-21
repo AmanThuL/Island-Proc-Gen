@@ -271,6 +271,7 @@ mod tests {
             marine_moisture_strength: 1.0,
             sea_level: 0.0,
             erosion: Default::default(),
+            climate: Default::default(),
         }
     }
 
@@ -439,9 +440,17 @@ mod tests {
     /// 3 % bar still reflects the spec acceptance. If this test fails, the
     /// suitability curves have regressed toward the pre-2.5.Ja state where
     /// `volcanic_single` collapsed to only 3 dominant biomes.
+    ///
+    /// Uses `V2Raymarch` to lock the Sprint 1B–2 biome-diversity acceptance
+    /// baseline. Sprint 3 V3Lfpm changes the precipitation distribution and
+    /// consequently the biome mix; a separate `_v3` acceptance test covers
+    /// the V3 path (Task 3.10). Forcing V2 here keeps this test bit-exact
+    /// with pre-3.4 pipeline runs.
     #[test]
     fn volcanic_single_biome_diversity_at_least_5_at_3pct() {
-        use island_core::preset::{IslandAge, IslandArchetypePreset};
+        use island_core::preset::{
+            ClimateParams, IslandAge, IslandArchetypePreset, PrecipitationVariant,
+        };
 
         let preset = IslandArchetypePreset {
             name: "volcanic_single".into(),
@@ -453,6 +462,12 @@ mod tests {
             marine_moisture_strength: 0.75,
             sea_level: 0.30,
             erosion: Default::default(),
+            // Locked to V2Raymarch: V3Lfpm produces a different
+            // precipitation distribution that changes the biome mix.
+            climate: ClimateParams {
+                precipitation_variant: PrecipitationVariant::V2Raymarch,
+                ..ClimateParams::default()
+            },
         };
 
         let mut world = WorldState::new(Seed(42), preset, Resolution::new(128, 128));

@@ -1059,6 +1059,7 @@ fn load_preset() -> IslandArchetypePreset {
                 marine_moisture_strength: 0.7,
                 sea_level: 0.3,
                 erosion: island_core::preset::ErosionParams::default(),
+                climate: island_core::preset::ClimateParams::default(),
             }
         }
     }

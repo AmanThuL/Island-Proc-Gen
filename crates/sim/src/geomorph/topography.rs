@@ -331,6 +331,7 @@ mod tests {
             marine_moisture_strength: 0.5,
             sea_level: 0.3,
             erosion: Default::default(),
+            climate: Default::default(),
         }
     }
 
@@ -345,6 +346,7 @@ mod tests {
             marine_moisture_strength: 0.5,
             sea_level: 0.3,
             erosion: Default::default(),
+            climate: Default::default(),
         }
     }
 

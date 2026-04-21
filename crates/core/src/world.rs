@@ -508,6 +508,17 @@ pub struct DerivedCaches {
     ///
     /// Not part of the save codec — this is pure runtime-derived state.
     pub deposition_flux: Option<ScalarField2D<f32>>,
+
+    /// Sprint 3 DD4: LFPM upwind-sweep order cached across slider reruns at
+    /// fixed wind direction. Each element is a flat row-major cell index
+    /// `iy * width + ix`. Sorted ascending by `wind_phase = -wind · position`
+    /// so upstream cells are processed before downstream cells in the sweep.
+    ///
+    /// Invalidated when `preset.prevailing_wind_dir` changes, via the
+    /// `Precipitation` arm of `clear_stage_outputs` in `sim::invalidation`.
+    /// `None` until the first V3 sweep run. Reused on repeated calls with
+    /// the same wind direction.
+    pub precipitation_sweep_order: Option<Vec<usize>>,
 }
 
 // ─── WorldState ──────────────────────────────────────────────────────────────
@@ -573,6 +584,7 @@ mod tests {
             marine_moisture_strength: 0.5,
             sea_level: 0.3,
             erosion: Default::default(),
+            climate: Default::default(),
         }
     }
 

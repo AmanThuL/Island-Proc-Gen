@@ -58,6 +58,7 @@ use island_core::world::WorldState;
 ///     // n_batch = 0: ErosionOuterLoop becomes a no-op so this small
 ///     // synthetic grid doesn't trigger the sea-crossing invariant.
 ///     erosion: ErosionParams { n_batch: 0, ..Default::default() },
+///     climate: Default::default(),
 /// };
 /// let mut world = WorldState::new(Seed(42), preset, Resolution::new(32, 32));
 /// let pipeline = default_pipeline();
@@ -236,8 +237,13 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
         }
 
         // PrecipitationStage: writes baked.precipitation.
+        // Sprint 3 DD4: also clears derived.precipitation_sweep_order so
+        // the next V3 run rebuilds the sweep cache. Any slider-driven
+        // invalidate_from(Precipitation) (e.g. wind direction change)
+        // triggers a fresh sort.
         StageId::Precipitation => {
             world.baked.precipitation = None;
+            world.derived.precipitation_sweep_order = None;
         }
 
         // FogLikelihoodStage: writes derived.fog_likelihood.
@@ -303,6 +309,7 @@ mod tests {
             marine_moisture_strength: 0.5,
             sea_level: 0.3,
             erosion: Default::default(),
+            climate: Default::default(),
         }
     }
 

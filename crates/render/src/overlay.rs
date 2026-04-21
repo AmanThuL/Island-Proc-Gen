@@ -643,6 +643,7 @@ mod tests {
             marine_moisture_strength: 0.5,
             sea_level: 0.3,
             erosion: Default::default(),
+            climate: Default::default(),
         };
         let mut world = WorldState::new(Seed(0), preset, Resolution::new(16, 16));
 

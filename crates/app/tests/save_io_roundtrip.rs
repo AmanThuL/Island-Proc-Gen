@@ -21,6 +21,7 @@ fn make_test_preset() -> IslandArchetypePreset {
         marine_moisture_strength: 0.5,
         sea_level: 0.3,
         erosion: Default::default(),
+        climate: Default::default(),
     }
 }
 

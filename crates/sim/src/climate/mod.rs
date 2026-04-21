@@ -8,6 +8,7 @@
 pub mod common;
 pub mod fog;
 pub mod precipitation;
+pub mod precipitation_v3;
 pub mod temperature;
 
 pub use fog::FogLikelihoodStage;

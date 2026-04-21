@@ -271,6 +271,7 @@ mod tests {
                 spim_variant: variant,
                 ..ErosionParams::default()
             },
+            climate: Default::default(),
         }
     }
 

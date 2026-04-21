@@ -157,6 +157,7 @@ mod tests {
             marine_moisture_strength: 0.75,
             sea_level: 0.30,
             erosion: Default::default(),
+            climate: Default::default(),
         };
         assert_eq!(p, expected);
     }
@@ -175,6 +176,7 @@ mod tests {
             marine_moisture_strength: 0.70,
             sea_level: 0.32,
             erosion: Default::default(),
+            climate: Default::default(),
         };
         assert_eq!(p, expected);
     }
@@ -193,6 +195,7 @@ mod tests {
             marine_moisture_strength: 0.80,
             sea_level: 0.28,
             erosion: Default::default(),
+            climate: Default::default(),
         };
         assert_eq!(p, expected);
     }
@@ -235,6 +238,7 @@ mod tests {
             marine_moisture_strength: 0.75,
             sea_level: 0.30,
             erosion: Default::default(),
+            climate: Default::default(),
         };
         assert_eq!(p, expected);
     }
@@ -253,6 +257,7 @@ mod tests {
             marine_moisture_strength: 0.70,
             sea_level: 0.32,
             erosion: Default::default(),
+            climate: Default::default(),
         };
         assert_eq!(p, expected);
     }

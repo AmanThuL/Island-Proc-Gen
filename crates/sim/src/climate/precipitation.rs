@@ -1,13 +1,14 @@
-//! `PrecipitationStage` (DD2) — upwind raymarch orographic precipitation
-//! proxy.
+//! `PrecipitationStage` — orographic precipitation dispatch.
 //!
-//! For each target cell `p`, trace a ray `N` cells upwind (in the
-//! direction the wind is coming from). Starting with marine moisture
-//! charged at the upstream end, march back toward `p`: ascents condense
-//! moisture into accumulated precipitation, descents apply rain-shadow
-//! attenuation to what has already been condensed. The final
-//! accumulation is the raw precipitation at `p`; all cells are then
-//! normalised to `[0, 1]`.
+//! Dispatches on `world.preset.climate.precipitation_variant`:
+//!
+//! * [`PrecipitationVariant::V2Raymarch`] — Sprint 1B per-cell upwind
+//!   raymarch. Preserved for Task 3.10 baseline regen and ablation
+//!   studies. Bit-exact with the Sprint 1B binary on identical inputs.
+//!
+//! * [`PrecipitationVariant::V3Lfpm`] — Sprint 3 LFPM-inspired
+//!   sequential upwind sweep (default). See `precipitation_v3.rs` for
+//!   the algorithm and constants.
 //!
 //! # Sign convention
 //!
@@ -22,9 +23,11 @@
 use anyhow::anyhow;
 use island_core::field::ScalarField2D;
 use island_core::pipeline::SimulationStage;
+use island_core::preset::PrecipitationVariant;
 use island_core::world::WorldState;
 
 use crate::climate::common::{compute_distance_to_mask, grad_scalar_at, signed_uplift, wind_unit};
+use crate::climate::precipitation_v3;
 
 // ── tunable constants (v1 hardcoded; promoted to runtime config in Task 1B.9)
 
@@ -56,16 +59,26 @@ impl SimulationStage for PrecipitationStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
+        match world.preset.climate.precipitation_variant {
+            PrecipitationVariant::V2Raymarch => self.run_v2_raymarch(world),
+            PrecipitationVariant::V3Lfpm => self.run_v3_lfpm(world),
+        }
+    }
+}
+
+impl PrecipitationStage {
+    /// Sprint 1B V2 upwind raymarch — bit-exact fallback path.
+    fn run_v2_raymarch(&self, world: &mut WorldState) -> anyhow::Result<()> {
         let z = world
             .derived
             .z_filled
             .as_ref()
-            .ok_or_else(|| anyhow!("PrecipitationStage: z_filled is None"))?;
+            .ok_or_else(|| anyhow!("PrecipitationStage(V2): z_filled is None"))?;
         let coast = world
             .derived
             .coast_mask
             .as_ref()
-            .ok_or_else(|| anyhow!("PrecipitationStage: coast_mask is None"))?;
+            .ok_or_else(|| anyhow!("PrecipitationStage(V2): coast_mask is None"))?;
 
         let w = z.width;
         let h = z.height;
@@ -108,6 +121,46 @@ impl SimulationStage for PrecipitationStage {
         for v in precipitation.data.iter_mut() {
             *v = (*v / max).clamp(0.0, 1.0);
         }
+
+        world.baked.precipitation = Some(precipitation);
+        Ok(())
+    }
+
+    /// Sprint 3 DD4 V3 LFPM sequential sweep.
+    fn run_v3_lfpm(&self, world: &mut WorldState) -> anyhow::Result<()> {
+        let z = world
+            .derived
+            .z_filled
+            .as_ref()
+            .ok_or_else(|| anyhow!("PrecipitationStage(V3): z_filled is None"))?
+            .clone();
+        let coast = world
+            .derived
+            .coast_mask
+            .as_ref()
+            .ok_or_else(|| anyhow!("PrecipitationStage(V3): coast_mask is None"))?;
+
+        let w = z.width;
+        let h = z.height;
+        let wind = wind_unit(world.preset.prevailing_wind_dir);
+
+        let dist_to_coast = compute_distance_to_mask(&coast.is_coast, w, h);
+
+        let q_0 = world.preset.climate.q_0;
+        let tau_c = world.preset.climate.tau_c;
+        let tau_f = world.preset.climate.tau_f;
+
+        // Pass the sweep-order cache from derived so it is reused across
+        // reruns at the same wind direction.
+        let precipitation = precipitation_v3::run_v3_sweep(
+            &z,
+            &dist_to_coast,
+            wind,
+            q_0,
+            tau_c,
+            tau_f,
+            &mut world.derived.precipitation_sweep_order,
+        );
 
         world.baked.precipitation = Some(precipitation);
         Ok(())
@@ -179,10 +232,13 @@ fn sample_nearest_cell(fx: f32, fy: f32, w: u32, h: u32) -> (u32, u32) {
 mod tests {
     use super::*;
     use island_core::field::{MaskField2D, ScalarField2D};
-    use island_core::preset::{IslandAge, IslandArchetypePreset};
+    use island_core::preset::{
+        ClimateParams, IslandAge, IslandArchetypePreset, PrecipitationVariant,
+    };
     use island_core::seed::Seed;
     use island_core::world::{CoastMask, Resolution, WorldState};
 
+    /// V2 raymarch preset — retains the Sprint 1B test behaviour exactly.
     fn preset(wind_dir: f32) -> IslandArchetypePreset {
         IslandArchetypePreset {
             name: "precip_test".into(),
@@ -194,6 +250,10 @@ mod tests {
             marine_moisture_strength: 1.0,
             sea_level: 0.0,
             erosion: Default::default(),
+            climate: ClimateParams {
+                precipitation_variant: PrecipitationVariant::V2Raymarch,
+                ..ClimateParams::default()
+            },
         }
     }
 

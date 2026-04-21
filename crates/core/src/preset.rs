@@ -31,6 +31,86 @@ pub enum IslandAge {
     Old,
 }
 
+// ─── PrecipitationVariant / ClimateParams ────────────────────────────────────
+
+/// Sprint 3 DD4: which precipitation algorithm `PrecipitationStage` runs.
+///
+/// * [`PrecipitationVariant::V2Raymarch`] — Sprint 1B per-cell upwind
+///   raymarch fallback. Preserved for Task 3.10 baseline regeneration:
+///   `preset_override.climate.precipitation_variant = Some(V2Raymarch)`.
+/// * [`PrecipitationVariant::V3Lfpm`] — Sprint 3 LFPM-inspired sequential
+///   upwind sweep. Default for all new runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum PrecipitationVariant {
+    /// Sprint 1B upwind raymarch fallback.
+    V2Raymarch,
+    /// Sprint 3 LFPM-inspired sequential sweep. Default.
+    #[default]
+    V3Lfpm,
+}
+
+/// Sprint 3 DD4: parameters for the LFPM-inspired precipitation model
+/// (`PrecipitationVariant::V3Lfpm`).
+///
+/// Only the 4 new fields live here. `prevailing_wind_dir` and
+/// `marine_moisture_strength` remain top-level on [`IslandArchetypePreset`]
+/// for RON compatibility; a future sprint may consolidate them here.
+///
+/// All fields have `#[serde(default = "…")]` so existing `.ron` presets
+/// that pre-date Sprint 3 parse without a `climate` field and receive the
+/// locked v1 defaults automatically.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ClimateParams {
+    /// Which precipitation algorithm `PrecipitationStage` runs.
+    /// `V3Lfpm` is the default.
+    #[serde(default)]
+    pub precipitation_variant: PrecipitationVariant,
+
+    /// Initial water-vapour mixing ratio at the upwind boundary.
+    /// Dimensionless proxy; default `1.0`.
+    #[serde(default = "default_q_0")]
+    pub q_0: f32,
+
+    /// Condensation time scale `τ_c` (explicit Euler with `CONDENSATION_DT`).
+    /// Smaller values → faster condensation on windward slopes; default `0.15`.
+    #[serde(default = "default_tau_c")]
+    pub tau_c: f32,
+
+    /// Generic fallout time scale `τ_f`.
+    /// Smaller values → stronger rain shadow; default `0.60`.
+    #[serde(default = "default_tau_f")]
+    pub tau_f: f32,
+}
+
+// Serde defaults for `ClimateParams`. Values must stay bit-identical to
+// `sim::climate::precipitation_v3::{Q_0_DEFAULT, TAU_C_DEFAULT,
+// TAU_F_DEFAULT}` (the canonical home; reviewer S3). The duplication is
+// structural: invariant #1 forbids `core` depending on `sim`, so these
+// values cannot be imported. Sprint 3.8's ParamsPanel work surfaces this
+// single-source-of-truth question again; resolution there (or in a later
+// sprint) could be to relocate the constants into `core::preset` and
+// re-export from `precipitation_v3`. Not worth the move for Task 3.4.
+fn default_q_0() -> f32 {
+    1.0
+}
+fn default_tau_c() -> f32 {
+    0.15
+}
+fn default_tau_f() -> f32 {
+    0.60
+}
+
+impl Default for ClimateParams {
+    fn default() -> Self {
+        Self {
+            precipitation_variant: PrecipitationVariant::default(),
+            q_0: default_q_0(),
+            tau_c: default_tau_c(),
+            tau_f: default_tau_f(),
+        }
+    }
+}
+
 /// Sprint 3 DD2: which Stream Power Incision Model variant to use inside
 /// [`crate::pipeline::SimulationPipeline`].
 ///
@@ -245,6 +325,12 @@ pub struct IslandArchetypePreset {
     /// defaults so pre-Sprint-2 `.ron` files parse without an `erosion` key.
     #[serde(default)]
     pub erosion: ErosionParams,
+
+    /// Sprint 3 DD4: precipitation model variant + LFPM tuning parameters.
+    /// Pre-Sprint-3 `.ron` files without a `climate` key deserialize to
+    /// [`ClimateParams::default()`] (`V3Lfpm` + locked defaults).
+    #[serde(default)]
+    pub climate: ClimateParams,
 }
 
 // ─── tests ────────────────────────────────────────────────────────────────────
@@ -264,6 +350,7 @@ mod tests {
             marine_moisture_strength: 0.75,
             sea_level: 0.30,
             erosion: ErosionParams::default(),
+            climate: ClimateParams::default(),
         }
     }
 
@@ -353,6 +440,7 @@ mod tests {
                 h_star: 0.04,
                 spim_variant: SpimVariant::Plain,
             },
+            climate: ClimateParams::default(),
         };
         let serialized = ron::to_string(&original).expect("serialize failed");
         let deserialized: IslandArchetypePreset =
@@ -435,5 +523,77 @@ mod tests {
         assert_eq!(preset.erosion.space_k_sed, 1.5e-2);
         assert_eq!(preset.erosion.h_star, 0.05);
         assert_eq!(preset.erosion.spim_variant, SpimVariant::SpaceLite);
+    }
+
+    // 8. Sprint 3 DD4: ClimateParams defaults match the locked constants.
+    #[test]
+    fn climate_params_defaults_match_locked_constants() {
+        let cp = ClimateParams::default();
+        assert_eq!(cp.precipitation_variant, PrecipitationVariant::V3Lfpm);
+        assert_eq!(cp.q_0, 1.0, "q_0");
+        assert_eq!(cp.tau_c, 0.15, "tau_c");
+        assert_eq!(cp.tau_f, 0.60, "tau_f");
+    }
+
+    // 9. Sprint 3 DD4: a Sprint-2-vintage RON preset (no `climate:` field)
+    //    deserialises to ClimateParams::default() with V3Lfpm and all locked defaults.
+    #[test]
+    fn climate_params_deserializes_from_legacy_ron() {
+        let ron_str = r#"IslandArchetypePreset(
+            name: "legacy_sprint_2",
+            island_radius: 0.55,
+            max_relief: 0.85,
+            volcanic_center_count: 1,
+            island_age: Young,
+            prevailing_wind_dir: 0.0,
+            marine_moisture_strength: 0.75,
+            sea_level: 0.30,
+            erosion: (
+                spim_k: 1.5e-3,
+                spim_m: 0.35,
+                spim_n: 1.0,
+                hillslope_d: 1.0e-3,
+                n_diff_substep: 4,
+                n_batch: 10,
+                n_inner: 10,
+            ),
+        )"#;
+        let preset: IslandArchetypePreset =
+            ron::from_str(ron_str).expect("Sprint 2 RON must deserialize under Sprint 3 binary");
+        // Missing `climate` field must produce ClimateParams::default().
+        assert_eq!(
+            preset.climate,
+            ClimateParams::default(),
+            "missing climate field must produce ClimateParams::default()"
+        );
+        assert_eq!(
+            preset.climate.precipitation_variant,
+            PrecipitationVariant::V3Lfpm
+        );
+        assert_eq!(preset.climate.q_0, 1.0);
+        assert_eq!(preset.climate.tau_c, 0.15);
+        assert_eq!(preset.climate.tau_f, 0.60);
+    }
+
+    // 10. Sprint 3 DD4: V3Lfpm is the default variant for new presets.
+    #[test]
+    fn v3_default_is_selected_when_preset_missing_climate_section() {
+        let ron_str = r#"IslandArchetypePreset(
+            name: "no_climate",
+            island_radius: 0.5,
+            max_relief: 0.8,
+            volcanic_center_count: 1,
+            island_age: Young,
+            prevailing_wind_dir: 1.5708,
+            marine_moisture_strength: 0.75,
+            sea_level: 0.30,
+        )"#;
+        let preset: IslandArchetypePreset =
+            ron::from_str(ron_str).expect("preset without climate field must parse");
+        assert_eq!(
+            preset.climate.precipitation_variant,
+            PrecipitationVariant::V3Lfpm,
+            "V3Lfpm must be default when climate section is absent"
+        );
     }
 }
