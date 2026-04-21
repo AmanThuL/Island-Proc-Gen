@@ -94,6 +94,21 @@ pub enum PaletteId {
     /// Sprint 2 coastal geomorphology categorical: index `0..=3` → COAST_TYPE_TABLE;
     /// index `0xFF` (Unknown sentinel) and any other out-of-range value → transparent.
     CoastType,
+    /// Sprint 3 fog / cloud-forest water input palette: a single-hue blue ramp
+    /// from near-white (low fog contribution) to deep blue (high fog contribution).
+    /// `t = 0.0` → pale blue-white; `t = 1.0` → deep saturated blue.
+    Blues,
+    /// Sprint 3 Task 3.7 LavaDelta mask palette.
+    ///
+    /// Used with `ValueRange::Fixed(0.0, 5.0)` on the `coast_type` field.
+    /// Only discriminant 4 (LavaDelta) is rendered — all other discriminants
+    /// produce transparent pixels, effectively masking out every coast type
+    /// except LavaDelta so users can inspect its spatial distribution in
+    /// isolation.
+    ///
+    /// * `t = 4.0 / 5.0` (discriminant 4, LavaDelta) → `COAST_TYPE_TABLE[4]`, opaque.
+    /// * All other `t` values → `[0.0, 0.0, 0.0, 0.0]`, transparent.
+    LavaDeltaMask,
 }
 
 // ─── Convenience converters ──────────────────────────────────────────────────
@@ -277,6 +292,34 @@ pub fn sample_f32(palette: PaletteId, t: f32) -> [f32; 4] {
                 COAST_TYPE_TABLE[idx]
             } else {
                 [0.0, 0.0, 0.0, 0.0] // transparent for Unknown and out-of-range
+            }
+        }
+
+        // Single-hue blue ramp: near-white at `t = 0` to deep saturated blue at
+        // `t = 1`. Chosen to be perceptually distinct from the Viridis and Turbo
+        // palettes while clearly encoding "water / moisture" semantics. Not
+        // pixel-locked to `palette_reference.jpg`; the ramp is procedural.
+        PaletteId::Blues => {
+            // Endpoints: pale blue-white (low) → deep blue (high).
+            // lo = [0.87, 0.92, 0.97, 1.0]  (near-white steel-blue tint)
+            // hi = [0.03, 0.19, 0.42, 1.0]  (deep navy blue)
+            const BLUES_LO: [f32; 4] = [0.87, 0.92, 0.97, 1.0];
+            const BLUES_HI: [f32; 4] = [0.03, 0.19, 0.42, 1.0];
+            lerp_f32(BLUES_LO, BLUES_HI, t)
+        }
+
+        // LavaDelta mask: renders only discriminant 4 (LavaDelta) opaque;
+        // all other discriminants (0..=3 and sentinel 5+) are transparent.
+        // Paired with `ValueRange::Fixed(0.0, 5.0)` so `t = disc / 5`:
+        //   disc 4 → t = 0.8 → idx = (0.8 * 5.0) as usize = 4 → LavaDelta.
+        //   disc 0..=3 → idx 0..=3 → transparent.
+        //   disc 5+ (0xFF sentinel clamped to 1.0) → idx ≥ 5 → transparent.
+        PaletteId::LavaDeltaMask => {
+            let idx = (t * 5.0) as usize;
+            if idx == 4 {
+                COAST_TYPE_TABLE[4] // LavaDelta colour, opaque
+            } else {
+                [0.0, 0.0, 0.0, 0.0] // transparent for all non-LavaDelta discriminants
             }
         }
     }

@@ -124,10 +124,11 @@ pub struct OverlayRegistry {
 }
 
 impl OverlayRegistry {
-    /// Return the Sprint 2.5 overlay registry — 6 Sprint 1A geomorph
+    /// Return the Sprint 3 overlay registry — 6 Sprint 1A geomorph
     /// overlays + 6 Sprint 1B climate / ecology / hex overlays + 1 Sprint 2
     /// coastal geomorphology overlay + 2 Sprint 2.5 hex debug overlays +
-    /// 1 Sprint 2.5.C river crossing mask overlay, total 16.
+    /// 1 Sprint 2.5.C river crossing mask overlay + 4 Sprint 3 sediment /
+    /// climate overlays, total 20.
     ///
     /// `final_elevation` reads `z_filled` (not `height`) —
     /// `authoritative.height` stores `z_raw` pre-pit-fill; the render
@@ -135,7 +136,7 @@ impl OverlayRegistry {
     /// `final_elevation` is visible by default; everything else is
     /// hidden so the user can toggle overlays without fighting alpha
     /// stacking.
-    pub fn sprint_2_5_defaults() -> Self {
+    pub fn sprint_3_defaults() -> Self {
         Self {
             entries: vec![
                 // ── Sprint 1A (geomorph + hydro) ──────────────────────
@@ -309,6 +310,60 @@ impl OverlayRegistry {
                     visible: false,
                     alpha: 0.6,
                 },
+                // ── Sprint 3 sediment / climate overlays ──────────────
+                // `sediment_thickness` reads the authoritative sediment field
+                // (ScalarAuthoritative). Fixed(0.0, 1.0) matches the
+                // normalised [0, 1] sediment range written by Sprint 3.3
+                // DepositionStage.
+                OverlayDescriptor {
+                    id: "sediment_thickness",
+                    label: "Sediment thickness",
+                    source: OverlaySource::ScalarAuthoritative("sediment"),
+                    palette: PaletteId::Turbo,
+                    value_range: ValueRange::Fixed(0.0, 1.0),
+                    visible: false,
+                    alpha: 0.6,
+                },
+                // `deposition_flux` is `derived.deposition_flux`, the per-cell
+                // D[p] written after the last SPACE-lite inner step.
+                // LogCompressedClampPercentile(0.99): like flow_accumulation,
+                // deposition has a long tail driven by a few delta cells.
+                OverlayDescriptor {
+                    id: "deposition_flux",
+                    label: "Deposition flux",
+                    source: OverlaySource::ScalarDerived("deposition_flux"),
+                    palette: PaletteId::Viridis,
+                    value_range: ValueRange::LogCompressedClampPercentile(0.99),
+                    visible: false,
+                    alpha: 0.6,
+                },
+                // `fog_water_input` is the per-cell fog-derived moisture
+                // contribution from FogStage (Task 3.5). Auto range: the
+                // absolute magnitude depends on FOG_WATER_GAIN and the
+                // fog_likelihood distribution.
+                OverlayDescriptor {
+                    id: "fog_water_input",
+                    label: "Fog water input",
+                    source: OverlaySource::ScalarDerived("fog_water_input"),
+                    palette: PaletteId::Blues,
+                    value_range: ValueRange::Auto,
+                    visible: false,
+                    alpha: 0.6,
+                },
+                // `lava_delta_mask` reuses the `coast_type` field with the
+                // LavaDeltaMask palette, which renders only discriminant 4
+                // opaque — all other coast types and the 0xFF sentinel are
+                // transparent. Paired with Fixed(0.0, 5.0) so the normalisation
+                // math aligns with the 5-bin CoastType encoding.
+                OverlayDescriptor {
+                    id: "lava_delta_mask",
+                    label: "Lava delta mask",
+                    source: OverlaySource::ScalarDerived("coast_type"),
+                    palette: PaletteId::LavaDeltaMask,
+                    value_range: ValueRange::Fixed(0.0, 5.0),
+                    visible: false,
+                    alpha: 0.6,
+                },
             ],
         }
     }
@@ -353,7 +408,7 @@ impl OverlayRegistry {
 
 impl Default for OverlayRegistry {
     fn default() -> Self {
-        Self::sprint_2_5_defaults()
+        Self::sprint_3_defaults()
     }
 }
 
@@ -445,6 +500,29 @@ pub(crate) fn resolve_scalar_source<'w>(
             .as_ref()
             .map(ResolvedField::Mask),
 
+        // Sprint 3 authoritative field: sediment thickness.
+        // `ScalarAuthoritative` keys are resolved here, string confined to
+        // this file per invariant #8. Returns `None` before Sprint 3 stages
+        // have run (field stays `None` in Sprint 1A / 1B pipelines).
+        ScalarAuthoritative("sediment") => world
+            .authoritative
+            .sediment
+            .as_ref()
+            .map(ResolvedField::F32),
+
+        // Sprint 3 derived scalars.
+        ScalarDerived("deposition_flux") => world
+            .derived
+            .deposition_flux
+            .as_ref()
+            .map(ResolvedField::F32),
+
+        ScalarDerived("fog_water_input") => world
+            .derived
+            .fog_water_input
+            .as_ref()
+            .map(ResolvedField::F32),
+
         // Unknown / not-yet-populated sources silently return None so
         // the renderer skips rather than panicking on a missing field.
         _ => None,
@@ -458,14 +536,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registry_has_16_sprint_2_5_defaults() {
-        assert_eq!(OverlayRegistry::sprint_2_5_defaults().all().len(), 16);
+    fn registry_has_20_sprint_3_defaults() {
+        assert_eq!(OverlayRegistry::sprint_3_defaults().all().len(), 20);
     }
 
     #[test]
     fn overlay_descriptor_alpha_default_is_0_6() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
-        // Every descriptor in sprint_2_5_defaults uses alpha = 0.6.
+        let reg = OverlayRegistry::sprint_3_defaults();
+        // Every descriptor in sprint_3_defaults uses alpha = 0.6.
         for d in reg.all() {
             assert!(
                 (d.alpha - 0.6).abs() < f32::EPSILON,
@@ -478,7 +556,7 @@ mod tests {
 
     #[test]
     fn coast_type_descriptor_is_correct() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
         let d = reg
             .by_id("coast_type")
             .expect("coast_type overlay must exist");
@@ -504,7 +582,7 @@ mod tests {
 
     #[test]
     fn by_id_queries_all_sprint_1a_defaults() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
         assert!(reg.by_id("initial_uplift").is_some());
         assert!(reg.by_id("final_elevation").is_some());
         assert!(reg.by_id("slope").is_some());
@@ -515,7 +593,7 @@ mod tests {
 
     #[test]
     fn by_id_queries_all_sprint_1b_defaults() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
         assert!(reg.by_id("precipitation").is_some());
         assert!(reg.by_id("temperature").is_some());
         assert!(reg.by_id("soil_moisture").is_some());
@@ -526,13 +604,13 @@ mod tests {
 
     #[test]
     fn by_id_unknown_returns_none() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
         assert!(reg.by_id("nope").is_none());
     }
 
     #[test]
     fn set_visibility_changes_flag() {
-        let mut reg = OverlayRegistry::sprint_2_5_defaults();
+        let mut reg = OverlayRegistry::sprint_3_defaults();
         assert!(!reg.by_id("initial_uplift").unwrap().visible);
         reg.set_visibility("initial_uplift", true);
         assert!(reg.by_id("initial_uplift").unwrap().visible);
@@ -541,13 +619,13 @@ mod tests {
     // Sprint 1A defaults: only final_elevation is visible → count == 1.
     #[test]
     fn visible_entries_filters() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
         assert_eq!(reg.visible_entries().count(), 1);
     }
 
     #[test]
     fn source_field_keys_match_sprint_1a_plan() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
 
         assert_eq!(
             reg.by_id("initial_uplift").unwrap().source,
@@ -579,7 +657,7 @@ mod tests {
     // Dedicated guard: future refactorers must not silently revert to height.
     #[test]
     fn final_elevation_not_authoritative_height() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
         let d = reg.by_id("final_elevation").unwrap();
         assert_ne!(d.source, OverlaySource::ScalarAuthoritative("height"));
         assert_eq!(d.source, OverlaySource::ScalarDerived("z_filled"));
@@ -587,7 +665,7 @@ mod tests {
 
     #[test]
     fn flow_accumulation_uses_log_compressed_clamp_percentile() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
         assert_eq!(
             reg.by_id("flow_accumulation").unwrap().value_range,
             ValueRange::LogCompressedClampPercentile(0.99),
@@ -597,7 +675,7 @@ mod tests {
 
     #[test]
     fn river_network_uses_binary_blue() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
         let d = reg.by_id("river_network").unwrap();
         assert_eq!(d.palette, PaletteId::BinaryBlue);
         assert_eq!(d.source, OverlaySource::Mask("river_mask"));
@@ -605,7 +683,7 @@ mod tests {
 
     #[test]
     fn sprint_2_5_hex_debug_overlay_descriptors_exist() {
-        let reg = OverlayRegistry::sprint_2_5_defaults();
+        let reg = OverlayRegistry::sprint_3_defaults();
 
         let d = reg
             .by_id("hex_projection_error")
@@ -695,5 +773,206 @@ mod tests {
         // Negative field_min treated as 0 before ln.
         let (lo, _hi) = ValueRange::LogCompressed.resolve(-5.0, 10.0);
         assert!((lo - 0.0).abs() < 1e-5, "lo={lo}");
+    }
+
+    // ── Sprint 3 Task 3.7: new overlay descriptors ────────────────────────────
+
+    #[test]
+    fn sprint_3_defaults_includes_sediment_thickness_descriptor() {
+        let reg = OverlayRegistry::sprint_3_defaults();
+        let d = reg
+            .by_id("sediment_thickness")
+            .expect("sediment_thickness overlay must exist");
+        assert_eq!(
+            d.source,
+            OverlaySource::ScalarAuthoritative("sediment"),
+            "sediment_thickness must source ScalarAuthoritative(\"sediment\")"
+        );
+        assert_eq!(
+            d.palette,
+            PaletteId::Turbo,
+            "sediment_thickness palette must be Turbo"
+        );
+        assert_eq!(
+            d.value_range,
+            ValueRange::Fixed(0.0, 1.0),
+            "sediment_thickness value_range must be Fixed(0.0, 1.0)"
+        );
+        assert!(!d.visible, "sediment_thickness must default to hidden");
+    }
+
+    #[test]
+    fn sprint_3_defaults_includes_deposition_flux_descriptor() {
+        let reg = OverlayRegistry::sprint_3_defaults();
+        let d = reg
+            .by_id("deposition_flux")
+            .expect("deposition_flux overlay must exist");
+        assert_eq!(
+            d.source,
+            OverlaySource::ScalarDerived("deposition_flux"),
+            "deposition_flux must source ScalarDerived(\"deposition_flux\")"
+        );
+        assert_eq!(
+            d.palette,
+            PaletteId::Viridis,
+            "deposition_flux palette must be Viridis"
+        );
+        assert_eq!(
+            d.value_range,
+            ValueRange::LogCompressedClampPercentile(0.99),
+            "deposition_flux value_range must be LogCompressedClampPercentile(0.99)"
+        );
+        assert!(!d.visible, "deposition_flux must default to hidden");
+    }
+
+    #[test]
+    fn sprint_3_defaults_includes_fog_water_input_descriptor() {
+        let reg = OverlayRegistry::sprint_3_defaults();
+        let d = reg
+            .by_id("fog_water_input")
+            .expect("fog_water_input overlay must exist");
+        assert_eq!(
+            d.source,
+            OverlaySource::ScalarDerived("fog_water_input"),
+            "fog_water_input must source ScalarDerived(\"fog_water_input\")"
+        );
+        assert_eq!(
+            d.palette,
+            PaletteId::Blues,
+            "fog_water_input palette must be Blues"
+        );
+        assert_eq!(
+            d.value_range,
+            ValueRange::Auto,
+            "fog_water_input value_range must be Auto"
+        );
+        assert!(!d.visible, "fog_water_input must default to hidden");
+    }
+
+    #[test]
+    fn sprint_3_defaults_includes_lava_delta_mask_descriptor() {
+        let reg = OverlayRegistry::sprint_3_defaults();
+        let d = reg
+            .by_id("lava_delta_mask")
+            .expect("lava_delta_mask overlay must exist");
+        assert_eq!(
+            d.source,
+            OverlaySource::ScalarDerived("coast_type"),
+            "lava_delta_mask must source ScalarDerived(\"coast_type\")"
+        );
+        assert_eq!(
+            d.palette,
+            PaletteId::LavaDeltaMask,
+            "lava_delta_mask palette must be LavaDeltaMask"
+        );
+        assert_eq!(
+            d.value_range,
+            ValueRange::Fixed(0.0, 5.0),
+            "lava_delta_mask value_range must be Fixed(0.0, 5.0)"
+        );
+        assert!(!d.visible, "lava_delta_mask must default to hidden");
+    }
+
+    #[test]
+    fn lava_delta_mask_palette_renders_only_discriminant_4() {
+        use crate::palette::sample_f32;
+        // With ValueRange::Fixed(0.0, 5.0), t = disc / 5.0.
+        for disc in 0u8..=3u8 {
+            let t = disc as f32 / 5.0;
+            let rgba = sample_f32(PaletteId::LavaDeltaMask, t);
+            assert_eq!(
+                rgba[3], 0.0,
+                "discriminant {disc} must be transparent (alpha=0), got alpha={}",
+                rgba[3]
+            );
+        }
+        // Discriminant 4 (LavaDelta) must be opaque.
+        let t4 = 4.0_f32 / 5.0;
+        let rgba4 = sample_f32(PaletteId::LavaDeltaMask, t4);
+        assert!(
+            rgba4[3] > 0.5,
+            "discriminant 4 (LavaDelta) must be opaque, got alpha={}",
+            rgba4[3]
+        );
+        // Discriminant 5 (sentinel clamp to t=1.0) must be transparent.
+        let rgba5 = sample_f32(PaletteId::LavaDeltaMask, 1.0);
+        assert_eq!(
+            rgba5[3], 0.0,
+            "discriminant 5 (sentinel) must be transparent, got alpha={}",
+            rgba5[3]
+        );
+    }
+
+    #[test]
+    fn sprint_3_defaults_preserves_sprint_2_5_overlays() {
+        let reg = OverlayRegistry::sprint_3_defaults();
+        // Verify all 16 pre-existing Sprint 2.5 overlays are still present.
+        let expected_ids = [
+            "initial_uplift",
+            "final_elevation",
+            "slope",
+            "flow_accumulation",
+            "basin_partition",
+            "river_network",
+            "precipitation",
+            "temperature",
+            "soil_moisture",
+            "dominant_biome",
+            "curvature",
+            "hex_aggregated",
+            "coast_type",
+            "hex_projection_error",
+            "hex_accessibility",
+            "hex_river_crossing",
+        ];
+        for id in &expected_ids {
+            assert!(
+                reg.by_id(id).is_some(),
+                "Sprint 2.5 overlay '{id}' must still be present in sprint_3_defaults"
+            );
+        }
+    }
+
+    #[test]
+    fn sprint_3_authoritative_sediment_resolves_to_f32() {
+        use island_core::{
+            field::ScalarField2D,
+            preset::{IslandAge, IslandArchetypePreset},
+            seed::Seed,
+            world::{Resolution, WorldState},
+        };
+        let preset = IslandArchetypePreset {
+            name: "sediment_resolve_test".into(),
+            island_radius: 0.5,
+            max_relief: 0.5,
+            volcanic_center_count: 1,
+            island_age: IslandAge::Young,
+            prevailing_wind_dir: 0.0,
+            marine_moisture_strength: 0.5,
+            sea_level: 0.3,
+            erosion: Default::default(),
+            climate: Default::default(),
+        };
+        let mut world = WorldState::new(Seed(0), preset, Resolution::new(8, 8));
+
+        // Sediment not populated yet — must resolve to None.
+        let resolved =
+            resolve_scalar_source(&world, OverlaySource::ScalarAuthoritative("sediment"));
+        assert!(
+            resolved.is_none(),
+            "ScalarAuthoritative(\"sediment\") must return None when sediment is unpopulated"
+        );
+
+        // Populate sediment — must resolve to Some(F32).
+        let mut sed = ScalarField2D::<f32>::new(8, 8);
+        sed.data.fill(0.5);
+        world.authoritative.sediment = Some(sed);
+
+        let resolved =
+            resolve_scalar_source(&world, OverlaySource::ScalarAuthoritative("sediment"));
+        assert!(
+            matches!(resolved, Some(ResolvedField::F32(_))),
+            "ScalarAuthoritative(\"sediment\") must resolve to F32 when populated"
+        );
     }
 }

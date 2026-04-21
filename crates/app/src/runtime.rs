@@ -282,7 +282,7 @@ impl Runtime {
         let preset = load_preset();
 
         // ── Overlay / sim metadata ───────────────────────────────────────────
-        let overlay_registry = OverlayRegistry::sprint_2_5_defaults();
+        let overlay_registry = OverlayRegistry::sprint_3_defaults();
         let seed = Seed(42);
         let resolution = Resolution::new(256, 256);
 
@@ -1107,7 +1107,7 @@ mod tests {
     impl FakeRuntime {
         fn new() -> Self {
             Self {
-                registry: OverlayRegistry::sprint_2_5_defaults(),
+                registry: OverlayRegistry::sprint_3_defaults(),
                 view_mode: ViewMode::Continuous,
                 saved_visibility: None,
             }
