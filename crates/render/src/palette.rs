@@ -50,27 +50,35 @@ pub const SKY_ZENITH: [f32; 4] = hex_rgba(0x1C2C44);
 
 // ─── PaletteId ───────────────────────────────────────────────────────────────
 
-// ─── Sprint 2 CoastType palette ──────────────────────────────────────────────
+// ─── Sprint 2 / Sprint 3 CoastType palette ───────────────────────────────────
 //
-// NOT pixel-sampled from `palette_reference.jpg` — these are new Sprint 2
-// colours with no reference panel. Marked "Sprint 2 v1, not pixel-sampled".
-// Index mapping: Cliff=0, Beach=1, Estuary=2, RockyHeadland=3.
+// NOT pixel-sampled from `palette_reference.jpg` — these are Sprint 2/3
+// colours with no reference panel. Marked "not pixel-sampled".
+// Index mapping: Cliff=0, Beach=1, Estuary=2, RockyHeadland=3, LavaDelta=4.
 // Out-of-range indices (including 0xFF for Unknown) → transparent [0.0; 4].
 
-/// Sprint 2 v1 coastal geomorphology palette — not pixel-sampled.
+/// Sprint 2 v1 + Sprint 3 DD6 coastal geomorphology palette — not pixel-sampled.
 ///
-/// RGBA sRGB colours for the four [`CoastType`] variants (index = discriminant):
+/// RGBA sRGB colours for the five [`CoastType`] variants (index = discriminant):
 /// * `0` Cliff: dark warm grey
 /// * `1` Beach: sand
 /// * `2` Estuary: teal
 /// * `3` RockyHeadland: medium grey
+/// * `4` LavaDelta: deep reddish-black (fresh volcanic rock)
+///
+/// LavaDelta is a Sprint 3 addition and has no entry in
+/// `assets/visual/palette_reference.jpg`; the colour was chosen to
+/// read as "fresh basalt" against the Beach / RockyHeadland neighbours.
+/// Future Sprint 4.5 may add a palette-reference swatch and re-lock the
+/// value via a `canonical_constants_match_palette_reference`-style test.
 ///
 /// [`CoastType`]: island_core::world::CoastType
-pub const COAST_TYPE_TABLE: [[f32; 4]; 4] = [
+pub const COAST_TYPE_TABLE: [[f32; 4]; 5] = [
     [0.35, 0.32, 0.28, 1.0], // Cliff: dark warm grey
     [0.90, 0.85, 0.70, 1.0], // Beach: sand
     [0.30, 0.65, 0.70, 1.0], // Estuary: teal
     [0.55, 0.50, 0.45, 1.0], // RockyHeadland: medium grey
+    [0.25, 0.05, 0.03, 1.0], // LavaDelta: deep reddish-black (fresh volcanic rock)
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,15 +264,16 @@ pub fn sample_f32(palette: PaletteId, t: f32) -> [f32; 4] {
             }
         }
 
-        // `CoastType` is a 4-entry categorical palette (0=Cliff, 1=Beach,
-        // 2=Estuary, 3=RockyHeadland) plus an out-of-range transparent
-        // sentinel for Unknown (0xFF). The paired overlay descriptor uses
-        // `ValueRange::Fixed(0.0, 4.0)` so `t = disc / 4` → `idx = disc`
-        // exactly for discriminants 0..=3; 0xFF clamps to `t = 1.0` →
-        // `idx = 4` → transparent.
+        // `CoastType` is a 5-entry categorical palette (0=Cliff, 1=Beach,
+        // 2=Estuary, 3=RockyHeadland, 4=LavaDelta) plus an out-of-range
+        // transparent sentinel for Unknown (0xFF). The paired overlay
+        // descriptor uses `ValueRange::Fixed(0.0, 5.0)` so
+        // `t = disc / 5` → `idx = disc` exactly for discriminants 0..=4;
+        // 0xFF clamps to `t = 1.0` → `idx = 5` → transparent. Sprint 3
+        // DD6 widened this from 4 entries to 5.
         PaletteId::CoastType => {
-            let idx = (t * 4.0) as usize;
-            if idx < 4 {
+            let idx = (t * 5.0) as usize;
+            if idx < 5 {
                 COAST_TYPE_TABLE[idx]
             } else {
                 [0.0, 0.0, 0.0, 0.0] // transparent for Unknown and out-of-range
@@ -511,19 +520,20 @@ mod tests {
         assert_eq!(sample(PaletteId::Categorical, 0.5)[3], 255);
     }
 
-    // ── CoastType (Sprint 2) ─────────────────────────────────────────────────
+    // ── CoastType (Sprint 2 + Sprint 3 DD6) ──────────────────────────────────
     //
-    // Paired with `ValueRange::Fixed(0.0, 4.0)` in the `coast_type` overlay
-    // descriptor: each discriminant `d ∈ 0..=3` normalises to `t = d / 4`,
-    // and `(t * 4.0) as usize = d` exactly. `Fixed(0.0, 3.0)` would map
-    // `RockyHeadland (3)` to `idx = 4` → transparent, silently hiding the
-    // majority of coast cells. These tests lock the pairing.
+    // Paired with `ValueRange::Fixed(0.0, 5.0)` in the `coast_type` overlay
+    // descriptor: each discriminant `d ∈ 0..=4` normalises to `t = d / 5`,
+    // and `(t * 5.0) as usize = d` exactly. `Fixed(0.0, 4.0)` would map the
+    // new Sprint 3 `LavaDelta (4)` to `idx = 5` → transparent; the earlier
+    // `Fixed(0.0, 3.0)` bug did the same to `RockyHeadland (3)`. These tests
+    // lock the 5-bin pairing.
 
     #[test]
-    fn coast_type_four_discriminants_sample_distinct_table_entries() {
-        // Each d ∈ 0..=3 with t = d/4 must sample COAST_TYPE_TABLE[d].
-        for d in 0u8..=3u8 {
-            let t = d as f32 / 4.0;
+    fn coast_type_five_discriminants_sample_distinct_table_entries() {
+        // Each d ∈ 0..=4 with t = d/5 must sample COAST_TYPE_TABLE[d].
+        for d in 0u8..=4u8 {
+            let t = d as f32 / 5.0;
             let rgba = sample_f32(PaletteId::CoastType, t);
             assert_eq!(
                 rgba, COAST_TYPE_TABLE[d as usize],
@@ -538,8 +548,8 @@ mod tests {
 
     #[test]
     fn coast_type_unknown_sentinel_clamps_to_transparent() {
-        // With descriptor Fixed(0.0, 4.0), the 0xFF sentinel's `t` clamps to
-        // 1.0+, producing idx ≥ 4, i.e. transparent.
+        // With descriptor Fixed(0.0, 5.0), the 0xFF sentinel's `t` clamps to
+        // 1.0+, producing idx ≥ 5, i.e. transparent.
         let rgba = sample_f32(PaletteId::CoastType, 1.0);
         assert_eq!(rgba, [0.0, 0.0, 0.0, 0.0], "t=1.0 must be transparent");
         let rgba = sample_f32(PaletteId::CoastType, 100.0);
@@ -547,19 +557,38 @@ mod tests {
     }
 
     #[test]
-    fn coast_type_regression_guard_against_fixed_0_to_3_bug() {
-        // With the buggy Fixed(0.0, 3.0) descriptor, RockyHeadland (d=3)
-        // would have produced t = 3/3 = 1.0 → idx = 4 → transparent.
-        // This test pins the correct math: with Fixed(0.0, 4.0), t = 3/4 =
-        // 0.75 → idx = 3 → COAST_TYPE_TABLE[3] (RockyHeadland color).
-        let rgba = sample_f32(PaletteId::CoastType, 0.75);
+    fn coast_type_regression_guard_against_fixed_0_to_4_bug() {
+        // With the buggy Fixed(0.0, 4.0) descriptor (the Sprint 2 version,
+        // which paired with a 4-entry table), LavaDelta (d=4) would produce
+        // t = 4/4 = 1.0 → idx = 5 → transparent. This test pins the correct
+        // Sprint 3 math: with Fixed(0.0, 5.0), t = 4/5 = 0.8 → idx = 4 →
+        // COAST_TYPE_TABLE[4] (LavaDelta color).
+        let rgba = sample_f32(PaletteId::CoastType, 4.0 / 5.0);
         assert_eq!(
-            rgba, COAST_TYPE_TABLE[3],
-            "RockyHeadland must render as COAST_TYPE_TABLE[3], not transparent"
+            rgba, COAST_TYPE_TABLE[4],
+            "LavaDelta must render as COAST_TYPE_TABLE[4], not transparent"
         );
         assert!(
             rgba[3] > 0.0,
-            "RockyHeadland must be opaque — the Fixed(0.0, 3.0) bug would make it transparent"
+            "LavaDelta must be opaque — the Fixed(0.0, 4.0) bug would make it transparent"
         );
+    }
+
+    // ── Sprint 3 DD6: COAST_TYPE_TABLE is locked at 5 entries ────────────────
+
+    /// Compile-time-style guard: `COAST_TYPE_TABLE` must have exactly 5 rows
+    /// (Cliff, Beach, Estuary, RockyHeadland, LavaDelta).
+    #[test]
+    fn coast_type_table_has_five_entries() {
+        assert_eq!(
+            COAST_TYPE_TABLE.len(),
+            5,
+            "COAST_TYPE_TABLE must have 5 entries after Sprint 3 DD6 LavaDelta addition"
+        );
+        // Each entry must be opaque so no non-Unknown coast cell renders
+        // accidentally transparent.
+        for (i, entry) in COAST_TYPE_TABLE.iter().enumerate() {
+            assert_eq!(entry[3], 1.0, "COAST_TYPE_TABLE[{i}] must be opaque");
+        }
     }
 }

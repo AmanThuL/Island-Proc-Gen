@@ -161,6 +161,11 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
             // stale-read" pattern that `erosion_baseline` above uses,
             // just with a different downstream-rerun side effect.
             world.derived.deposition_flux = None;
+            // Sprint 3 DD6: volcanic_centers is populated by TopographyStage
+            // from the same sampled center list it uses for `build_volcanic_base`.
+            // Invalidated in this arm so re-running Topography repopulates it
+            // alongside `initial_uplift`.
+            world.derived.volcanic_centers = None;
         }
 
         // CoastMaskStage: writes derived.coast_mask + derived.shoreline_normal
@@ -1026,6 +1031,42 @@ mod tests {
             world.derived.deposition_flux.is_some(),
             "derived.deposition_flux must be preserved across invalidate_from(Coastal) \
              — see ErosionOuterLoop mid-batch invalidation rationale"
+        );
+    }
+
+    // ── Task 3.6: volcanic_centers invalidation ──────────────────────────────
+
+    /// `invalidate_from(Topography)` must clear `derived.volcanic_centers`,
+    /// since the field is populated by `TopographyStage`.
+    #[test]
+    fn invalidate_from_topography_clears_volcanic_centers() {
+        let mut world = run_full(42);
+        assert!(
+            world.derived.volcanic_centers.is_some(),
+            "volcanic_centers must be Some after a full pipeline run"
+        );
+
+        invalidate_from(&mut world, StageId::Topography);
+
+        assert!(
+            world.derived.volcanic_centers.is_none(),
+            "derived.volcanic_centers must be None after invalidate_from(Topography)"
+        );
+    }
+
+    /// Downstream invalidations (Coastal and beyond) must NOT clear
+    /// `derived.volcanic_centers` — the sampled centers are bound to the
+    /// Topography stage's output, not to any reroute.
+    #[test]
+    fn invalidate_from_coastal_preserves_volcanic_centers() {
+        let mut world = run_full(42);
+        assert!(world.derived.volcanic_centers.is_some());
+
+        invalidate_from(&mut world, StageId::Coastal);
+
+        assert!(
+            world.derived.volcanic_centers.is_some(),
+            "derived.volcanic_centers must survive invalidate_from(Coastal)"
         );
     }
 }

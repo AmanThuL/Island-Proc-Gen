@@ -111,6 +111,24 @@ impl Default for ClimateParams {
     }
 }
 
+/// Sprint 3 DD6: which coastal geomorphology classifier [`crate::world::CoastType`]
+/// is computed by `CoastTypeStage`.
+///
+/// * [`CoastTypeVariant::V1Cheap`] — Sprint 2 v1 cheap classifier using slope,
+///   river-mouth flag, single-direction wind exposure, and island age. Preserved
+///   for Sprint 3 Task 3.10 baseline regeneration
+///   (`preset_override.erosion.coast_type_variant = Some(V1Cheap)`).
+/// * [`CoastTypeVariant::V2FetchIntegral`] — Sprint 3 16-direction fetch
+///   integral with LavaDelta detection. Default for all new runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum CoastTypeVariant {
+    /// Sprint 2 v1 cheap classifier (slope + single-direction exposure).
+    V1Cheap,
+    /// Sprint 3 v2 16-dir fetch integral with LavaDelta. Default.
+    #[default]
+    V2FetchIntegral,
+}
+
 /// Sprint 3 DD2: which Stream Power Incision Model variant to use inside
 /// [`crate::pipeline::SimulationPipeline`].
 ///
@@ -222,6 +240,21 @@ pub struct ErosionParams {
     /// without this field deserialize to the default via `#[serde(default)]`.
     #[serde(default)]
     pub spim_variant: SpimVariant,
+
+    /// Sprint 3 DD6: which coastal geomorphology classifier `CoastTypeStage`
+    /// runs. Defaults to [`CoastTypeVariant::V2FetchIntegral`]; Sprint 2
+    /// `.ron` presets without this field deserialize to the default via
+    /// `#[serde(default)]`.
+    ///
+    /// Judgment call (reviewer S3): lives on `ErosionParams` rather than a
+    /// new `GeomorphParams` struct to minimise surface-area churn. The spec
+    /// comment in `docs/design/sprints/sprint_3_sediment_advanced_climate.md`
+    /// §DD6 references `preset.geomorph.coast_type_variant`; this
+    /// placement is functionally equivalent (`preset_override.erosion.
+    /// coast_type_variant`) and can be hoisted to a proper `GeomorphParams`
+    /// in a follow-up sprint without behaviour change.
+    #[serde(default)]
+    pub coast_type_variant: CoastTypeVariant,
 }
 
 fn default_spim_k() -> f32 {
@@ -281,6 +314,7 @@ impl Default for ErosionParams {
             space_k_sed: default_space_k_sed(),
             h_star: default_h_star(),
             spim_variant: SpimVariant::default(),
+            coast_type_variant: CoastTypeVariant::default(),
         }
     }
 }
@@ -390,6 +424,12 @@ mod tests {
         assert_eq!(ep.space_k_sed, 1.5e-2, "space_k_sed");
         assert_eq!(ep.h_star, 0.05, "h_star");
         assert_eq!(ep.spim_variant, SpimVariant::SpaceLite, "spim_variant");
+        // Sprint 3 DD6 CoastType v2 default.
+        assert_eq!(
+            ep.coast_type_variant,
+            CoastTypeVariant::V2FetchIntegral,
+            "coast_type_variant"
+        );
     }
 
     // 4. A RON string without an `erosion` field deserialises with ErosionParams::default().
@@ -439,6 +479,7 @@ mod tests {
                 space_k_sed: 2.0e-2,
                 h_star: 0.04,
                 spim_variant: SpimVariant::Plain,
+                coast_type_variant: CoastTypeVariant::V1Cheap,
             },
             climate: ClimateParams::default(),
         };
@@ -523,6 +564,34 @@ mod tests {
         assert_eq!(preset.erosion.space_k_sed, 1.5e-2);
         assert_eq!(preset.erosion.h_star, 0.05);
         assert_eq!(preset.erosion.spim_variant, SpimVariant::SpaceLite);
+        // Sprint 3 DD6: missing coast_type_variant key → v2 default.
+        assert_eq!(
+            preset.erosion.coast_type_variant,
+            CoastTypeVariant::V2FetchIntegral
+        );
+    }
+
+    // 7b. Sprint 3 DD6: `coast_type_variant` deserialises from a RON preset that
+    //     pre-dates the field. Companion to `spim_variant_deserializes_from_legacy_ron`.
+    #[test]
+    fn coast_type_variant_deserializes_from_legacy_ron() {
+        let ron_str = r#"IslandArchetypePreset(
+            name: "legacy_no_coast_variant",
+            island_radius: 0.55,
+            max_relief: 0.85,
+            volcanic_center_count: 1,
+            island_age: Young,
+            prevailing_wind_dir: 0.0,
+            marine_moisture_strength: 0.75,
+            sea_level: 0.30,
+        )"#;
+        let preset: IslandArchetypePreset = ron::from_str(ron_str)
+            .expect("pre-Sprint-3 RON must deserialize under Sprint 3 binary");
+        assert_eq!(
+            preset.erosion.coast_type_variant,
+            CoastTypeVariant::V2FetchIntegral,
+            "missing coast_type_variant must default to V2FetchIntegral"
+        );
     }
 
     // 8. Sprint 3 DD4: ClimateParams defaults match the locked constants.

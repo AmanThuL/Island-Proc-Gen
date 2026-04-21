@@ -255,21 +255,21 @@ impl OverlayRegistry {
                     visible: false,
                     alpha: 0.6,
                 },
-                // ── Sprint 2 (coastal geomorphology) ──────────────────
+                // ── Sprint 2 / Sprint 3 DD6 (coastal geomorphology) ────
                 // String key "coast_type" confined to this file (invariant #8).
-                // `Fixed(0.0, 4.0)` so discriminants 0..=3 normalise to
-                // `t = disc / 4`, yielding `idx = (t * 4.0) as usize = disc`
-                // exactly in `PaletteId::CoastType`. `Fixed(0.0, 3.0)` would
-                // map discriminant 3 (RockyHeadland) to `t = 1.0`, `idx = 4`,
-                // transparent — silently hiding the majority of coast cells.
-                // Unknown sentinel (0xFF) clamps to `t = 1.0` → `idx = 4` →
-                // transparent, which is the intended non-coast behaviour.
+                // Sprint 3 widened the range from `Fixed(0.0, 4.0)` (4 bins) to
+                // `Fixed(0.0, 5.0)` (5 bins) to admit LavaDelta (disc=4). With
+                // the range set to 5, discriminants 0..=4 normalise to
+                // `t = disc / 5`, yielding `idx = (t * 5.0) as usize = disc`
+                // exactly in `PaletteId::CoastType`. Unknown sentinel (0xFF)
+                // clamps to `t = 1.0` → `idx = 5` → transparent, which is the
+                // intended non-coast behaviour.
                 OverlayDescriptor {
                     id: "coast_type",
                     label: "Coast type",
                     source: OverlaySource::ScalarDerived("coast_type"),
                     palette: PaletteId::CoastType,
-                    value_range: ValueRange::Fixed(0.0, 4.0),
+                    value_range: ValueRange::Fixed(0.0, 5.0),
                     visible: false,
                     alpha: 0.6,
                 },
@@ -413,12 +413,12 @@ pub(crate) fn resolve_scalar_source<'w>(
             .as_ref()
             .map(ResolvedField::U32),
 
-        // Sprint 2 derived scalars.
+        // Sprint 2 / Sprint 3 DD6 derived scalars.
         // `coast_type` is `ScalarField2D<u8>` — same layout as `MaskField2D`
         // (which is a type alias for `ScalarField2D<u8>`), so the `Mask`
         // variant carries it without a new `ResolvedField` variant. The
-        // descriptor's `ValueRange::Fixed(0.0, 4.0)` + `PaletteId::CoastType`
-        // pair ensures discriminants 0..=3 sample the right entries and the
+        // descriptor's `ValueRange::Fixed(0.0, 5.0)` + `PaletteId::CoastType`
+        // pair ensures discriminants 0..=4 sample the right entries and the
         // 0xFF sentinel clamps to transparent — all via the standard
         // `bake_overlay_to_rgba8` → `sample_f32` path, no per-palette
         // dispatch needed. Invariant #8: string key "coast_type" appears
@@ -491,6 +491,13 @@ mod tests {
             d.palette,
             PaletteId::CoastType,
             "coast_type palette must be PaletteId::CoastType"
+        );
+        // Sprint 3 DD6: value range is now `Fixed(0.0, 5.0)` (was 4.0 in
+        // Sprint 2) to admit the LavaDelta discriminant (4).
+        assert_eq!(
+            d.value_range,
+            ValueRange::Fixed(0.0, 5.0),
+            "coast_type value_range must be Fixed(0.0, 5.0) after Sprint 3 DD6 LavaDelta expansion"
         );
         assert!(!d.visible, "coast_type must default to hidden");
     }

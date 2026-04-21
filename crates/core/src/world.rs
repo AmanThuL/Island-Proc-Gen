@@ -345,15 +345,16 @@ pub struct ErosionBaseline {
     pub land_cell_count_pre: u32,
 }
 
-/// Sprint 2 DD4: coarse coastal geomorphology classification per coast cell.
+/// Sprint 2 DD4 / Sprint 3 DD6: coarse coastal geomorphology classification
+/// per coast cell.
 ///
-/// v1 uses cheap proxies (slope + river_mouth + shoreline_normal · wind
-/// exposure + island_age) since no lithology or wave-fetch field exists
-/// yet. Sprint 3 will add `LavaDelta = 4` behind the existing `0..=3` range.
-/// `Unknown = 0xFF` is the sentinel for non-coast cells; the
-/// `coast_type_well_formed` invariant (Task 2.9) enforces that every
-/// `is_coast == 1` cell carries a `0..=3` value and every non-coast cell
-/// carries `0xFF`.
+/// v1 (Sprint 2) uses cheap proxies (slope + river_mouth + shoreline_normal ·
+/// wind exposure + island_age); v2 (Sprint 3) adds a 16-direction fetch
+/// integral and the [`CoastType::LavaDelta`] variant. `Unknown = 0xFF` is
+/// the sentinel for non-coast cells; the `coast_type_well_formed` invariant
+/// enforces that every `is_coast == 1` cell carries a `0..=4` value and
+/// every non-coast cell carries `0xFF`. Sprint 3 widened the legal range
+/// from `0..=3` to `0..=4` to admit LavaDelta under either classifier.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CoastType {
@@ -361,6 +362,10 @@ pub enum CoastType {
     Beach = 1,
     Estuary = 2,
     RockyHeadland = 3,
+    /// Sprint 3 DD6: fresh volcanic delta — low-to-moderate slope coast
+    /// close to a volcanic center on a Young island. Only emitted by the
+    /// v2 fetch-integral classifier; v1 never writes this variant.
+    LavaDelta = 4,
     Unknown = 0xFF,
 }
 
@@ -529,6 +534,16 @@ pub struct DerivedCaches {
     /// `fog_water_input[p] = FOG_WATER_GAIN * fog_likelihood[p]`
     /// for land cells; `None` until `SoilMoistureStage` has run.
     pub fog_water_input: Option<ScalarField2D<f32>>,
+
+    /// Sprint 3 DD6: volcanic-center coordinates in normalized `[0, 1]²`
+    /// grid space. Populated by `TopographyStage` from the centers it
+    /// samples internally; consumed by the v2 `CoastTypeStage` classifier
+    /// for LavaDelta detection (distance-to-nearest-volcanic-center test).
+    ///
+    /// `#[serde(skip)]` by DerivedCaches convention (the whole struct is
+    /// skipped) — purely runtime state. Invalidated under the Topography
+    /// arm of `clear_stage_outputs`.
+    pub volcanic_centers: Option<Vec<[f32; 2]>>,
 }
 
 // ─── WorldState ──────────────────────────────────────────────────────────────

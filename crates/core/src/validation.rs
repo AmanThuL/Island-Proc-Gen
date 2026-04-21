@@ -72,9 +72,13 @@ pub enum ValidationError {
 
     // ── Sprint 2 invariant errors ────────────────────────────────────────────
     /// A coast cell (is_coast == 1) carries a `coast_type` value outside the
-    /// `0..=3` range defined by [`crate::world::CoastType`].
+    /// legal range `0..=4` defined by [`crate::world::CoastType`].
+    ///
+    /// Sprint 3 DD6 widened this range from `0..=3` to `0..=4` when
+    /// [`crate::world::CoastType::LavaDelta`] was added; `0xFF` remains the
+    /// `Unknown` sentinel.
     #[error(
-        "coast_type: coast cell at flat index {cell_index} has out-of-range type value {value} (expected 0..=3)"
+        "coast_type: coast cell at flat index {cell_index} has out-of-range type value {value} (expected 0..=4)"
     )]
     CoastTypeOutOfRange { cell_index: usize, value: u8 },
 
@@ -624,8 +628,13 @@ pub fn basin_partition_post_erosion_well_formed(world: &WorldState) -> Result<()
     Ok(())
 }
 
-/// Every coast cell's `coast_type` byte must be in `0..=3`; every non-coast
+/// Every coast cell's `coast_type` byte must be in `0..=4`; every non-coast
 /// cell must carry the sentinel `0xFF` (`CoastType::Unknown`).
+///
+/// Sprint 3 DD6 widened the legal range from `0..=3` to `0..=4` when
+/// [`crate::world::CoastType::LavaDelta`] (discriminant 4) was added. The
+/// Sprint 2 v1 classifier never emits discriminant 4; the Sprint 3 v2
+/// classifier may emit it on Young presets near volcanic centers.
 ///
 /// Returns `Ok(())` immediately if either `derived.coast_mask` or
 /// `derived.coast_type` is `None` (stage hasn't run yet — skip rather than
@@ -647,7 +656,9 @@ pub fn coast_type_well_formed(world: &WorldState) -> Result<(), ValidationError>
         .zip(coast_type.data.iter())
         .enumerate()
     {
-        if is_coast == 1 && ct_value > 3 {
+        // Sprint 3 DD6: widened from `> 3` to `> 4` to admit LavaDelta.
+        // The 0xFF Unknown sentinel on a coast cell still fails (0xFF > 4).
+        if is_coast == 1 && ct_value > 4 {
             return Err(ValidationError::CoastTypeOutOfRange {
                 cell_index: i,
                 value: ct_value,
@@ -1289,13 +1300,47 @@ mod tests {
 
     // ── 11: coast_type_well_formed — happy path ───────────────────────────────
     //
-    // 4 coast cells with types 0/1/2/3 respectively. All valid.
+    // 5 coast cells with types 0/1/2/3/4 respectively. All valid after the
+    // Sprint 3 DD6 widening from `0..=3` to `0..=4` (LavaDelta = 4).
     #[test]
     fn coast_type_well_formed_passes_when_coast_cells_have_valid_types() {
-        let world = make_coast_type_world(4, 1, vec![1, 1, 1, 1], vec![0, 1, 2, 3]);
+        let world = make_coast_type_world(5, 1, vec![1, 1, 1, 1, 1], vec![0, 1, 2, 3, 4]);
         assert!(
             coast_type_well_formed(&world).is_ok(),
-            "expected Ok for coast types 0..=3"
+            "expected Ok for coast types 0..=4 (Sprint 3 DD6 range)"
+        );
+    }
+
+    // ── 11b: coast_type_well_formed accepts LavaDelta (Sprint 3 DD6) ─────────
+    //
+    // Regression guard for the 0..=3 → 0..=4 widening: a coast cell carrying
+    // discriminant 4 (LavaDelta) must validate.
+    #[test]
+    fn coast_type_well_formed_accepts_lava_delta() {
+        let world = make_coast_type_world(2, 1, vec![1, 1], vec![0, 4]);
+        assert!(
+            coast_type_well_formed(&world).is_ok(),
+            "LavaDelta (disc=4) must be accepted by the Sprint 3 DD6-widened invariant"
+        );
+    }
+
+    // ── 11c: coast_type_well_formed still rejects disc=5 ──────────────────────
+    //
+    // The widening is exactly one slot; disc=5 has no CoastType variant and
+    // must still be flagged as out-of-range.
+    #[test]
+    fn coast_type_well_formed_rejects_disc_five() {
+        let world = make_coast_type_world(2, 1, vec![1, 1], vec![0, 5]);
+        let err = coast_type_well_formed(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::CoastTypeOutOfRange {
+                    cell_index: 1,
+                    value: 5
+                }
+            ),
+            "disc=5 must still be rejected (no CoastType variant), got: {err}"
         );
     }
 

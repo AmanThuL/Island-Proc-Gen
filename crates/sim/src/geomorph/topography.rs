@@ -303,6 +303,13 @@ impl SimulationStage for TopographyStage {
         world.authoritative.height = Some(height);
         world.authoritative.sediment = Some(ScalarField2D::<f32>::new(w, h));
 
+        // Sprint 3 DD6: expose the sampled volcanic centers (in normalized
+        // [0, 1]² grid coordinates, the same space `build_volcanic_base`
+        // uses) to downstream stages. Consumed by the v2 `CoastTypeStage`
+        // classifier for LavaDelta detection. Invalidated under the
+        // Topography arm of `sim::invalidation::clear_stage_outputs`.
+        world.derived.volcanic_centers = Some(volcanoes.iter().map(|v| [v.cx, v.cy]).collect());
+
         Ok(())
     }
 }
@@ -490,6 +497,46 @@ mod tests {
             }
             other => panic!("expected LoadedWorld::Minimal, got {other:?}"),
         }
+    }
+
+    // Sprint 3 DD6: TopographyStage populates derived.volcanic_centers with
+    // one entry per sampled volcanic center, each in normalized [0, 1]² space.
+    #[test]
+    fn volcanic_centers_populated_after_topography_run() {
+        let preset = preset_single();
+        let expected_count = preset.volcanic_center_count as usize;
+        let world = run_stage(42, preset, 64);
+        let centers = world
+            .derived
+            .volcanic_centers
+            .as_ref()
+            .expect("derived.volcanic_centers must be Some after TopographyStage");
+        assert_eq!(
+            centers.len(),
+            expected_count.max(1),
+            "volcanic_centers length must match preset.volcanic_center_count (min 1)"
+        );
+        for (i, [cx, cy]) in centers.iter().enumerate() {
+            assert!(
+                (0.0..=1.0).contains(cx),
+                "volcanic_centers[{i}].x = {cx} must be in [0, 1]"
+            );
+            assert!(
+                (0.0..=1.0).contains(cy),
+                "volcanic_centers[{i}].y = {cy} must be in [0, 1]"
+            );
+        }
+    }
+
+    // Sprint 3 DD6: volcanic_centers is deterministic (same seed → same centers).
+    #[test]
+    fn volcanic_centers_are_deterministic_per_seed() {
+        let w1 = run_stage(99, preset_single(), 32);
+        let w2 = run_stage(99, preset_single(), 32);
+        assert_eq!(
+            w1.derived.volcanic_centers, w2.derived.volcanic_centers,
+            "volcanic_centers must be bit-exact for same seed + preset"
+        );
     }
 
     // 8. Caldera preset: stage completes and height is in range.
