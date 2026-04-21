@@ -11,30 +11,44 @@
 //! `hex_attrs_present`). Sprint 2 adds 3 more (`coast_type_well_formed`,
 //! `erosion_no_explosion`, `erosion_no_excessive_sea_crossing`). Sprint
 //! 2.5 Task 2.5.G adds 1 more (`basin_partition_post_erosion_well_formed`),
-//! for a total of **12 invariants**. To keep the stage working for pipelines
-//! that stop at 1A (e.g. validation unit tests that only need the
-//! routing stack), each 1B check is gated on its input field: if the
-//! field is still `None`, the invariant is skipped with a
-//! `MissingPrecondition` error, and we treat that specific error as
-//! "not applicable yet" rather than a failure. Every other error
-//! (actual invariant violations) propagates normally.
+//! for a running total of 12. Sprint 3 Task 3.9 adds 4 more
+//! (`sediment_bounded`, `deposition_zone_fraction_realistic`,
+//! `coast_type_v2_well_formed`, `precipitation_mass_balance`), for a
+//! total of **16 invariants** (the spec says 15; see note below).
 //!
-//! The Sprint 2 and 2.5 invariants self-skip (return `Ok(())`) when their
+//! Sprint 3 note: the sprint spec quotes "15 invariants" (1A 4 + 1B 4 +
+//! Sprint 2 3 + Sprint 3 4) but forgot to count
+//! `basin_partition_post_erosion_well_formed`, which Sprint 2.5 added as
+//! the 12th invariant. The real total is therefore 12 pre-Sprint-3 + 4 =
+//! **16**, which is what `validation_stage_runs_all_16_sprint_3_invariants`
+//! locks.
+//!
+//! To keep the stage working for pipelines that stop at 1A (e.g. validation
+//! unit tests that only need the routing stack), each 1B check is gated on
+//! its input field: if the field is still `None`, the invariant is skipped
+//! with a `MissingPrecondition` error, and we treat that specific error as
+//! "not applicable yet" rather than a failure. Every other error (actual
+//! invariant violations) propagates normally.
+//!
+//! The Sprint 2 / 2.5 / 3 invariants self-skip (return `Ok(())`) when their
 //! precondition fields are `None`, so they are called directly with `?`.
 
 use island_core::pipeline::SimulationStage;
+use island_core::preset::PrecipitationVariant;
 use island_core::validation::{
     ValidationError, accumulation_monotone, basin_partition_dag,
-    basin_partition_post_erosion_well_formed, biome_weights_normalized, coast_type_well_formed,
-    coastline_consistency, erosion_no_excessive_sea_crossing, erosion_no_explosion,
-    hex_attrs_present, precipitation_nonneg, river_termination, temperature_physical_range,
+    basin_partition_post_erosion_well_formed, biome_weights_normalized, coast_type_v2_well_formed,
+    coast_type_well_formed, coastline_consistency, deposition_zone_fraction_realistic,
+    erosion_no_excessive_sea_crossing, erosion_no_explosion, hex_attrs_present,
+    precipitation_mass_balance, precipitation_nonneg, river_termination, sediment_bounded,
+    temperature_physical_range,
 };
 use island_core::world::WorldState;
 
-/// Run all 12 core validation invariants in order, short-circuiting on
+/// Run all 16 core validation invariants in order, short-circuiting on
 /// the first real failure. 1B invariants whose preconditions are missing
-/// are silently skipped. Sprint 2 and 2.5 invariants self-skip when their
-/// precondition fields are `None`.
+/// are silently skipped. Sprint 2 / 2.5 / 3 invariants self-skip when
+/// their precondition fields are `None`.
 pub struct ValidationStage;
 
 impl SimulationStage for ValidationStage {
@@ -64,6 +78,27 @@ impl SimulationStage for ValidationStage {
         erosion_no_excessive_sea_crossing(world)?;
         basin_partition_post_erosion_well_formed(world)?;
 
+        // Sprint 3: 4 new invariants.
+        //
+        // `sediment_bounded` and `deposition_zone_fraction_realistic` both
+        // need `authoritative.sediment`; they fire `SedimentFieldMissing`
+        // (not `MissingPrecondition`) when the field is absent.  We treat
+        // that error as "not applicable yet" via `skip_if_sediment_missing`
+        // so the pre-Sprint-3 1A pipeline still works.
+        skip_if_sediment_missing(sediment_bounded(world))?;
+        skip_if_sediment_missing(deposition_zone_fraction_realistic(world))?;
+
+        // `coast_type_v2_well_formed` self-skips when coast_type is None.
+        coast_type_v2_well_formed(world)?;
+
+        // `precipitation_mass_balance` is only meaningful for V3Lfpm.
+        if matches!(
+            world.preset.climate.precipitation_variant,
+            PrecipitationVariant::V3Lfpm
+        ) {
+            skip_if_missing(precipitation_mass_balance(world))?;
+        }
+
         Ok(())
     }
 }
@@ -75,6 +110,18 @@ fn skip_if_missing(result: Result<(), ValidationError>) -> anyhow::Result<()> {
     match result {
         Ok(()) => Ok(()),
         Err(ValidationError::MissingPrecondition { .. }) => Ok(()),
+        Err(other) => Err(other.into()),
+    }
+}
+
+/// Collapse `SedimentFieldMissing` into `Ok(())`: Sprint 3 sediment
+/// invariants can't run on pre-Sprint-3 pipelines that never initialised
+/// `authoritative.sediment`. Treat the absence as "not applicable".
+/// Every other `ValidationError` still propagates.
+fn skip_if_sediment_missing(result: Result<(), ValidationError>) -> anyhow::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(ValidationError::SedimentFieldMissing) => Ok(()),
         Err(other) => Err(other.into()),
     }
 }
@@ -268,6 +315,70 @@ mod tests {
 
         basin_partition_post_erosion_well_formed(&world)
             .expect("basin_partition_post_erosion_well_formed must pass on the Sprint 2 pipeline");
+    }
+
+    /// Sprint 3 Task 3.9: run the full canonical pipeline on the volcanic_single
+    /// preset and assert all 16 invariants pass (12 Sprint 1A/1B/2/2.5 + 4 Sprint 3).
+    ///
+    /// Each invariant is called explicitly so that a future regression names the
+    /// failing invariant directly rather than hiding behind the pipeline's
+    /// short-circuit.
+    #[test]
+    fn validation_stage_runs_all_16_sprint_3_invariants() {
+        use island_core::validation::{
+            accumulation_monotone, basin_partition_dag, basin_partition_post_erosion_well_formed,
+            biome_weights_normalized, coast_type_v2_well_formed, coast_type_well_formed,
+            coastline_consistency, deposition_zone_fraction_realistic,
+            erosion_no_excessive_sea_crossing, erosion_no_explosion, hex_attrs_present,
+            precipitation_mass_balance, precipitation_nonneg, river_termination, sediment_bounded,
+            temperature_physical_range,
+        };
+
+        let mut world = WorldState::new(Seed(42), volcanic_preset(), Resolution::new(64, 64));
+        let pipeline = crate::default_pipeline();
+
+        pipeline
+            .run(&mut world)
+            .expect("full Sprint 3 canonical pipeline must pass all 16 invariants");
+
+        // Sprint 3 output fields must be populated.
+        assert!(
+            world.authoritative.sediment.is_some(),
+            "authoritative.sediment must be Some after SedimentUpdateStage"
+        );
+        assert!(
+            world.derived.coast_type.is_some(),
+            "coast_type must be Some after CoastTypeStage"
+        );
+        assert!(
+            world.baked.precipitation.is_some(),
+            "baked.precipitation must be Some after PrecipitationStage"
+        );
+
+        // ── Sprint 1A (4) ─────────────────────────────────────────────────────
+        coastline_consistency(&world).expect("1. coastline_consistency");
+        basin_partition_dag(&world).expect("2. basin_partition_dag");
+        accumulation_monotone(&world).expect("3. accumulation_monotone");
+        river_termination(&world).expect("4. river_termination");
+
+        // ── Sprint 1B (4) ─────────────────────────────────────────────────────
+        precipitation_nonneg(&world).expect("5. precipitation_nonneg");
+        biome_weights_normalized(&world).expect("6. biome_weights_normalized");
+        temperature_physical_range(&world).expect("7. temperature_physical_range");
+        hex_attrs_present(&world).expect("8. hex_attrs_present");
+
+        // ── Sprint 2 / 2.5 (4) ───────────────────────────────────────────────
+        coast_type_well_formed(&world).expect("9. coast_type_well_formed");
+        erosion_no_explosion(&world).expect("10. erosion_no_explosion");
+        erosion_no_excessive_sea_crossing(&world).expect("11. erosion_no_excessive_sea_crossing");
+        basin_partition_post_erosion_well_formed(&world)
+            .expect("12. basin_partition_post_erosion_well_formed");
+
+        // ── Sprint 3 (4) ──────────────────────────────────────────────────────
+        sediment_bounded(&world).expect("13. sediment_bounded");
+        deposition_zone_fraction_realistic(&world).expect("14. deposition_zone_fraction_realistic");
+        coast_type_v2_well_formed(&world).expect("15. coast_type_v2_well_formed");
+        precipitation_mass_balance(&world).expect("16. precipitation_mass_balance");
     }
 
     /// Regression guard for the Sprint 1B wind-slider 0↔π acceptance pair.

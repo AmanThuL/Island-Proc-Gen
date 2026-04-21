@@ -6,6 +6,7 @@
 //! `Err(MissingPrecondition)` instead.
 
 use crate::neighborhood::{Neighborhood, neighbour_offsets};
+use crate::preset::IslandAge;
 use crate::world::{D8_OFFSETS, FLOW_DIR_SINK, WorldState};
 
 // ─── error type ───────────────────────────────────────────────────────────────
@@ -106,6 +107,70 @@ pub enum ValidationError {
         "basin partition: {labeled_cells} labeled cells (basin_id > 0) exceed land_cell_count {land_total}"
     )]
     BasinLabeledCellsExceedLand { labeled_cells: u32, land_total: u32 },
+
+    // ── Sprint 3 invariant errors ────────────────────────────────────────────
+    /// `authoritative.sediment` is `None` after `CoastMaskStage` has run.
+    /// Sprint 3 initialises the field in the `Sediment` arm; if it is still
+    /// `None` the init hook did not fire.
+    #[error("sediment_bounded: authoritative.sediment is None (SedimentUpdateStage must have run)")]
+    SedimentFieldMissing,
+
+    /// A land cell carries a sediment thickness `hs` that is negative,
+    /// greater than 1.0, NaN, or infinite.
+    #[error(
+        "sediment_bounded: land cell at flat index {cell_index} has hs = {value} (expected [0, 1], finite)"
+    )]
+    SedimentOutOfRange { cell_index: usize, value: f32 },
+
+    /// A sea cell carries a non-zero sediment thickness. Sea cells must
+    /// always have `hs = 0.0`.
+    #[error(
+        "sediment_bounded: sea cell at flat index {cell_index} has hs = {value} (expected 0.0)"
+    )]
+    SedimentSeaCellNonZero { cell_index: usize, value: f32 },
+
+    /// The fraction of land cells with `hs > DEPOSITION_FLAG_THRESHOLD` fell
+    /// below the `[LOW, HIGH]` realistic band. Indicates either that
+    /// sediment is not accumulating at all (low) or that the entire island
+    /// surface is submerged in sediment (high).
+    #[error(
+        "deposition_zone_fraction_realistic: fraction {fraction:.4} of land cells with hs > {threshold} is outside [{lo:.2}, {hi:.2}]"
+    )]
+    DepositionZoneFractionOutOfRange {
+        fraction: f32,
+        threshold: f32,
+        lo: f32,
+        hi: f32,
+    },
+
+    /// A coast cell carries a `coast_type` discriminant outside `0..=4`.
+    /// Distinct from [`ValidationError::CoastTypeOutOfRange`]: this variant
+    /// is emitted by [`coast_type_v2_well_formed`] which enforces the
+    /// additive LavaDelta-age constraint; the original `coast_type_well_formed`
+    /// still emits `CoastTypeOutOfRange`.
+    #[error(
+        "coast_type_v2_well_formed: coast cell at flat index {cell_index} has discriminant {value} (expected 0..=4)"
+    )]
+    CoastTypeV2DiscOutOfRange { cell_index: usize, value: u8 },
+
+    /// A non-Young preset has LavaDelta coast cells. LavaDelta (discriminant 4)
+    /// may only appear on islands with `IslandAge::Young`.
+    #[error(
+        "coast_type_v2_well_formed: {count} LavaDelta cell(s) found on non-Young preset (island_age = {island_age:?})"
+    )]
+    LavaDeltaOnNonYoungPreset { count: usize, island_age: IslandAge },
+
+    /// The mean V3Lfpm precipitation across land cells is outside the
+    /// physically plausible band `[PRECIP_MEAN_LO, PRECIP_MEAN_HI]`.
+    ///
+    /// Since the V3 sweep normalises `P ∈ [0, 1]`, a mean far below 0.01
+    /// indicates the pipeline produced essentially zero rain (physics
+    /// broken), and a mean above 1.0 indicates something upstream emitted
+    /// values outside the normalised range (numerical explosion).
+    #[error(
+        "precipitation_mass_balance: mean precipitation {mean:.6} outside [{lo:.4}, {hi:.4}] on V3Lfpm"
+    )]
+    PrecipitationMassBalanceViolation { mean: f32, lo: f32, hi: f32 },
 
     /// A height value became non-finite (NaN or ±∞) during erosion.
     #[error("erosion: height at flat index {cell_index} is non-finite ({value})")]
@@ -744,6 +809,284 @@ pub fn erosion_no_excessive_sea_crossing(world: &WorldState) -> Result<(), Valid
             pre_land: pre,
             post_land: post,
             fraction,
+        });
+    }
+
+    Ok(())
+}
+
+// ─── Sprint 3 invariants ──────────────────────────────────────────────────────
+
+/// Sediment thickness above which a land cell is counted as a "deposition zone"
+/// by [`deposition_zone_fraction_realistic`].
+pub const DEPOSITION_FLAG_THRESHOLD: f32 = 0.15;
+
+/// Lower bound on the fraction of land cells in a deposition zone.
+///
+/// Set to `0.0` in v1: at the current conservative SPACE-lite parameter
+/// calibration (K_Q = 2e-2, K_bed = 5e-3, 10×10 outer loop), transport
+/// capacity generally exceeds incoming Qs on small/medium grids (64²–128²),
+/// so net-deposition cells may be near 0. A non-zero lower bound would
+/// false-positive on all stock presets. Task 3.10 should tighten this once
+/// the deposition physics is calibrated for the 256² hero shots.
+pub const DEPOSITION_ZONE_FRACTION_LO: f32 = 0.0;
+
+/// Upper bound on the fraction of land cells in a deposition zone.
+/// Above this value the entire island is sediment-submerged — numerical
+/// explosion in the deposition stage.
+pub const DEPOSITION_ZONE_FRACTION_HI: f32 = 0.70;
+
+/// Lower bound on mean V3Lfpm precipitation (normalised `[0, 1]`).
+/// A mean below this threshold means the sweep produced essentially zero rain.
+pub const PRECIP_MEAN_LO: f32 = 1e-4;
+
+/// Upper bound on mean V3Lfpm precipitation (normalised `[0, 1]`).
+/// The normalised field is bounded by 1.0 per cell; a mean above this
+/// threshold signals out-of-range values from a numerical explosion.
+pub const PRECIP_MEAN_HI: f32 = 1.0;
+
+/// Every land cell's sediment thickness `hs` must be finite and in `[0, 1]`;
+/// every sea cell must have `hs == 0.0`.
+///
+/// Returns `Err(SedimentFieldMissing)` if `authoritative.sediment` is `None`
+/// (the Sprint 3 init hook in `SedimentUpdateStage` must have run).
+///
+/// # Errors
+///
+/// * [`ValidationError::SedimentFieldMissing`] — field is absent.
+/// * [`ValidationError::SedimentOutOfRange`] — land cell `hs` outside `[0, 1]` or non-finite.
+/// * [`ValidationError::SedimentSeaCellNonZero`] — sea cell `hs != 0.0`.
+pub fn sediment_bounded(world: &WorldState) -> Result<(), ValidationError> {
+    let sediment = world
+        .authoritative
+        .sediment
+        .as_ref()
+        .ok_or(ValidationError::SedimentFieldMissing)?;
+
+    let coast_mask =
+        world
+            .derived
+            .coast_mask
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "derived.coast_mask",
+            })?;
+
+    for (i, (&hs, &is_sea)) in sediment
+        .data
+        .iter()
+        .zip(coast_mask.is_sea.data.iter())
+        .enumerate()
+    {
+        if is_sea == 1 {
+            // Sea cells must be exactly zero.
+            if hs != 0.0 {
+                return Err(ValidationError::SedimentSeaCellNonZero {
+                    cell_index: i,
+                    value: hs,
+                });
+            }
+        } else {
+            // Land cells (including coast): finite and in [0, 1].
+            if !hs.is_finite() || !(0.0..=1.0).contains(&hs) {
+                return Err(ValidationError::SedimentOutOfRange {
+                    cell_index: i,
+                    value: hs,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// The fraction of land cells with `hs > `[`DEPOSITION_FLAG_THRESHOLD`] must
+/// lie within `[`[`DEPOSITION_ZONE_FRACTION_LO`]`, `[`DEPOSITION_ZONE_FRACTION_HI`]`]`.
+///
+/// In v1 `DEPOSITION_ZONE_FRACTION_LO = 0.0`, so only the upper bound is
+/// actively enforced. At current SPACE-lite parameter calibration, transport
+/// capacity generally exceeds incoming Qs on 64²–128² grids, producing
+/// near-zero deposition fractions on stock presets. The lower bound will be
+/// tightened in Task 3.10 once 256² hero-shot calibration is complete.
+///
+/// Returns `Ok(())` immediately if `land_cell_count == 0` (all-sea preset;
+/// no deposition zones to fraction-count).
+///
+/// # Errors
+///
+/// * [`ValidationError::SedimentFieldMissing`] — `authoritative.sediment` absent.
+/// * [`ValidationError::MissingPrecondition`] — `derived.coast_mask` absent.
+/// * [`ValidationError::DepositionZoneFractionOutOfRange`] — fraction outside `[LO, HI]`.
+pub fn deposition_zone_fraction_realistic(world: &WorldState) -> Result<(), ValidationError> {
+    let sediment = world
+        .authoritative
+        .sediment
+        .as_ref()
+        .ok_or(ValidationError::SedimentFieldMissing)?;
+
+    let coast_mask =
+        world
+            .derived
+            .coast_mask
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "derived.coast_mask",
+            })?;
+
+    let land_total = coast_mask.land_cell_count;
+    if land_total == 0 {
+        return Ok(()); // all-sea preset; no land → skip.
+    }
+
+    let deposition_count = sediment
+        .data
+        .iter()
+        .zip(coast_mask.is_land.data.iter())
+        .filter(|&(&hs, &is_land)| is_land == 1 && hs > DEPOSITION_FLAG_THRESHOLD)
+        .count() as u32;
+
+    let fraction = deposition_count as f32 / land_total as f32;
+
+    if !(DEPOSITION_ZONE_FRACTION_LO..=DEPOSITION_ZONE_FRACTION_HI).contains(&fraction) {
+        return Err(ValidationError::DepositionZoneFractionOutOfRange {
+            fraction,
+            threshold: DEPOSITION_FLAG_THRESHOLD,
+            lo: DEPOSITION_ZONE_FRACTION_LO,
+            hi: DEPOSITION_ZONE_FRACTION_HI,
+        });
+    }
+
+    Ok(())
+}
+
+/// Sprint 3 Task 3.9 additive coast-type constraint.
+///
+/// Enforces two sub-invariants on top of [`coast_type_well_formed`]:
+/// 1. Every coast cell (`is_coast == 1`) has discriminant in `0..=4`.
+/// 2. `LavaDelta` (discriminant 4) may only appear when
+///    `preset.island_age == IslandAge::Young`. Mature and Old presets must
+///    have zero LavaDelta cells.
+///
+/// This is a **separate, additive** invariant — [`coast_type_well_formed`]
+/// is not replaced or modified.
+///
+/// Returns `Ok(())` immediately if either `derived.coast_mask` or
+/// `derived.coast_type` is `None` (self-skipping; stage hasn't run).
+///
+/// # Errors
+///
+/// * [`ValidationError::CoastTypeV2DiscOutOfRange`] — coast cell discriminant > 4.
+/// * [`ValidationError::LavaDeltaOnNonYoungPreset`] — LavaDelta cells on Mature / Old island.
+pub fn coast_type_v2_well_formed(world: &WorldState) -> Result<(), ValidationError> {
+    let coast_mask = match world.derived.coast_mask.as_ref() {
+        Some(m) => m,
+        None => return Ok(()),
+    };
+    let coast_type = match world.derived.coast_type.as_ref() {
+        Some(ct) => ct,
+        None => return Ok(()),
+    };
+
+    const LAVA_DELTA_DISC: u8 = 4;
+    let mut lava_delta_count: usize = 0;
+
+    for (i, (&is_coast, &ct_value)) in coast_mask
+        .is_coast
+        .data
+        .iter()
+        .zip(coast_type.data.iter())
+        .enumerate()
+    {
+        if is_coast == 1 {
+            if ct_value > LAVA_DELTA_DISC {
+                return Err(ValidationError::CoastTypeV2DiscOutOfRange {
+                    cell_index: i,
+                    value: ct_value,
+                });
+            }
+            if ct_value == LAVA_DELTA_DISC {
+                lava_delta_count += 1;
+            }
+        }
+    }
+
+    // Young-only constraint: non-Young presets must have zero LavaDelta cells.
+    if lava_delta_count > 0 && world.preset.island_age != IslandAge::Young {
+        return Err(ValidationError::LavaDeltaOnNonYoungPreset {
+            count: lava_delta_count,
+            island_age: world.preset.island_age,
+        });
+    }
+
+    Ok(())
+}
+
+/// V3Lfpm precipitation mass-balance sanity check.
+///
+/// Only runs when `preset.climate.precipitation_variant == V3Lfpm`; callers
+/// (and [`crate::sim::ValidationStage`]) must gate on this condition and skip
+/// for `V2Raymarch`.
+///
+/// The V3 sweep normalises `P ∈ [0, 1]` per cell in its last step. A mean
+/// below [`PRECIP_MEAN_LO`] means the pipeline produced effectively zero rain;
+/// a mean above [`PRECIP_MEAN_HI`] means values leaked outside the `[0, 1]`
+/// normalisation range. Both are pipeline-breakage indicators, not
+/// calibration issues.
+///
+/// Decision (Task 3.9): use a simple `mean_p ∈ [PRECIP_MEAN_LO, PRECIP_MEAN_HI]`
+/// guard rather than an analytical "half-saturation" proxy, because (a) the
+/// analytical proxy requires knowing the per-cell normalisation scale which is
+/// internal to the V3 sweep, and (b) the simpler check reliably catches the
+/// two real failure modes (zero rain, out-of-range explosion) without false-
+/// positive-ing on the 5 shipped archetypes where measured mean P ∈ [0.1, 0.8].
+///
+/// Returns `Err(MissingPrecondition)` if `baked.precipitation` is `None`;
+/// callers that gate on V2/V3 dispatch should call this only after the
+/// precipitation stage has run.
+///
+/// # Errors
+///
+/// * [`ValidationError::MissingPrecondition`] — `baked.precipitation` absent.
+/// * [`ValidationError::PrecipitationMassBalanceViolation`] — mean outside `[LO, HI]`.
+pub fn precipitation_mass_balance(world: &WorldState) -> Result<(), ValidationError> {
+    let precip =
+        world
+            .baked
+            .precipitation
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "baked.precipitation",
+            })?;
+
+    let coast_mask =
+        world
+            .derived
+            .coast_mask
+            .as_ref()
+            .ok_or(ValidationError::MissingPrecondition {
+                field: "derived.coast_mask",
+            })?;
+
+    let land_total = coast_mask.land_cell_count;
+    if land_total == 0 {
+        return Ok(()); // all-sea preset; no land → skip.
+    }
+
+    let sum_p: f32 = precip
+        .data
+        .iter()
+        .zip(coast_mask.is_land.data.iter())
+        .filter(|&(_, &is_land)| is_land == 1)
+        .map(|(&p, _)| p)
+        .sum();
+
+    let mean_p = sum_p / land_total as f32;
+
+    if !(PRECIP_MEAN_LO..=PRECIP_MEAN_HI).contains(&mean_p) {
+        return Err(ValidationError::PrecipitationMassBalanceViolation {
+            mean: mean_p,
+            lo: PRECIP_MEAN_LO,
+            hi: PRECIP_MEAN_HI,
         });
     }
 
@@ -1526,6 +1869,412 @@ mod tests {
                 ValidationError::ErosionHeightNonFinite { cell_index: 0, .. }
             ),
             "expected ErosionHeightNonFinite at cell 0, got: {err}"
+        );
+    }
+
+    // ── Sprint 3 invariant tests ─────────────────────────────────────────────
+
+    use super::{
+        coast_type_v2_well_formed, deposition_zone_fraction_realistic, precipitation_mass_balance,
+        sediment_bounded,
+    };
+    use crate::preset::PrecipitationVariant;
+
+    /// Build a minimal world with `coast_mask` (all-land), `sediment`, and
+    /// `baked.precipitation` for Sprint 3 invariant unit tests.
+    fn make_sprint3_world(
+        w: u32,
+        h: u32,
+        is_land: Vec<u8>,
+        is_sea: Vec<u8>,
+        sediment_data: Vec<f32>,
+        precip_data: Vec<f32>,
+    ) -> WorldState {
+        let n = (w * h) as usize;
+        let is_coast = vec![0u8; n];
+        let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(w, h));
+        world.derived.coast_mask = Some(make_coast_mask(w, h, is_land, is_sea, is_coast));
+        let mut sed = ScalarField2D::<f32>::new(w, h);
+        sed.data = sediment_data;
+        world.authoritative.sediment = Some(sed);
+        let mut precip = ScalarField2D::<f32>::new(w, h);
+        precip.data = precip_data;
+        world.baked.precipitation = Some(precip);
+        world
+    }
+
+    // ── sediment_bounded: test 1 — all-land world with valid hs ──────────────
+    #[test]
+    fn sediment_bounded_accepts_valid_land_state() {
+        let n = 4usize;
+        let world = make_sprint3_world(
+            2,
+            2,
+            vec![1u8; n],
+            vec![0u8; n],
+            vec![0.0, 0.1, 0.5, 1.0],
+            vec![0.3; n],
+        );
+        assert!(
+            sediment_bounded(&world).is_ok(),
+            "valid sediment values in [0,1] on land cells must pass"
+        );
+    }
+
+    // ── sediment_bounded: test 2 — NaN triggers error ────────────────────────
+    #[test]
+    fn sediment_bounded_rejects_nan() {
+        let n = 4usize;
+        let world = make_sprint3_world(
+            2,
+            2,
+            vec![1u8; n],
+            vec![0u8; n],
+            vec![f32::NAN, 0.1, 0.5, 0.9],
+            vec![0.3; n],
+        );
+        let err = sediment_bounded(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::SedimentOutOfRange { cell_index: 0, .. }
+            ),
+            "NaN hs must fire SedimentOutOfRange at cell 0, got: {err}"
+        );
+    }
+
+    // ── sediment_bounded: test 3 — hs > 1.0 triggers error ──────────────────
+    #[test]
+    fn sediment_bounded_rejects_above_upper() {
+        let n = 4usize;
+        let world = make_sprint3_world(
+            2,
+            2,
+            vec![1u8; n],
+            vec![0u8; n],
+            vec![1.5, 0.1, 0.5, 0.9],
+            vec![0.3; n],
+        );
+        let err = sediment_bounded(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::SedimentOutOfRange { cell_index: 0, .. }
+            ),
+            "hs=1.5 must fire SedimentOutOfRange at cell 0, got: {err}"
+        );
+    }
+
+    // ── sediment_bounded: test 4 — sea cell with non-zero hs ─────────────────
+    //
+    // 2×1: cell 0 is sea, cell 1 is land. Sea cell has hs=0.1 → must fire.
+    #[test]
+    fn sediment_bounded_rejects_sea_cell_nonzero() {
+        let world = make_sprint3_world(
+            2,
+            1,
+            vec![0u8, 1u8], // is_land
+            vec![1u8, 0u8], // is_sea
+            vec![0.1, 0.3], // sediment — sea cell has 0.1 (wrong)
+            vec![0.3, 0.3],
+        );
+        let err = sediment_bounded(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::SedimentSeaCellNonZero { cell_index: 0, .. }
+            ),
+            "sea cell with hs=0.1 must fire SedimentSeaCellNonZero at cell 0, got: {err}"
+        );
+    }
+
+    // ── sediment_bounded: test 5 — missing sediment field returns error ───────
+    #[test]
+    fn sediment_bounded_missing_field_returns_error() {
+        let n = 4usize;
+        let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(2, 2));
+        world.derived.coast_mask = Some(make_coast_mask(
+            2,
+            2,
+            vec![1u8; n],
+            vec![0u8; n],
+            vec![0u8; n],
+        ));
+        // Do NOT set authoritative.sediment.
+        let err = sediment_bounded(&world).unwrap_err();
+        assert!(
+            matches!(err, ValidationError::SedimentFieldMissing),
+            "missing sediment must fire SedimentFieldMissing, got: {err}"
+        );
+    }
+
+    // ── deposition_zone_fraction: test 1 — nominal fraction in [LO, HI] ──────
+    //
+    // 10 land cells: 3 with hs > 0.15 → fraction = 0.30 ∈ [0.05, 0.70].
+    #[test]
+    fn deposition_zone_fraction_realistic_accepts_nominal() {
+        let n = 10usize;
+        let mut sed = vec![0.05f32; n]; // all below threshold initially
+        sed[0] = 0.20; // above DEPOSITION_FLAG_THRESHOLD = 0.15
+        sed[4] = 0.50;
+        sed[7] = 0.80;
+        let world = make_sprint3_world(10, 1, vec![1u8; n], vec![0u8; n], sed, vec![0.3; n]);
+        assert!(
+            deposition_zone_fraction_realistic(&world).is_ok(),
+            "30% deposition fraction must be accepted (in [0.0, 0.70])"
+        );
+    }
+
+    // ── deposition_zone_fraction: test 2 — zero deposition fraction is accepted
+    //
+    // At v1 SPACE-lite calibration, small grids often produce 0% deposition
+    // (transport capacity exceeds incoming Qs). LO = 0.0 so this must pass.
+    // The lower bound will be tightened in Task 3.10 once the 256² deposition
+    // physics is calibrated.
+    #[test]
+    fn deposition_zone_fraction_realistic_accepts_zero_at_v1_lo_bound() {
+        let n = 10usize;
+        let world = make_sprint3_world(
+            10,
+            1,
+            vec![1u8; n],
+            vec![0u8; n],
+            vec![0.05f32; n], // all below threshold → fraction = 0.0
+            vec![0.3; n],
+        );
+        // With LO = 0.0, fraction 0.0 is valid (no lower bound enforced in v1).
+        assert!(
+            deposition_zone_fraction_realistic(&world).is_ok(),
+            "fraction 0.0 must be accepted when DEPOSITION_ZONE_FRACTION_LO = 0.0 (v1 calibration)"
+        );
+    }
+
+    // ── deposition_zone_fraction: test 3 — saturated (fraction = 1.0) ────────
+    //
+    // All land cells have hs = 1.0 (above threshold) → fraction = 1.0 > HI.
+    #[test]
+    fn deposition_zone_fraction_realistic_rejects_saturated() {
+        let n = 10usize;
+        let world = make_sprint3_world(
+            10,
+            1,
+            vec![1u8; n],
+            vec![0u8; n],
+            vec![1.0f32; n], // all above threshold
+            vec![0.3; n],
+        );
+        let err = deposition_zone_fraction_realistic(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::DepositionZoneFractionOutOfRange { fraction, .. }
+                if fraction == 1.0
+            ),
+            "100% fraction must fire DepositionZoneFractionOutOfRange, got: {err}"
+        );
+    }
+
+    // ── deposition_zone_fraction: test 4 — all-sea world returns Ok ──────────
+    #[test]
+    fn deposition_zone_fraction_realistic_accepts_empty_land() {
+        let n = 4usize;
+        // All-sea world: land_cell_count == 0.
+        let world = make_sprint3_world(
+            2,
+            2,
+            vec![0u8; n], // no land
+            vec![1u8; n], // all sea
+            vec![0.0f32; n],
+            vec![0.0f32; n],
+        );
+        assert!(
+            deposition_zone_fraction_realistic(&world).is_ok(),
+            "all-sea world (land_count=0) must return Ok immediately"
+        );
+    }
+
+    // ── coast_type_v2_well_formed: helpers ────────────────────────────────────
+
+    fn make_v2_coast_world(
+        w: u32,
+        h: u32,
+        is_coast_data: Vec<u8>,
+        coast_type_data: Vec<u8>,
+        island_age: IslandAge,
+    ) -> WorldState {
+        let n = (w * h) as usize;
+        let is_land = is_coast_data.clone();
+        let is_sea = vec![0u8; n];
+        let mut preset = test_preset();
+        preset.island_age = island_age;
+        let mut world = WorldState::new(Seed(0), preset, Resolution::new(w, h));
+        world.derived.coast_mask = Some(make_coast_mask(w, h, is_land, is_sea, is_coast_data));
+        let mut ct = ScalarField2D::<u8>::new(w, h);
+        ct.data = coast_type_data;
+        world.derived.coast_type = Some(ct);
+        world
+    }
+
+    // ── coast_type_v2_well_formed: test 1 — Young with LavaDelta ────────────
+    #[test]
+    fn coast_type_v2_well_formed_accepts_young_with_lava_delta() {
+        // 3 coast cells: types Beach(1), RockyHeadland(3), LavaDelta(4).
+        // Young preset → LavaDelta is allowed.
+        let world = make_v2_coast_world(3, 1, vec![1, 1, 1], vec![1, 3, 4], IslandAge::Young);
+        assert!(
+            coast_type_v2_well_formed(&world).is_ok(),
+            "Young preset with LavaDelta must pass v2 invariant"
+        );
+    }
+
+    // ── coast_type_v2_well_formed: test 2 — Mature with LavaDelta rejects ────
+    #[test]
+    fn coast_type_v2_well_formed_rejects_mature_with_lava_delta() {
+        let world = make_v2_coast_world(3, 1, vec![1, 1, 1], vec![1, 3, 4], IslandAge::Mature);
+        let err = coast_type_v2_well_formed(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::LavaDeltaOnNonYoungPreset {
+                    count: 1,
+                    island_age: IslandAge::Mature,
+                }
+            ),
+            "Mature preset with LavaDelta must fire LavaDeltaOnNonYoungPreset, got: {err}"
+        );
+    }
+
+    // ── coast_type_v2_well_formed: test 3 — Mature without LavaDelta passes ──
+    #[test]
+    fn coast_type_v2_well_formed_accepts_mature_without_lava() {
+        let world = make_v2_coast_world(3, 1, vec![1, 1, 1], vec![1, 2, 3], IslandAge::Mature);
+        assert!(
+            coast_type_v2_well_formed(&world).is_ok(),
+            "Mature preset without LavaDelta must pass v2 invariant"
+        );
+    }
+
+    // ── coast_type_v2_well_formed: test 4 — discriminant 5 on coast cell ─────
+    #[test]
+    fn coast_type_v2_well_formed_rejects_disc_five_on_coast() {
+        let world = make_v2_coast_world(2, 1, vec![1, 1], vec![0, 5], IslandAge::Young);
+        let err = coast_type_v2_well_formed(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::CoastTypeV2DiscOutOfRange {
+                    cell_index: 1,
+                    value: 5
+                }
+            ),
+            "disc=5 on a coast cell must fire CoastTypeV2DiscOutOfRange, got: {err}"
+        );
+    }
+
+    // ── coast_type_v2_well_formed: test 5 — Old with LavaDelta rejects ────────
+    #[test]
+    fn coast_type_v2_well_formed_rejects_old_with_lava_delta() {
+        let world = make_v2_coast_world(2, 1, vec![1, 1], vec![1, 4], IslandAge::Old);
+        let err = coast_type_v2_well_formed(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::LavaDeltaOnNonYoungPreset {
+                    island_age: IslandAge::Old,
+                    ..
+                }
+            ),
+            "Old preset with LavaDelta must fire LavaDeltaOnNonYoungPreset, got: {err}"
+        );
+    }
+
+    // ── precipitation_mass_balance: helpers ───────────────────────────────────
+
+    fn make_precip_world(
+        w: u32,
+        h: u32,
+        precip_data: Vec<f32>,
+        variant: crate::preset::PrecipitationVariant,
+    ) -> WorldState {
+        let n = (w * h) as usize;
+        let mut preset = test_preset();
+        preset.climate.precipitation_variant = variant;
+        let mut world = WorldState::new(Seed(0), preset, Resolution::new(w, h));
+        world.derived.coast_mask = Some(make_coast_mask(
+            w,
+            h,
+            vec![1u8; n],
+            vec![0u8; n],
+            vec![0u8; n],
+        ));
+        let mut p = ScalarField2D::<f32>::new(w, h);
+        p.data = precip_data;
+        world.baked.precipitation = Some(p);
+        world
+    }
+
+    // ── precipitation_mass_balance: test 1 — nominal V3 ─────────────────────
+    #[test]
+    fn precipitation_mass_balance_accepts_nominal_v3() {
+        // Mean of 0.3 is well within [1e-4, 1.0].
+        let world = make_precip_world(4, 1, vec![0.2, 0.3, 0.4, 0.3], PrecipitationVariant::V3Lfpm);
+        assert!(
+            precipitation_mass_balance(&world).is_ok(),
+            "nominal V3 precipitation must pass mass-balance check"
+        );
+    }
+
+    // ── precipitation_mass_balance: test 2 — V2 world skips even if broken ───
+    //
+    // The invariant is guarded at the ValidationStage level; calling it
+    // directly on a V2 world with zero precip should not panic, but the test
+    // exercises the skip-logic by relying on ValidationStage's guard.
+    // We test the function directly here with a valid world to verify it
+    // at least returns Ok when the precip values are valid (V2 = skip at
+    // call-site, but here we call it directly and it does run).
+    //
+    // The meaningful guard test is in validation_stage.rs where the `if V3Lfpm`
+    // branch lives. Here we just verify the function doesn't panic or return
+    // an error when called on a V2-labelled world with valid precip values.
+    #[test]
+    fn precipitation_mass_balance_v2_world_with_valid_precip_passes() {
+        let world = make_precip_world(4, 1, vec![0.3; 4], PrecipitationVariant::V2Raymarch);
+        // The function itself doesn't check the variant — it's the caller's job.
+        assert!(
+            precipitation_mass_balance(&world).is_ok(),
+            "valid precip on a V2 world must pass when called directly"
+        );
+    }
+
+    // ── precipitation_mass_balance: test 3 — zero precip fires ───────────────
+    #[test]
+    fn precipitation_mass_balance_rejects_zero() {
+        let world = make_precip_world(4, 1, vec![0.0f32; 4], PrecipitationVariant::V3Lfpm);
+        let err = precipitation_mass_balance(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::PrecipitationMassBalanceViolation { mean, .. }
+                if mean == 0.0
+            ),
+            "zero precipitation must fire PrecipitationMassBalanceViolation, got: {err}"
+        );
+    }
+
+    // ── precipitation_mass_balance: test 4 — explosion fires ─────────────────
+    //
+    // All cells with P = 5.0 → mean = 5.0 > PRECIP_MEAN_HI = 1.0.
+    #[test]
+    fn precipitation_mass_balance_rejects_explosion() {
+        let world = make_precip_world(4, 1, vec![5.0f32; 4], PrecipitationVariant::V3Lfpm);
+        let err = precipitation_mass_balance(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::PrecipitationMassBalanceViolation { mean, .. }
+                if mean == 5.0
+            ),
+            "P=5 explosion must fire PrecipitationMassBalanceViolation, got: {err}"
         );
     }
 }
