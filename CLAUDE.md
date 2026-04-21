@@ -504,6 +504,150 @@ app ──▶ render ──▶ gpu ──┐
   the 3 baseline beauty PNGs in the same commit (truth hashes stay
   bit-identical since sim is unaffected by extent; only beauty
   byte_hashes drift with camera geometry).
+- **`authoritative.sediment` initialization lives at the end of
+  `CoastMaskStage::run`** (Sprint 3 DD1). Land cells get
+  `hs_init = 0.1`, sea cells `0.0`, using the just-written
+  `derived.coast_mask.is_land` oracle — NOT `height > sea_level`
+  (the Moore8/Von4 diagonal gotcha applies). The re-allocation rule
+  is allocate-if-None-or-mismatched-resolution, reuse otherwise;
+  `sediment_reused_across_reruns_when_resolution_unchanged` locks
+  the pointer+capacity stability. `TopographyStage` still writes a
+  zero-field placeholder at `authoritative.sediment` because the
+  `SaveMode::Minimal` payload contract demands `Some(...)` at the
+  TopographyStage/CoastMaskStage boundary — CoastMaskStage overwrites
+  with the `0.1·is_land` pattern microseconds later in
+  `default_pipeline()`, so the two write sites are intentional, not
+  drift. Invalidation flows through the **Coastal arm** of
+  `clear_stage_outputs` (Sprint 3 Task 3.1), which cascades from
+  `invalidate_from(StageId::Topography)` via the StageId ordering.
+- **SPACE-lite variant dispatch reads from
+  `preset.erosion.spim_variant`** (Sprint 3 DD2). Default `SpaceLite`
+  runs the DD2 dual equation (bedrock incision + sediment entrainment
+  + `exp(-hs/H_STAR)` shielding); `Plain` falls back to Sprint 2's
+  single-equation SPIM for Task 3.10 baseline regen
+  (`preset_override.erosion.spim_variant = Some(Plain)`). Both
+  branches share `stream_power_kernel(k, a, s, m, n)` via `#[inline]`
+  so Plain stays bit-exact with pre-3.2 behaviour —
+  `plain_branch_is_deterministic_across_repeated_runs` locks this.
+  K_bed = 5e-3 default; tuned against DD2's "exp(-0.1/0.05) ≈ 0.14
+  shielding at hs = 0.1" so effective K at the coast stays ≈ 9e-5,
+  well below Sprint 2's 5% sea-crossing invariant threshold. K
+  calibration sweeps belong to Task 3.10, not mid-sprint.
+- **`ErosionOuterLoop` inner step is a 4-stage sequence** (Sprint 3
+  Task 3.3): `[stream_power_incision, sediment_update, deposition,
+  hillslope_diffusion]`. `erosion_inner_step_canonical_order` locks
+  it; the existing
+  `erosion_outer_loop_uses_canonical_routing_chain` covers the
+  outer Coastal..RiverExtraction slice and is untouched.
+  `SedimentUpdateStage::run` does the full DD3 Qs-routing +
+  deposition math in one Kahn topo-sorted traversal (D computation,
+  `hs += D·dt`, Qs_out propagation), writing
+  `derived.deposition_flux[p] = D[p]` as a by-product.
+  `DepositionStage::run` is a diagnostic `Ok(())` finalization hook
+  — splitting the math across two stages would force a double O(N)
+  traversal. `derived.deposition_flux` is invalidated under the
+  **Topography arm** (NOT Coastal) because `ErosionOuterLoop`'s
+  end-of-batch `invalidate_from(Coastal)` would otherwise wipe the
+  field on every successful run; this matches the sticky pattern
+  already used by `derived.erosion_baseline`. Counter-test
+  `invalidate_from_coastal_preserves_deposition_flux` locks it.
+- **`PrecipitationStage` branches on
+  `preset.climate.precipitation_variant`** (Sprint 3 DD4). Default
+  `V3Lfpm` runs a sequential upwind sweep with stateful water-vapour
+  `q`, orographic condensation + fallout, and coast-proximity marine
+  recharge. `V2Raymarch` preserves Sprint 1B's per-cell raymarch
+  verbatim for Task 3.10 baseline regen. The sweep order is computed
+  on first invocation via a stable sort on `-wind · p_position` and
+  cached in `derived.precipitation_sweep_order: Option<Vec<usize>>`
+  — cleared under the **Precipitation arm** so wind-direction slider
+  drags rebuild it. `run_v3_sweep` preheats two throwaway passes
+  into a `q_scratch` buffer before the main integration to avoid
+  near-axis-aligned cold-start transients. Clamp `P = max(0, Δq)`
+  floors negative precipitation that marine_recharge injection near
+  the coast can produce — per-cell sign is not a physical invariant
+  in v1 (aggregate budget is `precipitation_mass_balance`'s job).
+- **`ClimateParams` is a new nested struct on
+  `IslandArchetypePreset`** (Sprint 3 Task 3.4) holding
+  `precipitation_variant / q_0 / tau_c / tau_f`.
+  `prevailing_wind_dir` and `marine_moisture_strength` deliberately
+  stay top-level on `IslandArchetypePreset` to avoid breaking every
+  existing RON preset; a future sprint may consolidate. All
+  `ClimateParams` fields are `#[serde(default = "default_fn")]` so
+  Sprint-2-vintage RON without a `climate:` block deserializes
+  cleanly into the V3Lfpm defaults.
+- **Default constants for `ClimateParams` fields duplicate those
+  in `sim::climate::precipitation_v3`** (Sprint 3 reviewer S3).
+  `core::preset::default_q_0/tau_c/tau_f` mirror `Q_0_DEFAULT /
+  TAU_C_DEFAULT / TAU_F_DEFAULT` in precipitation_v3.rs because
+  invariant #1 forbids `core` from depending on `sim`. Same
+  structural issue as the SPACE-lite defaults. Future cleanup
+  could relocate the canonical values into `core::preset` and
+  re-export from `precipitation_v3`; out of scope for Sprint 3.
+- **FogLikelihoodStage v2 + SoilMoistureStage fog coupling**
+  (Sprint 3 DD5). Fog likelihood is `elev_band(p) · (0.5 + 0.5 ·
+  uplift)` where `elev_band` is a Gaussian bell centred on
+  `inversion_z = 0.65·max_relief` with width `0.15·max_relief`
+  (trade-wind inversion-layer proxy). `SoilMoistureStage::run`
+  consumes `baked.fog_likelihood`, writes
+  `derived.fog_water_input[p] = FOG_WATER_GAIN · fog_likelihood[p]`
+  (GAIN = 0.15) on land cells, and adds
+  `fog_water_input · FOG_TO_SM_COUPLING` (COUPLING = 0.40) to
+  `soil_moisture`, clamped to 1.0. `derived.fog_water_input` is
+  cleared under the **SoilMoisture arm** (the stage that produces
+  it). CloudForest bell was simultaneously retightened:
+  `sigma_fog = 0.08` (was 0.12) and the direct fog-in-bell weight
+  dropped from 1.0 to 0.3 — fog now feeds CloudForest primarily
+  through the raised soil_moisture term rather than as a direct
+  bell multiplier, which was double-counting.
+- **`CoastType` enum is now 5 classes** (Sprint 3 DD6): `Cliff=0`,
+  `Beach=1`, `Estuary=2`, `RockyHeadland=3`, **`LavaDelta=4`**,
+  `Unknown=0xFF`. `CoastTypeStage::run` dispatches on
+  `preset.erosion.coast_type_variant`: `V2FetchIntegral` (default)
+  runs 16-direction raycast fetch integral with
+  windward-peaks-at-1.0 weighting plus a first-match-wins 5-class
+  classifier (`is_mouth → LavaDelta(Young ∧ ...) → Cliff → RockyHeadland
+  → Beach → RockyHeadland fallthrough`); `V1Cheap` preserves Sprint
+  2's bit-exact classifier for Task 3.10 pre_* regen.
+  `derived.volcanic_centers: Option<Vec<[f32; 2]>>` (NEW derived
+  field; `Vec<[f32;2]>` per-sprint-2.5 hex_debug precedent, not a
+  ScalarField2D) is written by `TopographyStage::run` in normalized
+  `[0,1]²` grid space and consumed by the v2 LavaDelta proximity
+  check. `COAST_TYPE_TABLE` palette is now `[[f32; 4]; 5]`;
+  `sample_f32` sampler updated `t * 4.0` → `t * 5.0` in lockstep
+  with `ValueRange::Fixed(0.0, 5.0)` on the `coast_type` overlay.
+  `core::validation::coast_type_well_formed` widened to 0..=4 in
+  3.6; the additional `coast_type_v2_well_formed` invariant (3.9)
+  enforces LavaDelta-only-on-Young on top.
+- **16-direction fetch integral uses `-cos(θ − wind_angle)` for
+  the windward weight, not DD6's literal `cos(...)`** (Sprint 3
+  reviewer I1). `wind_angle` in this codebase is the direction
+  wind *travels* (matches `climate::common::wind_unit`); DD6's
+  `cos(θ - wind_angle)` formula peaks at θ = wind_angle, which is
+  the *downwind* direction — the opposite of the physical intent
+  that DD6's own Chinese comment 「迎风 1.0, 背风 0.5」 states
+  (windward 1.0, leeward 0.5). The sign flip restores windward
+  maximum weight. Future edits to fetch weighting must use
+  windward-maximum semantics or lose the Cliff classifier's §10
+  Cliff>5% acceptance on real archetypes.
+- **`OverlayRegistry::sprint_3_defaults` is the current method
+  name** (Sprint 3 Task 3.7). Replaces `sprint_2_5_defaults` —
+  atomic rename with no alias per the existing rename protocol.
+  20 overlays total: Sprint 2.5's 16 + four new Sprint 3
+  descriptors (`sediment_thickness` → Turbo +
+  `ScalarAuthoritative("sediment")`; `deposition_flux` → Viridis +
+  `LogCompressedClampPercentile(0.99)`; `fog_water_input` → Blues +
+  `Auto`; `lava_delta_mask` → new `PaletteId::LavaDeltaMask`
+  sampling only discriminant 4 as opaque). When a future sprint
+  adds overlays, rename this method in the same commit as the new
+  entries — CLAUDE.md's existing "rename not alias" rule applies.
+  `ScalarAuthoritative` was an enum variant with no dispatch arm
+  before 3.7; the `resolve_scalar_source` match in `overlay.rs`
+  now resolves `"sediment"` → `world.authoritative.sediment`.
+  String keys for the new overlays (`"sediment"`,
+  `"deposition_flux"`, `"fog_water_input"`) stay confined to
+  `overlay.rs` per invariant #8; error-message payloads in
+  `invalidation.rs` / `save.rs` are the usual whitelisted
+  exceptions.
 
 ---
 
