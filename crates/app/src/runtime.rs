@@ -816,18 +816,36 @@ impl Runtime {
             }
         }
 
-        // Sprint 2.7: erosion slider re-run protocol (CLAUDE.md Gotchas):
+        // Sprint 2.7 / 3.8: erosion + SPACE-lite slider re-run protocol (CLAUDE.md Gotchas):
         //   1. Sync world.preset from self.preset so stages read the new values.
         //   2. Invalidate caches from the ErosionOuterLoop frontier.
         //   3. Re-run from ErosionOuterLoop (includes CoastType + all 1B stages).
-        if params_result.erosion_changed {
+        // space_changed shares the same frontier as erosion_changed (ErosionOuterLoop),
+        // so both flags drive the identical body — a single combined check avoids a
+        // double invalidate + double run_from on frames where both fire together.
+        if params_result.erosion_changed || params_result.space_changed {
             self.world.preset = self.preset.clone();
             invalidate_from(&mut self.world, StageId::ErosionOuterLoop);
             if let Err(err) = self
                 .pipeline
                 .run_from(&mut self.world, StageId::ErosionOuterLoop as usize)
             {
-                warn!("erosion slider re-run failed: {err}");
+                warn!("erosion/space slider re-run failed: {err}");
+            } else {
+                self.overlay
+                    .refresh(&self.gpu, &self.world, &self.overlay_registry);
+            }
+        }
+
+        // Sprint 3.8: LFPM climate slider re-run (q_0 / tau_c / tau_f).
+        // Frontier: Precipitation — same as the Sprint 1B wind-dir slider.
+        if params_result.climate_changed {
+            self.world.preset = self.preset.clone();
+            if let Err(err) = self
+                .pipeline
+                .run_from(&mut self.world, StageId::Precipitation as usize)
+            {
+                warn!("climate slider re-run failed: {err}");
             } else {
                 self.overlay
                     .refresh(&self.gpu, &self.world, &self.overlay_registry);
