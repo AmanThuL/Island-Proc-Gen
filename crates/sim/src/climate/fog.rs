@@ -1,17 +1,26 @@
-//! `FogLikelihoodStage` (DD7) — elevation-band × orographic uplift proxy.
+//! `FogLikelihoodStage` (DD7 v2, Sprint 3 DD5) — trade-wind inversion-layer
+//! model.
 //!
 //! For each land cell:
 //!
 //! ```text
-//! elevation_factor = smoothstep(CLOUD_BASE_Z - CLOUD_EDGE_SOFTNESS, CLOUD_BASE_Z, z_norm)
-//!                  * (1 - smoothstep(CLOUD_TOP_Z, CLOUD_TOP_Z + CLOUD_EDGE_SOFTNESS, z_norm))
-//! uplift_factor    = smoothstep(0, UPLIFT_SATURATION, max(0, signed_uplift))
-//! fog_likelihood   = elevation_factor * uplift_factor
+//! inversion_z      = 0.65 · preset.max_relief   (proxy for cloud-base altitude)
+//! band_thickness   = 0.15 · preset.max_relief
+//! elev_band(p)     = exp(-((z[p] - inversion_z) / band_thickness)^2)
+//! uplift_factor(p) = smoothstep(0, UPLIFT_SATURATION, max(0, signed_uplift))
+//! fog_likelihood[p]= elev_band(p) · (0.5 + 0.5 · uplift_factor(p))
 //! ```
 //!
-//! Sea cells are forced to `0.0`. The sign convention comes from
+//! The formula weights elevation-band presence 50 % and orographic uplift 50 %
+//! (Sprint 1B had 0 % / 100 % — the band was a multiplicative gate, not an
+//! additive contribution). Sea cells are forced to `0.0`. The inversion height
+//! and band thickness are derived from `preset.max_relief` so the fog layer
+//! self-scales with island relief rather than sitting at a fixed z_norm.
+//!
+//! The sign convention for `uplift_factor` comes from
 //! `climate::common::signed_uplift` (shared with `PrecipitationStage`).
-//! Consumed by `BiomeWeightsStage::CloudForest` in DD6.
+//! Consumed by `BiomeWeightsStage::CloudForest` in DD6 (tuned in Sprint 3 DD5)
+//! and by `SoilMoistureStage` via `fog_water_input` (Sprint 3 DD5 Change 3).
 
 use anyhow::anyhow;
 use island_core::field::ScalarField2D;
@@ -20,20 +29,25 @@ use island_core::world::WorldState;
 
 use crate::climate::common::{grad_scalar_at, signed_uplift, smoothstep, wind_unit};
 
-/// Lower normalized-elevation bound of the cloud belt.
-pub(crate) const CLOUD_BASE_Z: f32 = 0.4;
+/// Fraction of `max_relief` that places the inversion-layer centre.
+/// `inversion_z = INVERSION_Z_FRACTION · preset.max_relief`.
+pub(crate) const INVERSION_Z_FRACTION: f32 = 0.65;
 
-/// Upper normalized-elevation bound of the cloud belt.
-pub(crate) const CLOUD_TOP_Z: f32 = 0.75;
-
-/// Half-width of the smoothstep transition at each band edge.
-pub(crate) const CLOUD_EDGE_SOFTNESS: f32 = 0.05;
+/// Fraction of `max_relief` that sets the Gaussian half-width of the fog band.
+/// `band_thickness = BAND_THICKNESS_FRACTION · preset.max_relief`.
+pub(crate) const BAND_THICKNESS_FRACTION: f32 = 0.15;
 
 /// Upper edge of the uplift saturation window. Any positive uplift at
 /// or above this value maps to `uplift_factor = 1`.
 pub(crate) const UPLIFT_SATURATION: f32 = 0.3;
 
-/// DD7: populate `world.derived.fog_likelihood`.
+/// Minimum fog likelihood contribution from the elevation band alone
+/// (when `uplift_factor = 0`). Equals `0.5` because the formula is
+/// `elev_band · (0.5 + 0.5 · uplift_factor)`.
+pub(crate) const FOG_BAND_WEIGHT: f32 = 0.5;
+
+/// DD7 v2: populate `world.derived.fog_likelihood` using the Sprint 3 DD5
+/// trade-wind inversion-layer model.
 pub struct FogLikelihoodStage;
 
 impl SimulationStage for FogLikelihoodStage {
@@ -57,6 +71,13 @@ impl SimulationStage for FogLikelihoodStage {
         let h = z.height;
         let wind = wind_unit(world.preset.prevailing_wind_dir);
 
+        // Inversion-layer parameters derived from relief.
+        let max_relief = world.preset.max_relief;
+        let inversion_z = INVERSION_Z_FRACTION * max_relief;
+        let band_thickness = BAND_THICKNESS_FRACTION * max_relief;
+        // Guard: if max_relief is zero (degenerate preset), all fog stays 0.
+        let band_thickness_safe = band_thickness.max(f32::EPSILON);
+
         let mut fog = ScalarField2D::<f32>::new(w, h);
         for iy in 0..h {
             for ix in 0..w {
@@ -65,16 +86,21 @@ impl SimulationStage for FogLikelihoodStage {
                 }
 
                 let z_norm = z.get(ix, iy);
-                let elevation_factor =
-                    smoothstep(CLOUD_BASE_Z - CLOUD_EDGE_SOFTNESS, CLOUD_BASE_Z, z_norm)
-                        * (1.0
-                            - smoothstep(CLOUD_TOP_Z, CLOUD_TOP_Z + CLOUD_EDGE_SOFTNESS, z_norm));
 
+                // Gaussian bell centred on the inversion layer.
+                let dz = (z_norm - inversion_z) / band_thickness_safe;
+                let elev_band = (-(dz * dz)).exp();
+
+                // Orographic uplift factor (50 % weight).
                 let grad = grad_scalar_at(z, ix, iy);
                 let uplift = signed_uplift(wind, grad).max(0.0);
                 let uplift_factor = smoothstep(0.0, UPLIFT_SATURATION, uplift);
 
-                fog.set(ix, iy, elevation_factor * uplift_factor);
+                fog.set(
+                    ix,
+                    iy,
+                    elev_band * (FOG_BAND_WEIGHT + FOG_BAND_WEIGHT * uplift_factor),
+                );
             }
         }
 
@@ -91,11 +117,11 @@ mod tests {
     use island_core::seed::Seed;
     use island_core::world::{CoastMask, Resolution, WorldState};
 
-    fn preset(wind_dir: f32) -> IslandArchetypePreset {
+    fn preset_with_relief(wind_dir: f32, max_relief: f32) -> IslandArchetypePreset {
         IslandArchetypePreset {
             name: "fog_test".into(),
             island_radius: 0.5,
-            max_relief: 1.0,
+            max_relief,
             volcanic_center_count: 1,
             island_age: IslandAge::Young,
             prevailing_wind_dir: wind_dir,
@@ -104,6 +130,10 @@ mod tests {
             erosion: Default::default(),
             climate: Default::default(),
         }
+    }
+
+    fn preset(wind_dir: f32) -> IslandArchetypePreset {
+        preset_with_relief(wind_dir, 1.0)
     }
 
     fn all_land_coast(w: u32, h: u32) -> CoastMask {
@@ -118,99 +148,140 @@ mod tests {
         }
     }
 
-    // 1. A flat domain at the cloud-belt elevation has zero fog because
-    //    there's no orographic uplift anywhere (uplift_factor = 0).
+    // 1. Sprint 3 DD5: fog likelihood peaks near the inversion layer.
+    //    With max_relief = 1.0:
+    //      inversion_z = 0.65 * 1.0 = 0.65
+    //      band_thickness = 0.15 * 1.0 = 0.15
+    //    A flat domain (no uplift) at z = inversion_z should maximise
+    //    elev_band = 1.0, giving fog = 1.0 * 0.5 = 0.5.
+    //    A cell at z = inversion_z + band_thickness should have elev_band
+    //    = exp(-1) ≈ 0.368, fog ≈ 0.5 * 0.368 ≈ 0.184.
+    //    A cell far from the inversion layer (z = 0.0) should have
+    //    fog ≈ 0 (elev_band ≈ exp(-(0.65/0.15)^2) ≈ exp(-18.8) ≈ 0).
     #[test]
-    fn flat_cloud_belt_has_no_fog() {
+    fn fog_likelihood_peaks_near_inversion_layer() {
         let (w, h) = (16_u32, 16_u32);
+        let max_relief = 1.0_f32;
+        let inversion_z = INVERSION_Z_FRACTION * max_relief; // 0.65
+        let band_thickness = BAND_THICKNESS_FRACTION * max_relief; // 0.15
+
         let mut world = WorldState::new(Seed(0), preset(0.0), Resolution::new(w, h));
+
+        // Three rows: at inversion, 1 band_thickness above, far below (z=0).
         let mut z = ScalarField2D::<f32>::new(w, h);
-        z.data.fill(0.6); // inside [CLOUD_BASE_Z, CLOUD_TOP_Z]
+        for ix in 0..w {
+            z.set(ix, 0, inversion_z); // row 0: at peak
+            z.set(ix, 1, inversion_z + band_thickness); // row 1: one sigma above
+            z.set(ix, 2, 0.0); // row 2: far below
+        }
+        world.derived.z_filled = Some(z);
+        world.derived.coast_mask = Some(all_land_coast(w, h));
+
+        FogLikelihoodStage.run(&mut world).expect("stage failed");
+        let fog = world.derived.fog_likelihood.as_ref().unwrap();
+
+        // At inversion_z (no uplift): elev_band = 1, fog = 0.5.
+        let at_peak = fog.get(1, 0); // interior cell, no boundary effects on grad
+        assert!(
+            (at_peak - 0.5).abs() < 0.01,
+            "fog at inversion_z should be ~0.5, got {at_peak}"
+        );
+
+        // One sigma above: elev_band = exp(-1) ≈ 0.368, fog ≈ 0.184.
+        let one_sigma = fog.get(1, 1);
+        assert!(
+            (one_sigma - 0.5 * std::f32::consts::E.recip()).abs() < 0.02,
+            "fog at inversion_z + band_thickness should be ~0.184, got {one_sigma}"
+        );
+
+        // Far below: nearly zero.
+        let far_below = fog.get(1, 2);
+        assert!(
+            far_below < 1e-3,
+            "fog far from inversion_z should be near zero, got {far_below}"
+        );
+
+        // Peak must be greater than one-sigma, one-sigma must be greater than far-below.
+        assert!(
+            at_peak > one_sigma,
+            "fog must decrease away from inversion layer"
+        );
+        assert!(
+            one_sigma > far_below,
+            "one-sigma fog must exceed far-below fog"
+        );
+    }
+
+    // 2. Uplift doubles the fog: a steep windward slope at inversion_z
+    //    has uplift_factor = 1, giving fog = elev_band * (0.5 + 0.5) = elev_band.
+    //    A flat cell at the same elevation has fog = elev_band * 0.5.
+    #[test]
+    fn steep_windward_at_inversion_has_stronger_fog_than_flat() {
+        let (w, h) = (8_u32, 8_u32);
+        let mut world = WorldState::new(Seed(0), preset(0.0), Resolution::new(w, h));
+
+        let inversion_z = INVERSION_Z_FRACTION; // max_relief = 1.0
+
+        // z gradient at (4,4): neighbours z(3,4)=inversion_z+0.3 and z(5,4)=inversion_z-0.3.
+        // grad_z.x = (inversion_z-0.3 - (inversion_z+0.3)) / 2 = -0.3.
+        // Wind from east (dir=0): signed_uplift = -wind.dot(grad) = -1*(-0.3) = 0.3.
+        // uplift_factor = smoothstep(0, 0.3, 0.3) = 1.
+        let mut z = ScalarField2D::<f32>::new(w, h);
+        z.data.fill(inversion_z);
+        z.set(3, 4, inversion_z + 0.3);
+        z.set(5, 4, inversion_z - 0.3);
+        world.derived.z_filled = Some(z);
+        world.derived.coast_mask = Some(all_land_coast(w, h));
+
+        FogLikelihoodStage.run(&mut world).expect("stage failed");
+        let fog = world.derived.fog_likelihood.as_ref().unwrap();
+
+        // Steep cell at inversion: elev_band=1, uplift_factor=1, fog=1*1=1.0.
+        let steep = fog.get(4, 4);
+        assert!(
+            (steep - 1.0).abs() < 0.01,
+            "steep windward cell at inversion should have fog ≈ 1.0, got {steep}"
+        );
+
+        // Flat cell at inversion: elev_band=1, uplift_factor=0, fog=0.5.
+        let flat = fog.get(1, 1);
+        assert!(
+            (flat - 0.5).abs() < 0.01,
+            "flat cell at inversion should have fog ≈ 0.5, got {flat}"
+        );
+
+        assert!(steep > flat, "steep windward fog must exceed flat fog");
+    }
+
+    // 3. Sea level (z ≈ 0) is far from the inversion layer → fog ≈ 0.
+    //    This is the spec's "fog_likelihood_zero_outside_band" check.
+    #[test]
+    fn fog_likelihood_zero_outside_band() {
+        let (w, h) = (16_u32, 16_u32);
+        let max_relief = 1.0_f32;
+        // inversion_z = 0.65, band_thickness = 0.15.
+        // At z = 0: dz = (0 - 0.65)/0.15 = -4.33, exp(-18.8) ≈ 6e-9.
+        let mut world = WorldState::new(
+            Seed(0),
+            preset_with_relief(0.0, max_relief),
+            Resolution::new(w, h),
+        );
+        let mut z = ScalarField2D::<f32>::new(w, h);
+        z.data.fill(0.0); // sea level height
         world.derived.z_filled = Some(z);
         world.derived.coast_mask = Some(all_land_coast(w, h));
 
         FogLikelihoodStage.run(&mut world).expect("stage failed");
         let fog = world.derived.fog_likelihood.as_ref().unwrap();
         for v in fog.data.iter() {
-            assert!(*v < 1e-6, "flat belt cell produced fog {v}");
+            assert!(
+                *v < 1e-4,
+                "z=0 cell should have near-zero fog (far from inversion layer), got {v}"
+            );
         }
     }
 
-    // 2. A steep windward slope inside the cloud belt produces strong
-    //    fog (elevation_factor ≈ 1 × uplift_factor ≈ 1 ≈ 1). A gentle
-    //    slope produces ~0 uplift_factor even inside the belt. This
-    //    locks both factors as real contributors.
-    #[test]
-    fn steep_windward_belt_has_strong_fog_gentle_slope_has_none() {
-        let (w, h) = (8_u32, 8_u32);
-        let mut world = WorldState::new(Seed(0), preset(0.0), Resolution::new(w, h));
-
-        // Steep windward ramp along row 4: z(3,4) = 0.9, z(4,4) = 0.6,
-        // z(5,4) = 0.3. The west side is high, the east side is low,
-        // so wind from the east climbs the ramp → positive uplift.
-        // grad_z.x at (4,4) = (0.3 − 0.9) / 2 = −0.3, signed = 0.3,
-        // uplift_factor = smoothstep(0, 0.3, 0.3) = 1.
-        let mut z = ScalarField2D::<f32>::new(w, h);
-        z.data.fill(0.6); // whole domain sits inside the belt by default
-        z.set(3, 4, 0.9);
-        z.set(5, 4, 0.3);
-        world.derived.z_filled = Some(z);
-        world.derived.coast_mask = Some(all_land_coast(w, h));
-
-        FogLikelihoodStage.run(&mut world).expect("stage failed");
-        let fog = world.derived.fog_likelihood.as_ref().unwrap();
-
-        let steep = fog.get(4, 4);
-        // Math: grad_z.x = (0.3 − 0.9)/2 = −0.3, signed = +0.3,
-        // uplift_factor = smoothstep(0, 0.3, 0.3) = 1, elevation_factor
-        // at z = 0.6 is 1 (inside the fully-saturated belt), so the
-        // expected product is 1.0. Tight bound catches any regression
-        // that silently halves either factor.
-        assert!(
-            steep > 0.99,
-            "expected saturated fog at steep cell, got {steep}"
-        );
-
-        // A flat cell elsewhere in the belt has uplift_factor = 0.
-        let flat = fog.get(1, 1);
-        assert!(
-            flat < 1e-6,
-            "expected zero fog on flat belt cell, got {flat}"
-        );
-    }
-
-    // 3. Below cloud base: zero fog everywhere.
-    #[test]
-    fn below_cloud_base_has_no_fog() {
-        let (w, h) = (16_u32, 16_u32);
-        let mut world = WorldState::new(Seed(0), preset(0.0), Resolution::new(w, h));
-        let mut z = ScalarField2D::<f32>::new(w, h);
-        // z = 0.2 for all — well below CLOUD_BASE_Z - EDGE_SOFTNESS = 0.35.
-        z.data.fill(0.2);
-        world.derived.z_filled = Some(z);
-        world.derived.coast_mask = Some(all_land_coast(w, h));
-
-        FogLikelihoodStage.run(&mut world).expect("stage failed");
-        let fog = world.derived.fog_likelihood.as_ref().unwrap();
-        assert_eq!(fog.stats().unwrap().max, 0.0);
-    }
-
-    // 4. Above cloud top: zero fog everywhere.
-    #[test]
-    fn above_cloud_top_has_no_fog() {
-        let (w, h) = (16_u32, 16_u32);
-        let mut world = WorldState::new(Seed(0), preset(0.0), Resolution::new(w, h));
-        let mut z = ScalarField2D::<f32>::new(w, h);
-        z.data.fill(0.9); // above CLOUD_TOP_Z + EDGE_SOFTNESS = 0.80
-        world.derived.z_filled = Some(z);
-        world.derived.coast_mask = Some(all_land_coast(w, h));
-
-        FogLikelihoodStage.run(&mut world).expect("stage failed");
-        let fog = world.derived.fog_likelihood.as_ref().unwrap();
-        assert_eq!(fog.stats().unwrap().max, 0.0);
-    }
-
-    // 5. Determinism: two runs bit-exact.
+    // 4. Determinism: two runs bit-exact.
     #[test]
     fn fog_determinism() {
         let (w, h) = (16_u32, 16_u32);
@@ -236,19 +307,17 @@ mod tests {
         );
     }
 
-    // 6. Sea cells are forced to 0 even when their elevation + uplift
-    //    would otherwise produce strong fog. Guards the `is_sea` early-
-    //    continue in the inner loop.
+    // 5. Sea cells are forced to 0 even when their elevation would produce
+    //    strong fog. Guards the `is_sea` early-continue in the inner loop.
     #[test]
     fn sea_cells_have_zero_fog() {
         let (w, h) = (8_u32, 8_u32);
         let mut world = WorldState::new(Seed(0), preset(0.0), Resolution::new(w, h));
 
-        // Same steep ramp as test 2, but mark (4, 4) as sea.
+        // Put (4,4) at exactly inversion_z so it would have strong fog if land.
+        let inversion_z = INVERSION_Z_FRACTION; // max_relief = 1.0
         let mut z = ScalarField2D::<f32>::new(w, h);
-        z.data.fill(0.6);
-        z.set(3, 4, 0.9);
-        z.set(5, 4, 0.3);
+        z.data.fill(inversion_z);
         world.derived.z_filled = Some(z);
 
         let mut is_land = MaskField2D::new(w, h);
@@ -273,7 +342,7 @@ mod tests {
         );
     }
 
-    // 7. Missing precondition errors cleanly.
+    // 6. Missing precondition errors cleanly.
     #[test]
     fn errors_when_z_filled_missing() {
         let mut world = WorldState::new(Seed(0), preset(0.0), Resolution::new(4, 4));

@@ -262,9 +262,11 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
             world.derived.runoff = None;
         }
 
-        // SoilMoistureStage: writes baked.soil_moisture.
+        // SoilMoistureStage: writes baked.soil_moisture and
+        // derived.fog_water_input (Sprint 3 DD5).
         StageId::SoilMoisture => {
             world.baked.soil_moisture = None;
+            world.derived.fog_water_input = None;
         }
 
         // BiomeWeightsStage: writes baked.biome_weights + derived.dominant_biome_per_cell.
@@ -421,6 +423,12 @@ mod tests {
             world.derived.deposition_flux.is_none(),
             "deposition_flux must be cleared by invalidate_from(Topography) cascade"
         );
+        // Task 3.5: fog_water_input is cleared by the SoilMoisture arm,
+        // which is downstream of Topography.
+        assert!(
+            world.derived.fog_water_input.is_none(),
+            "fog_water_input must be cleared by invalidate_from(Topography) cascade"
+        );
 
         // ── every baked.* field is None ───────────────────────────────────────
         assert!(world.baked.temperature.is_none(), "baked.temperature");
@@ -526,6 +534,11 @@ mod tests {
         assert!(
             world.baked.soil_moisture.is_none(),
             "baked.soil_moisture must be None"
+        );
+        // Task 3.5: fog_water_input is written by SoilMoisture (15).
+        assert!(
+            world.derived.fog_water_input.is_none(),
+            "fog_water_input must be None (downstream of Accumulation)"
         );
         // BiomeWeights (16)
         assert!(
@@ -661,6 +674,17 @@ mod tests {
         hash_f32(
             &mut hasher,
             &world.derived.runoff.as_ref().expect("runoff").data,
+        );
+        // Task 3.5: fog_water_input is produced by SoilMoistureStage when
+        // fog_likelihood is available (full pipeline always satisfies this).
+        hash_f32(
+            &mut hasher,
+            &world
+                .derived
+                .fog_water_input
+                .as_ref()
+                .expect("fog_water_input")
+                .data,
         );
         hash_u32(
             &mut hasher,

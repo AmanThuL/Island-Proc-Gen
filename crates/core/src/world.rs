@@ -519,6 +519,16 @@ pub struct DerivedCaches {
     /// `None` until the first V3 sweep run. Reused on repeated calls with
     /// the same wind direction.
     pub precipitation_sweep_order: Option<Vec<usize>>,
+
+    /// Sprint 3 DD5: fog-water input derived from `fog_likelihood` and the
+    /// `FOG_WATER_GAIN` coupling constant. Recomputed every `SoilMoistureStage`
+    /// run; consumed by the `fog_water_input` overlay (Task 3.7). Not a
+    /// baked field because it is a linear scaling of `fog_likelihood` — no
+    /// reason to persist it across pipeline boundaries.
+    ///
+    /// `fog_water_input[p] = FOG_WATER_GAIN * fog_likelihood[p]`
+    /// for land cells; `None` until `SoilMoistureStage` has run.
+    pub fog_water_input: Option<ScalarField2D<f32>>,
 }
 
 // ─── WorldState ──────────────────────────────────────────────────────────────

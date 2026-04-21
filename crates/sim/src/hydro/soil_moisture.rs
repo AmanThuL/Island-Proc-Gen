@@ -59,7 +59,17 @@ pub(crate) const RIVER_DECAY: f32 = 0.02;
 /// neighbour.
 pub(crate) const SMOOTH_SELF_WEIGHT: f32 = 0.75;
 
-/// DD5: populate `world.baked.soil_moisture`.
+/// Sprint 3 DD5: fog likelihood → water input conversion factor.
+/// `fog_water_input[p] = FOG_WATER_GAIN * fog_likelihood[p]`.
+/// Dimensionless proxy for fog-drip contribution relative to precipitation.
+pub const FOG_WATER_GAIN: f32 = 0.15;
+
+/// Sprint 3 DD5: fraction of `fog_water_input` that enters the soil-moisture
+/// store. Less than 1.0 because fog drip has significant surface runoff on
+/// steep volcanic terrain.
+pub const FOG_TO_SM_COUPLING: f32 = 0.40;
+
+/// DD5: populate `world.baked.soil_moisture` and `world.derived.fog_water_input`.
 pub struct SoilMoistureStage;
 
 impl SimulationStage for SoilMoistureStage {
@@ -178,6 +188,51 @@ impl SimulationStage for SoilMoistureStage {
                     iy,
                     (SMOOTH_SELF_WEIGHT * self_val + other_weight * neighbour_val).clamp(0.0, 1.0),
                 );
+            }
+        }
+
+        // Sprint 3 DD5: add fog-drip to soil moisture and populate the
+        // `fog_water_input` derived cache for the overlay (Task 3.7).
+        //
+        // `fog_likelihood` may be None if this stage is called in isolation
+        // (e.g. a test that only wires up the raw hydro inputs). When it is
+        // None we skip the fog coupling pass — soil_moisture is still valid,
+        // just missing the fog-drip contribution.
+        let fog_likelihood_snap = world.derived.fog_likelihood.clone();
+        if let Some(fog) = &fog_likelihood_snap {
+            // Allocate or reuse fog_water_input with the same reuse discipline
+            // used for deposition_flux / precipitation_sweep_order.
+            let needs_alloc = world
+                .derived
+                .fog_water_input
+                .as_ref()
+                .map(|f| f.width != w || f.height != h)
+                .unwrap_or(true);
+            if needs_alloc {
+                world.derived.fog_water_input = Some(ScalarField2D::<f32>::new(w, h));
+            } else {
+                // Zero out sea cells from a previous run.
+                world
+                    .derived
+                    .fog_water_input
+                    .as_mut()
+                    .unwrap()
+                    .data
+                    .fill(0.0);
+            }
+
+            let fwi = world.derived.fog_water_input.as_mut().unwrap();
+            for iy in 0..h {
+                for ix in 0..w {
+                    if coast.is_land.get(ix, iy) != 1 {
+                        continue; // sea cells keep 0.0 in fog_water_input
+                    }
+                    let fog_water = FOG_WATER_GAIN * fog.get(ix, iy);
+                    fwi.set(ix, iy, fog_water);
+                    let new_sm =
+                        (smoothed.get(ix, iy) + fog_water * FOG_TO_SM_COUPLING).clamp(0.0, 1.0);
+                    smoothed.set(ix, iy, new_sm);
+                }
             }
         }
 
@@ -379,5 +434,220 @@ mod tests {
     fn errors_when_prerequisite_missing() {
         let mut world = WorldState::new(Seed(0), preset(), Resolution::new(4, 4));
         assert!(SoilMoistureStage.run(&mut world).is_err());
+    }
+
+    // ── Sprint 3 DD5 tests ────────────────────────────────────────────────────
+
+    /// Minimal preset for full-pipeline invalidation tests.
+    /// `n_batch = 0` keeps `ErosionOuterLoop` as a no-op so the small 32×32
+    /// grid does not trip the sea-crossing invariant.
+    fn pipeline_preset() -> IslandArchetypePreset {
+        use island_core::preset::ErosionParams;
+        IslandArchetypePreset {
+            name: "sm_pipeline_test".into(),
+            island_radius: 0.5,
+            max_relief: 1.0,
+            volcanic_center_count: 1,
+            island_age: IslandAge::Young,
+            prevailing_wind_dir: 0.0,
+            marine_moisture_strength: 1.0,
+            sea_level: 0.0,
+            erosion: ErosionParams {
+                n_batch: 0,
+                ..Default::default()
+            },
+            climate: Default::default(),
+        }
+    }
+
+    /// `fog_water_input` is populated after `SoilMoistureStage` when
+    /// `fog_likelihood` is present. Values must be non-negative and equal
+    /// `FOG_WATER_GAIN * fog_likelihood[p]`.
+    #[test]
+    fn fog_water_input_populated_after_soil_moisture_run() {
+        let (w, h) = (4, 4);
+        let mut world = land_world(w, h);
+
+        // Fill fog_likelihood with a known pattern.
+        let mut fog = ScalarField2D::<f32>::new(w, h);
+        for iy in 0..h {
+            for ix in 0..w {
+                fog.set(ix, iy, 0.1 * ix as f32 + 0.05 * iy as f32);
+            }
+        }
+        world.derived.fog_likelihood = Some(fog.clone());
+
+        SoilMoistureStage.run(&mut world).expect("stage");
+
+        let fwi = world
+            .derived
+            .fog_water_input
+            .as_ref()
+            .expect("fog_water_input should be Some");
+        for iy in 0..h {
+            for ix in 0..w {
+                let expected = FOG_WATER_GAIN * fog.get(ix, iy);
+                let actual = fwi.get(ix, iy);
+                assert!(
+                    actual >= 0.0,
+                    "fog_water_input must be non-negative at ({ix},{iy}): {actual}"
+                );
+                assert!(
+                    (actual - expected).abs() < 1e-6,
+                    "fog_water_input[({ix},{iy})] = {actual}, expected {expected}"
+                );
+            }
+        }
+    }
+
+    /// Cells with `fog_likelihood = 1.0` gain more soil moisture than cells
+    /// with `fog_likelihood = 0.0`, holding all other inputs equal.
+    #[test]
+    fn soil_moisture_gains_fog_water_contribution() {
+        let (w, h) = (4, 4);
+
+        // Build two identical worlds, differing only in fog_likelihood.
+        let build_with_fog = |fog_val: f32| {
+            let mut world = land_world(w, h);
+            let mut fog = ScalarField2D::<f32>::new(w, h);
+            fog.data.fill(fog_val);
+            world.derived.fog_likelihood = Some(fog);
+            world
+        };
+
+        let mut world_fog = build_with_fog(1.0);
+        let mut world_no_fog = build_with_fog(0.0);
+
+        SoilMoistureStage.run(&mut world_fog).expect("fog run");
+        SoilMoistureStage
+            .run(&mut world_no_fog)
+            .expect("no-fog run");
+
+        let sm_fog = world_fog.baked.soil_moisture.as_ref().unwrap();
+        let sm_no_fog = world_no_fog.baked.soil_moisture.as_ref().unwrap();
+
+        // fog_contribution = FOG_WATER_GAIN * FOG_TO_SM_COUPLING = 0.15 * 0.40 = 0.06.
+        let expected_delta = FOG_WATER_GAIN * FOG_TO_SM_COUPLING;
+        for iy in 0..h {
+            for ix in 0..w {
+                let delta = sm_fog.get(ix, iy) - sm_no_fog.get(ix, iy);
+                assert!(
+                    (delta - expected_delta).abs() < 1e-5,
+                    "fog contribution mismatch at ({ix},{iy}): got delta {delta}, expected {expected_delta}"
+                );
+            }
+        }
+    }
+
+    /// Sea cells must have `fog_water_input = 0.0` after `SoilMoistureStage`.
+    ///
+    /// The fog coupling loop skips sea cells via the `is_land != 1` guard,
+    /// so the zero-initialised field value persists for every sea cell even
+    /// when the neighbouring land cells have high fog likelihood.
+    #[test]
+    fn fog_water_input_is_zero_on_sea_cells() {
+        let (w, h) = (4_u32, 4_u32);
+
+        // Build a world where (2, 2) is a sea cell surrounded by land.
+        let mut world = WorldState::new(Seed(0), preset(), Resolution::new(w, h));
+        let mut is_land = MaskField2D::new(w, h);
+        is_land.data.fill(1);
+        is_land.set(2, 2, 0);
+        let mut is_sea = MaskField2D::new(w, h);
+        is_sea.set(2, 2, 1);
+        world.derived.coast_mask = Some(CoastMask {
+            is_land,
+            is_sea,
+            is_coast: MaskField2D::new(w, h),
+            land_cell_count: w * h - 1,
+            river_mouth_mask: None,
+        });
+        world.derived.et = Some(ScalarField2D::<f32>::new(w, h));
+        world.derived.pet = Some(ScalarField2D::<f32>::new(w, h));
+        world.derived.accumulation = Some(ScalarField2D::<f32>::new(w, h));
+        world.derived.river_mask = Some(MaskField2D::new(w, h));
+        let mut flow_dir = ScalarField2D::<u8>::new(w, h);
+        flow_dir.data.fill(FLOW_DIR_SINK);
+        world.derived.flow_dir = Some(flow_dir);
+
+        // High fog likelihood everywhere, including the sea cell.
+        let mut fog = ScalarField2D::<f32>::new(w, h);
+        fog.data.fill(1.0);
+        world.derived.fog_likelihood = Some(fog);
+
+        SoilMoistureStage.run(&mut world).expect("stage");
+
+        let fwi = world
+            .derived
+            .fog_water_input
+            .as_ref()
+            .expect("fog_water_input should be Some");
+        assert_eq!(
+            fwi.get(2, 2),
+            0.0,
+            "sea cell (2,2) must have fog_water_input = 0.0, got {}",
+            fwi.get(2, 2)
+        );
+        // Sanity: adjacent land cell has non-zero fog_water_input.
+        assert!(
+            fwi.get(1, 2) > 0.0,
+            "land cell (1,2) should have fog_water_input > 0.0"
+        );
+    }
+
+    /// `invalidate_from(FogLikelihood)` cascades through the SoilMoisture
+    /// arm and must clear `derived.fog_water_input`.
+    ///
+    /// FogLikelihood (12) < SoilMoisture (15) in the StageId ordering, so
+    /// `invalidate_from(FogLikelihood)` iterates through every arm from 12
+    /// to 17 inclusive, hitting the SoilMoisture arm which sets
+    /// `fog_water_input = None`.
+    #[test]
+    fn invalidate_from_fog_likelihood_cascades_to_fog_water_input() {
+        use crate::{StageId, default_pipeline, invalidate_from};
+        use island_core::world::Resolution;
+
+        let mut world = WorldState::new(Seed(2), pipeline_preset(), Resolution::new(32, 32));
+        default_pipeline().run(&mut world).expect("full pipeline");
+
+        assert!(
+            world.derived.fog_water_input.is_some(),
+            "fog_water_input must be Some after full pipeline"
+        );
+
+        // Invalidating at FogLikelihood (12) cascades through SoilMoisture (15).
+        invalidate_from(&mut world, StageId::FogLikelihood);
+
+        assert!(
+            world.derived.fog_likelihood.is_none(),
+            "fog_likelihood must be None after invalidate_from(FogLikelihood)"
+        );
+        assert!(
+            world.derived.fog_water_input.is_none(),
+            "fog_water_input must be None after invalidate_from(FogLikelihood) cascade"
+        );
+    }
+
+    /// After `invalidate_from(SoilMoisture)`, `derived.fog_water_input` must
+    /// be `None`.
+    #[test]
+    fn invalidate_from_soil_moisture_clears_fog_water_input() {
+        use crate::{StageId, default_pipeline, invalidate_from};
+        use island_core::world::Resolution;
+
+        let mut world = WorldState::new(Seed(1), pipeline_preset(), Resolution::new(32, 32));
+        default_pipeline().run(&mut world).expect("full pipeline");
+
+        assert!(
+            world.derived.fog_water_input.is_some(),
+            "fog_water_input must be Some after full pipeline"
+        );
+
+        invalidate_from(&mut world, StageId::SoilMoisture);
+
+        assert!(
+            world.derived.fog_water_input.is_none(),
+            "fog_water_input must be None after invalidate_from(SoilMoisture)"
+        );
     }
 }
