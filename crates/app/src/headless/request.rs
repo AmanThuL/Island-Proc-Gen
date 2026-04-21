@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use island_core::preset::{ErosionParams, IslandAge, IslandArchetypePreset};
+use island_core::preset::{ClimateParams, ErosionParams, IslandAge, IslandArchetypePreset};
 
 /// Sprint 2 DD5: selective overrides folded on top of the loaded preset.
 ///
@@ -33,6 +33,13 @@ pub struct PresetOverride {
     pub sea_level: Option<f32>,
     #[serde(default)]
     pub erosion: Option<ErosionParams>,
+    /// Sprint 3 DD8: optional override of the climate sub-struct.
+    /// `None` (the default) leaves `preset.climate` untouched. Required by
+    /// the `sprint_3_sediment_climate` baseline's `pre_*` shots so they can
+    /// force `climate.precipitation_variant = V2Raymarch` on top of the
+    /// erosion v1-variant override.
+    #[serde(default)]
+    pub climate: Option<ClimateParams>,
 }
 
 impl PresetOverride {
@@ -65,6 +72,9 @@ impl PresetOverride {
         }
         if let Some(v) = &self.erosion {
             preset.erosion = v.clone();
+        }
+        if let Some(v) = &self.climate {
+            preset.climate = v.clone();
         }
     }
 }
@@ -392,6 +402,7 @@ mod tests {
                 n_batch: 0,
                 ..ErosionParams::default()
             }),
+            climate: Some(ClimateParams::default()),
         };
         let shot = CaptureShot {
             id: "override_shot".to_owned(),
@@ -428,6 +439,7 @@ mod tests {
             marine_moisture_strength: Some(0.1),
             sea_level: None,
             erosion: None,
+            climate: None,
         };
         let mut preset = data::presets::load_preset("volcanic_single")
             .expect("volcanic_single must be a known preset");
@@ -492,6 +504,7 @@ mod tests {
                 n_inner: 5,
                 ..ErosionParams::default()
             }),
+            climate: None,
         };
         let mut preset = data::presets::load_preset("volcanic_single")
             .expect("volcanic_single must be a known preset");

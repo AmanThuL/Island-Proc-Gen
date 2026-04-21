@@ -229,6 +229,7 @@
                 marine_moisture_strength: None,
                 sea_level: None,
                 erosion: None,
+                climate: None,
             )),
         ),
         (
@@ -253,6 +254,7 @@
                 marine_moisture_strength: None,
                 sea_level: None,
                 erosion: None,
+                climate: None,
             )),
         ),
         (
@@ -276,6 +278,7 @@
                 marine_moisture_strength: None,
                 sea_level: None,
                 erosion: None,
+                climate: None,
             )),
         ),
         (
@@ -299,6 +302,7 @@
                 marine_moisture_strength: None,
                 sea_level: None,
                 erosion: None,
+                climate: None,
             )),
         ),
         (
@@ -322,6 +326,7 @@
                 marine_moisture_strength: None,
                 sea_level: None,
                 erosion: None,
+                climate: None,
             )),
         ),
         (
@@ -345,6 +350,7 @@
                 marine_moisture_strength: None,
                 sea_level: None,
                 erosion: None,
+                climate: None,
             )),
         ),
     ],
