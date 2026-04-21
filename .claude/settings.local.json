@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p ~/.claude/plugins/local/ccgs/.claude-plugin)",
+      "Bash(mkdir -p ~/.claude/plugins/local/ccgs/skills)",
+      "Bash(mkdir -p ~/.claude/plugins/local/ccgs/agents)",
+      "Bash(mkdir -p ~/.claude/plugins/local/ccgs/docs)",
+      "Read(//Users/amanthul/.claude/plugins/local/**)",
+      "Bash(rm ~/.claude/my-skills/plugins/ccgs/.claude-plugin/_skill_names.txt ~/.claude/my-skills/plugins/ccgs/.claude-plugin/_agent_names.txt)",
+      "Read(//Users/amanthul/.claude/my-skills/plugins/ccgs/.claude-plugin/**)",
+      "Bash(rm ~/.claude/CLAUDE.md)",
+      "Read(//Users/amanthul/.claude/**)"
+    ]
+  }
+}

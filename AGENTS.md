@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Project-scoped context for Claude Code (and any other agent harness)
 working in this repository. Read this before proposing or executing
