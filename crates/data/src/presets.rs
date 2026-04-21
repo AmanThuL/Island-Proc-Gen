@@ -279,6 +279,7 @@ mod tests {
                 n_batch: 12,
                 ..Default::default()
             },
+            climate: Default::default(),
         };
         assert_eq!(p, expected);
     }

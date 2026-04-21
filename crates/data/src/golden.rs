@@ -12,6 +12,7 @@
 //!    `CARGO_MANIFEST_DIR` is baked in at compile time and always points to
 //!    `crates/data/`, so this path works unconditionally in `cargo test`.
 
+use island_core::validation::DEPOSITION_FLAG_THRESHOLD;
 use island_core::world::{BiomeType, WorldState};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -72,11 +73,17 @@ pub struct SummaryMetrics {
     /// clamped to `[0, 1]`. `0.0` when no baseline was recorded (e.g. a
     /// partial pipeline run without `ErosionOuterLoop`).
     pub erosion_relief_drop_fraction: f32,
-    /// Count per `CoastType` variant in canonical enum order
-    /// `[Cliff, Beach, Estuary, RockyHeadland]`. Sum ≈ `coast_cell_count`
-    /// (non-coast cells carry the `Unknown = 0xFF` sentinel and are not
-    /// counted).
-    pub coast_type_counts: [u32; 4],
+    /// v1 fallback — count per `CoastType` variant in canonical enum order
+    /// `[Cliff, Beach, Estuary, RockyHeadland]` (4 bins, pre-LavaDelta). Sum
+    /// ≈ `coast_cell_count` only when `preset.erosion.coast_type_variant ==
+    /// CoastTypeVariant::V1Cheap`; under the default `V2FetchIntegral` path
+    /// this is `[0; 4]` and [`Self::coast_type_counts_v2`] is authoritative.
+    ///
+    /// Renamed from `coast_type_counts` in Sprint 3 (DD6). Old `metrics.ron`
+    /// files still deserialize under the original field name via
+    /// `#[serde(alias = "coast_type_counts")]`.
+    #[serde(default, alias = "coast_type_counts")]
+    pub coast_type_counts_v1: [u32; 4],
     /// Cells that crossed the `sea_level` threshold during erosion, computed
     /// as `|baseline.land_cell_count_pre - current_land_cell_count|`. The
     /// `erosion_no_excessive_sea_crossing` invariant asserts this is ≤ 5 %
@@ -85,6 +92,41 @@ pub struct SummaryMetrics {
     /// blake3 of the `derived.coast_type.data` byte field. Bit-exact on the
     /// same host.
     pub coast_type_blake3: [u8; 32],
+
+    // ── Sprint 3 sediment + fog + coast v2 summaries ────────────────────────
+    /// Sprint 3 DD2 / DD3: mean `authoritative.sediment` over land cells.
+    /// `0.0` when sediment is absent (`authoritative.sediment == None`, e.g.
+    /// a pipeline run that stopped before `CoastMaskStage`).
+    #[serde(default)]
+    pub mean_sediment_thickness: f32,
+    /// Sprint 3 DD3: fraction of land cells with
+    /// `hs > `[`DEPOSITION_FLAG_THRESHOLD`] (= 0.15). Matches the signal
+    /// used by the `deposition_zone_fraction_realistic` invariant.
+    #[serde(default)]
+    pub deposition_zone_fraction: f32,
+    /// Sprint 3 DD6: coast-type class histogram over coast cells, in
+    /// canonical enum order `[Cliff, Beach, Estuary, RockyHeadland,
+    /// LavaDelta]` (5 bins). Sum ≈ `coast_cell_count`. Authoritative under
+    /// the default `CoastTypeVariant::V2FetchIntegral`; filled from the same
+    /// `derived.coast_type` field whose variant disambiguates semantics.
+    #[serde(default)]
+    pub coast_type_counts_v2: [u32; 5],
+    /// Sprint 3 DD5: mean `derived.fog_water_input` over land cells where
+    /// `fog_likelihood > 0.1`. `0.0` when the fog-water derived cache is
+    /// absent (partial pipeline run).
+    #[serde(default)]
+    pub mean_fog_water_input: f32,
+    /// Sprint 3 §1 goal 8: count of basin IDs surviving post-erosion
+    /// PitFill — the "promoted lake" emergent signal. Stretch, not a hard
+    /// gate; `0` is acceptable and is the expected Phase A value (the
+    /// pipeline does not yet track promotion; reserved for a later stage).
+    #[serde(default)]
+    pub promoted_lake_count: u32,
+    /// Sprint 3 DD2 / DD3: blake3 of `authoritative.sediment.data` bytes.
+    /// Bit-exact on the same host. All-zero `[0u8; 32]` when sediment is
+    /// absent (sentinel for "nothing to hash").
+    #[serde(default)]
+    pub sediment_blake3: [u8; 32],
 }
 
 impl SummaryMetrics {
@@ -304,19 +346,126 @@ impl SummaryMetrics {
                 None => (0.0, 0),
             };
 
-        let (coast_type_counts, coast_type_blake3) = match world.derived.coast_type.as_ref() {
-            Some(ct) => {
-                let mut counts = [0_u32; 4];
-                for &v in &ct.data {
-                    if (v as usize) < 4 {
-                        counts[v as usize] += 1;
+        // ── Sprint 2 v1 cheap + Sprint 3 v2 coast-type histograms ──────────────
+        //
+        // Both histograms share the same `derived.coast_type` byte field, and
+        // differ only in which `CoastTypeVariant` produced it. Rather than
+        // round-tripping the variant through a second read of `preset`, we
+        // fill both unconditionally: the 5-bin v2 array is authoritative for
+        // the default `V2FetchIntegral` path, and the 4-bin v1 array matches
+        // the Sprint 2 layout exactly when the classifier picks from
+        // `0..=3`. On V2 the `LavaDelta = 4` bin lights up and the v1 array
+        // reports the `0..=3` subset — but the actively-consumed field for
+        // that path is the v2 array (spec DD6).
+        let (coast_type_counts_v1, coast_type_counts_v2, coast_type_blake3) =
+            match world.derived.coast_type.as_ref() {
+                Some(ct) => {
+                    let mut counts_v1 = [0_u32; 4];
+                    let mut counts_v2 = [0_u32; 5];
+                    for &v in &ct.data {
+                        let idx = v as usize;
+                        if idx < 4 {
+                            counts_v1[idx] += 1;
+                        }
+                        if idx < 5 {
+                            counts_v2[idx] += 1;
+                        }
+                        // Unknown = 0xFF and any out-of-range sentinel is not counted.
                     }
-                    // Unknown = 0xFF and any out-of-range sentinel is not counted.
+                    // Under the default V2FetchIntegral classifier the v1 array
+                    // is a partial view (missing LavaDelta); zero it out to
+                    // match the spec's "set to [0; 4] under V2, compute on V1Cheap".
+                    let variant = world.preset.erosion.coast_type_variant;
+                    if matches!(
+                        variant,
+                        island_core::preset::CoastTypeVariant::V2FetchIntegral
+                    ) {
+                        counts_v1 = [0_u32; 4];
+                    }
+                    (counts_v1, counts_v2, blake3_field_u8(&ct.data))
                 }
-                (counts, blake3_field_u8(&ct.data))
+                None => ([0_u32; 4], [0_u32; 5], [0_u8; 32]),
+            };
+
+        // ── Sprint 3 sediment summaries ────────────────────────────────────────
+        //
+        // Both `mean_sediment_thickness` and `deposition_zone_fraction`
+        // average over land cells only (the `is_land` mask we already used
+        // for Sprint 1B). When `authoritative.sediment` is absent we report
+        // the spec-mandated defaults — a partial pipeline run that stopped
+        // before `CoastMaskStage` has nothing to summarise.
+        let (mean_sediment_thickness, deposition_zone_fraction, sediment_blake3) =
+            match world.authoritative.sediment.as_ref() {
+                Some(sed) => {
+                    let mut sum = 0.0_f64;
+                    let mut deposition_cells = 0_u32;
+                    for iy in 0..h {
+                        for ix in 0..w {
+                            if coast.is_land.get(ix, iy) != 1 {
+                                continue;
+                            }
+                            let hs = sed.get(ix, iy);
+                            sum += hs as f64;
+                            if hs > DEPOSITION_FLAG_THRESHOLD {
+                                deposition_cells += 1;
+                            }
+                        }
+                    }
+                    let mean = (sum / land_n_f) as f32;
+                    let frac = (deposition_cells as f64 / land_n_f) as f32;
+                    (mean, frac, blake3_field_f32(&sed.data))
+                }
+                None => (0.0_f32, 0.0_f32, [0u8; 32]),
+            };
+
+        // ── Sprint 3 fog summary ──────────────────────────────────────────────
+        //
+        // Mean `fog_water_input` over land cells where `fog_likelihood > 0.1`
+        // (DD5 classification threshold). Both fields are `Option`s — if
+        // either derived cache is missing we fall back to 0.0 rather than
+        // panicking, matching the `coast_type` pattern above.
+        let mean_fog_water_input = match (
+            world.derived.fog_likelihood.as_ref(),
+            world.derived.fog_water_input.as_ref(),
+        ) {
+            (Some(fog_like), Some(fog_water)) => {
+                let mut sum = 0.0_f64;
+                let mut n = 0_u32;
+                for iy in 0..h {
+                    for ix in 0..w {
+                        if coast.is_land.get(ix, iy) != 1 {
+                            continue;
+                        }
+                        if fog_like.get(ix, iy) > 0.1 {
+                            sum += fog_water.get(ix, iy) as f64;
+                            n += 1;
+                        }
+                    }
+                }
+                if n == 0 {
+                    0.0_f32
+                } else {
+                    (sum / n as f64) as f32
+                }
             }
-            None => ([0_u32; 4], [0_u8; 32]),
+            _ => 0.0_f32,
         };
+
+        // ── Sprint 3 promoted-lake count (stretch signal) ─────────────────────
+        //
+        // The post-erosion "promoted lake" concept (§1 goal 8 / Sprint 2.5.G)
+        // requires a separate derived field tracking which basin IDs survived
+        // the final `PitFill` because they represented sediment-aware
+        // deposition lakes. That infrastructure does not yet exist — see
+        // CLAUDE.md's "`BasinsStage` post-BFS CC pass is currently vacuous"
+        // gotcha: the final `PitFill` currently fills all interior
+        // depressions. Phase A returns `0`, which the sprint-3 acceptance
+        // criteria explicitly allow ("All-zero is acceptable as 'current
+        // preset suite geometry has no closed depressions survivable through
+        // PitFill' and does not fail Sprint 3"). Phase B / a follow-up sprint
+        // can replace this stub with real basin-promotion tracking without
+        // breaking any serialised summary.
+        let promoted_lake_count: u32 = 0;
 
         SummaryMetrics {
             land_cell_count,
@@ -342,9 +491,15 @@ impl SummaryMetrics {
             basin_id_blake3,
             river_mask_blake3,
             erosion_relief_drop_fraction,
-            coast_type_counts,
+            coast_type_counts_v1,
             erosion_sea_crossing_count,
             coast_type_blake3,
+            mean_sediment_thickness,
+            deposition_zone_fraction,
+            coast_type_counts_v2,
+            mean_fog_water_input,
+            promoted_lake_count,
+            sediment_blake3,
         }
     }
 }
@@ -483,6 +638,66 @@ mod tests {
 
         assert_eq!(seeds.entries[2].seed, 777);
         assert_eq!(seeds.entries[2].preset_name, "caldera");
+    }
+
+    /// Sprint 3 DD7: a legacy Sprint 2 `metrics.ron` (no Sprint 3 fields, old
+    /// `coast_type_counts` field name) must continue to deserialize under the
+    /// Sprint 3 `SummaryMetrics` schema. Sprint 3 fields default to zero /
+    /// zeroed arrays via `#[serde(default)]`, and the old `coast_type_counts`
+    /// key maps to `coast_type_counts_v1` via `#[serde(alias = ...)]`.
+    #[test]
+    fn summary_metrics_deserializes_legacy_baseline_via_serde_default() {
+        // This is a verbatim-shape copy of the Sprint 2
+        // `crates/data/golden/headless/sprint_1a_baseline/shots/
+        // hero_volcanic_single_seed42/metrics.ron` as of Sprint 3.10 Phase A
+        // pre-regen — no Sprint 3 fields present, old `coast_type_counts`
+        // key name, shortened hashes to keep the literal readable.
+        let legacy_ron = r#"(
+            land_cell_count: 3209,
+            coast_cell_count: 207,
+            river_cell_count: 34,
+            basin_count: 258,
+            river_mouth_count: 6,
+            max_elevation: 0.9985648,
+            max_elevation_filled: 0.9985648,
+            mean_slope: 0.0055860286,
+            longest_river_length: 118.0,
+            total_drainage_area: 2.6813354,
+            mean_precipitation: 0.0037771726,
+            windward_leeward_precip_ratio: 773.45764,
+            mean_temperature_c: 19.105743,
+            mean_soil_moisture: 0.15815213,
+            biome_coverage_percent: (0.0, 0.0, 0.0, 0.0, 27.76566, 40.105953, 27.76566, 4.36273),
+            hex_count: 4096,
+            height_blake3: (198, 247, 10, 124, 138, 246, 163, 65, 190, 14, 19, 42, 180, 64, 52, 249, 238, 20, 127, 83, 25, 228, 64, 43, 229, 180, 177, 96, 51, 178, 225, 130),
+            z_filled_blake3: (198, 247, 10, 124, 138, 246, 163, 65, 190, 14, 19, 42, 180, 64, 52, 249, 238, 20, 127, 83, 25, 228, 64, 43, 229, 180, 177, 96, 51, 178, 225, 130),
+            flow_dir_blake3: (142, 209, 252, 140, 101, 59, 137, 179, 116, 197, 136, 9, 140, 6, 21, 147, 50, 15, 20, 88, 175, 12, 250, 80, 159, 124, 134, 93, 0, 165, 44, 238),
+            accumulation_blake3: (52, 171, 168, 128, 177, 12, 96, 72, 166, 203, 122, 20, 110, 0, 7, 232, 231, 65, 241, 255, 234, 222, 100, 215, 248, 217, 245, 3, 19, 168, 251, 30),
+            basin_id_blake3: (71, 54, 85, 203, 145, 63, 100, 231, 253, 198, 97, 59, 230, 80, 210, 220, 246, 41, 204, 58, 164, 171, 185, 175, 120, 232, 39, 126, 186, 44, 1, 35),
+            river_mask_blake3: (149, 228, 158, 47, 52, 199, 125, 142, 1, 118, 206, 17, 204, 127, 30, 115, 78, 189, 233, 142, 250, 39, 183, 232, 194, 29, 93, 157, 127, 94, 89, 46),
+            erosion_relief_drop_fraction: 0.0014352202,
+            coast_type_counts: (0, 38, 3, 136),
+            erosion_sea_crossing_count: 36,
+            coast_type_blake3: (160, 125, 236, 16, 170, 162, 53, 101, 135, 247, 39, 175, 1, 204, 70, 143, 64, 208, 94, 49, 36, 4, 52, 224, 253, 204, 231, 162, 255, 190, 235, 239),
+        )"#;
+
+        let metrics: SummaryMetrics = ron::from_str(legacy_ron)
+            .expect("Sprint 2 metrics.ron must deserialize under Sprint 3 schema");
+
+        // Legacy-aliased field resolves correctly.
+        assert_eq!(
+            metrics.coast_type_counts_v1,
+            [0, 38, 3, 136],
+            "`coast_type_counts` alias must populate `coast_type_counts_v1`"
+        );
+
+        // Sprint 3 fields default to their zero values.
+        assert_eq!(metrics.mean_sediment_thickness, 0.0);
+        assert_eq!(metrics.deposition_zone_fraction, 0.0);
+        assert_eq!(metrics.coast_type_counts_v2, [0_u32; 5]);
+        assert_eq!(metrics.mean_fog_water_input, 0.0);
+        assert_eq!(metrics.promoted_lake_count, 0);
+        assert_eq!(metrics.sediment_blake3, [0_u8; 32]);
     }
 
     #[test]
