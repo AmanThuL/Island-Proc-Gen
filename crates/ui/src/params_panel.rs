@@ -19,8 +19,9 @@ pub(crate) const H_STAR_RANGE: std::ops::RangeInclusive<f32> = 0.01_f32..=0.30_f
 pub(crate) const Q_0_RANGE: std::ops::RangeInclusive<f32> = 0.5_f32..=2.0_f32;
 /// `tau_c` slider range: `0.05 ..= 0.50`.
 pub(crate) const TAU_C_RANGE: std::ops::RangeInclusive<f32> = 0.05_f32..=0.50_f32;
-/// `tau_f` slider range: `0.20 ..= 2.00`.
-pub(crate) const TAU_F_RANGE: std::ops::RangeInclusive<f32> = 0.20_f32..=2.00_f32;
+/// `tau_f` slider range: `0.20 ..= 10.00`. Upper bound raised from 2.00 in
+/// Sprint 3.1 Task 3.1.C.0 to accommodate the new 5.0 default (was 0.60).
+pub(crate) const TAU_F_RANGE: std::ops::RangeInclusive<f32> = 0.20_f32..=10.00_f32;
 
 // ── Slider → StageId frontier mapping (test infrastructure only) ─────────────
 // These items are used exclusively by the unit tests in this file and need not
@@ -280,7 +281,7 @@ mod tests {
         assert_eq!(*TAU_C_RANGE.end(), 0.50_f32, "TAU_C end");
 
         assert_eq!(*TAU_F_RANGE.start(), 0.20_f32, "TAU_F start");
-        assert_eq!(*TAU_F_RANGE.end(), 2.00_f32, "TAU_F end");
+        assert_eq!(*TAU_F_RANGE.end(), 10.00_f32, "TAU_F end");
     }
 
     /// Verify that each Sprint 3.8 slider maps to the correct `run_from`

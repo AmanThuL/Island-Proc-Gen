@@ -67,7 +67,7 @@ pub struct ClimateParams {
     pub precipitation_variant: PrecipitationVariant,
 
     /// Initial water-vapour mixing ratio at the upwind boundary.
-    /// Dimensionless proxy; default `1.0`.
+    /// Dimensionless proxy; default `1.3` (Sprint 3.1 retune, was `1.0`).
     #[serde(default = "default_q_0")]
     pub q_0: f32,
 
@@ -77,7 +77,8 @@ pub struct ClimateParams {
     pub tau_c: f32,
 
     /// Generic fallout time scale `τ_f`.
-    /// Smaller values → stronger rain shadow; default `0.60`.
+    /// Smaller values → stronger rain shadow; default `5.0` (Sprint 3.1
+    /// retune, was `0.60` — see Task 3.1.C.0 diagnosis).
     #[serde(default = "default_tau_f")]
     pub tau_f: f32,
 }
@@ -91,13 +92,21 @@ pub struct ClimateParams {
 // sprint) could be to relocate the constants into `core::preset` and
 // re-export from `precipitation_v3`. Not worth the move for Task 3.4.
 fn default_q_0() -> f32 {
-    1.0
+    // Sprint 3.1 Task 3.1.C.0 raised from 1.0 to 1.3 per DD4. Canonical
+    // const: `sim::climate::precipitation_v3::Q_0_DEFAULT`.
+    1.3
 }
 fn default_tau_c() -> f32 {
+    // Sprint 3 DD4 default; retained unchanged through Sprint 3.1.
     0.15
 }
 fn default_tau_f() -> f32 {
-    0.60
+    // Sprint 3.1 Task 3.1.C.0 raised from 0.60 to 5.0 to fix the 62×
+    // precipitation collapse on 128² domains. Canonical const:
+    // `sim::climate::precipitation_v3::TAU_F_DEFAULT`; see
+    // `docs/design/sprints/sprint_3_1_lfpm_diagnosis.md` §6 for the
+    // root-cause analysis.
+    5.0
 }
 
 impl Default for ClimateParams {
@@ -608,9 +617,9 @@ mod tests {
     fn climate_params_defaults_match_locked_constants() {
         let cp = ClimateParams::default();
         assert_eq!(cp.precipitation_variant, PrecipitationVariant::V3Lfpm);
-        assert_eq!(cp.q_0, 1.0, "q_0");
+        assert_eq!(cp.q_0, 1.3, "q_0");
         assert_eq!(cp.tau_c, 0.15, "tau_c");
-        assert_eq!(cp.tau_f, 0.60, "tau_f");
+        assert_eq!(cp.tau_f, 5.0, "tau_f");
     }
 
     // 9. Sprint 3 DD4: a Sprint-2-vintage RON preset (no `climate:` field)
@@ -648,9 +657,9 @@ mod tests {
             preset.climate.precipitation_variant,
             PrecipitationVariant::V3Lfpm
         );
-        assert_eq!(preset.climate.q_0, 1.0);
+        assert_eq!(preset.climate.q_0, 1.3);
         assert_eq!(preset.climate.tau_c, 0.15);
-        assert_eq!(preset.climate.tau_f, 0.60);
+        assert_eq!(preset.climate.tau_f, 5.0);
     }
 
     // 10. Sprint 3 DD4: V3Lfpm is the default variant for new presets.

@@ -40,7 +40,11 @@ use crate::climate::common::{grad_scalar_at, signed_uplift};
 
 /// Initial water-vapour at the upwind boundary. Preset-exposed via
 /// `ClimateParams.q_0`; this constant is the locked default.
-pub const Q_0_DEFAULT: f32 = 1.0;
+///
+/// Sprint 3.1 Task 3.1.C.0 raised this from `1.0` to `1.3` per DD4 — gives
+/// 30 % more upwind-boundary vapour so the post-`TAU_F` equilibrium at the
+/// windward coast lands closer to V2Raymarch's aggregate mean.
+pub const Q_0_DEFAULT: f32 = 1.3;
 
 /// Condensation time scale `τ_c`. Smaller → faster condensation on windward
 /// slopes. Preset-exposed via `ClimateParams.tau_c`.
@@ -48,7 +52,17 @@ pub const TAU_C_DEFAULT: f32 = 0.15;
 
 /// Generic fallout time scale `τ_f` (rain shadow). Smaller → stronger drying
 /// leeward. Preset-exposed via `ClimateParams.tau_f`.
-pub const TAU_F_DEFAULT: f32 = 0.60;
+///
+/// Sprint 3.1 Task 3.1.C.0 raised this from `0.60` to `5.0` to fix the 62×
+/// precipitation collapse on 128² domains. At `CONDENSATION_DT = 1.0` per
+/// cell and `TAU_F = 0.60`, `fallout_decay = exp(-1/0.6) ≈ 0.189` meant
+/// moisture dropped 81 % per cell — `q` collapsed from `q_0` to the marine
+/// recharge equilibrium (~0.06) within 3 cells of the upwind boundary,
+/// leaving 99 % of the domain with P ≈ 0 (see
+/// `docs/design/sprints/sprint_3_1_lfpm_diagnosis.md` §6). The new
+/// `exp(-1/5) ≈ 0.819` loses only 18 % per cell, extending the moisture
+/// transport depth to ~128 cells at the marine-recharge equilibrium.
+pub const TAU_F_DEFAULT: f32 = 5.0;
 
 /// Scales the orographic component: `uplift_factor = max(0, signed_uplift) * UPLIFT_GAIN`.
 /// Not preset-exposed (DD4 comment: "仍留常量").
@@ -60,7 +74,13 @@ pub const MARINE_RECHARGE_STRENGTH: f32 = 0.2;
 
 /// Exponential decay length for the marine recharge term (in cells).
 /// Not preset-exposed.
-pub const MARINE_RECHARGE_DECAY: f32 = 0.08;
+///
+/// Sprint 3.1 Task 3.1.C.0 lowered this from `0.08` to `0.025` (3.2× reduction)
+/// to push the recharge e-folding length from ~12.5 cells to ~40 cells —
+/// matches the ~45-cell island radius at 128² so interior land cells receive
+/// meaningful marine-source vapour instead of decaying to zero. See the
+/// companion `TAU_F_DEFAULT` note.
+pub const MARINE_RECHARGE_DECAY: f32 = 0.025;
 
 /// Explicit Euler step size used in both the condensation and fallout exponents.
 pub const CONDENSATION_DT: f32 = 1.0;
