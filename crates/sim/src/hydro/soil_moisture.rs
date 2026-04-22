@@ -62,12 +62,12 @@ pub(crate) const SMOOTH_SELF_WEIGHT: f32 = 0.75;
 /// Sprint 3 DD5: fog likelihood → water input conversion factor.
 /// `fog_water_input[p] = FOG_WATER_GAIN * fog_likelihood[p]`.
 /// Dimensionless proxy for fog-drip contribution relative to precipitation.
-pub const FOG_WATER_GAIN: f32 = 0.15;
+pub const FOG_WATER_GAIN: f32 = 0.30;
 
 /// Sprint 3 DD5: fraction of `fog_water_input` that enters the soil-moisture
 /// store. Less than 1.0 because fog drip has significant surface runoff on
 /// steep volcanic terrain.
-pub const FOG_TO_SM_COUPLING: f32 = 0.40;
+pub const FOG_TO_SM_COUPLING: f32 = 0.60;
 
 /// DD5: populate `world.baked.soil_moisture` and `world.derived.fog_water_input`.
 pub struct SoilMoistureStage;
@@ -526,7 +526,7 @@ mod tests {
         let sm_fog = world_fog.baked.soil_moisture.as_ref().unwrap();
         let sm_no_fog = world_no_fog.baked.soil_moisture.as_ref().unwrap();
 
-        // fog_contribution = FOG_WATER_GAIN * FOG_TO_SM_COUPLING = 0.15 * 0.40 = 0.06.
+        // fog_contribution = FOG_WATER_GAIN * FOG_TO_SM_COUPLING = 0.30 * 0.60 = 0.18.
         let expected_delta = FOG_WATER_GAIN * FOG_TO_SM_COUPLING;
         for iy in 0..h {
             for ix in 0..w {

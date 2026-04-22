@@ -58,17 +58,21 @@ pub fn montane_wet_forest(env: EnvSample) -> f32 {
     f_t * f_theta * f_z
 }
 
-/// Sprint 3 DD5 bell parameter: narrowed fog sigma (was 0.12 in the
-/// Sprint 1B linear-smoothstep form; DD5 spec mandates σ = 0.08 so the
-/// bell is concentrated in the inversion layer rather than spread across
-/// the full elevation range).
-pub(crate) const CLOUD_FOREST_SIGMA_FOG: f32 = 0.08;
+/// Sprint 3 Task 3.1.C candidate A: fog sigma widened from 0.08 to 0.15.
+/// The wider bell spreads the fog-dependence band across a broader
+/// inversion layer so CloudForest suitability fires on more land cells.
+/// Original DD5 target was 0.08 (concentrated inversion layer); the 0.15
+/// value was chosen empirically to satisfy the G7 gate (CloudForest > 0 %
+/// on ≥ 1 archetype).
+pub(crate) const CLOUD_FOREST_SIGMA_FOG: f32 = 0.15;
 
-/// Sprint 3 DD5: peak weight of the fog factor in CloudForest suitability.
-/// Reduced from 1.0 to 0.3 because fog now feeds into soil_moisture via
-/// `fog_water_input` (SoilMoistureStage, Change 3). Soil moisture is the
-/// primary driver; direct fog suitability is a supporting contribution.
-pub(crate) const CLOUD_FOREST_FOG_PEAK_WEIGHT: f32 = 0.3;
+/// Sprint 3 Task 3.1.C candidate A: peak weight increased from 0.30 to 0.40.
+/// Raised alongside the soil_moisture coupling increase
+/// (FOG_TO_SM_COUPLING 0.40 → 0.60) to amplify the direct fog suitability
+/// signal when inversion-layer fog is high. Fog still feeds CloudForest
+/// primarily through SoilMoistureStage's `fog_water_input` coupling; the
+/// direct term is a secondary enhancer for high-fog cells.
+pub(crate) const CLOUD_FOREST_FOG_PEAK_WEIGHT: f32 = 0.40;
 
 pub fn cloud_forest(env: EnvSample) -> f32 {
     let f_t = bell(env.temperature_c, 15.0, 4.0);
@@ -76,11 +80,12 @@ pub fn cloud_forest(env: EnvSample) -> f32 {
     // z-bell is intentionally tighter than montane_wet_forest (0.15 vs 0.17)
     // to keep the two biomes from overlapping in elevation space.
     let f_z = bell(env.z_norm, 0.60, 0.15);
-    // Sprint 3 DD5: fog contributes via a narrow Gaussian bell (sigma=0.08)
-    // capped at CLOUD_FOREST_FOG_PEAK_WEIGHT (0.3). Fog's main hydrology
-    // foothold is now through SoilMoistureStage's fog-drip coupling; the
-    // direct fog suitability term is a secondary enhancer for cells at the
-    // core of the inversion layer.
+    // Sprint 3 Task 3.1.C: fog contributes via a Gaussian bell (sigma=0.15,
+    // widened from DD5's 0.08) capped at CLOUD_FOREST_FOG_PEAK_WEIGHT (0.40,
+    // raised from DD5's 0.30). Fog's main hydrology foothold is through
+    // SoilMoistureStage's fog-drip coupling (FOG_TO_SM_COUPLING=0.60);
+    // the direct fog suitability term is a secondary enhancer for cells
+    // at the inversion layer.
     let f_fog = (1.0 - CLOUD_FOREST_FOG_PEAK_WEIGHT)
         + CLOUD_FOREST_FOG_PEAK_WEIGHT * bell(env.fog_likelihood, 1.0, CLOUD_FOREST_SIGMA_FOG);
     f_t * f_theta * f_z * f_fog
@@ -201,22 +206,24 @@ mod tests {
         );
     }
 
-    /// Sprint 3 DD5: lock the mandated sigma_fog and peak-weight constants so
+    /// Sprint 3 Task 3.1.C: lock the sigma_fog and peak-weight constants so
     /// future tuning changes surface as a compile-time test diff.
+    /// Candidate A values: sigma_fog=0.15, peak_weight=0.40.
     #[test]
     fn cloud_forest_bell_tuning_matches_dd5() {
-        // sigma_fog must be 0.08 (narrower than the legacy 0.12 in the
-        // original spec reference — concentrated in the inversion layer).
+        // sigma_fog widened from 0.08 to 0.15 in Task 3.1.C candidate A
+        // to spread the fog-dependence band across a broader inversion layer.
         assert!(
-            (CLOUD_FOREST_SIGMA_FOG - 0.08).abs() < f32::EPSILON,
-            "CLOUD_FOREST_SIGMA_FOG must be 0.08 (DD5 locked value), got {}",
+            (CLOUD_FOREST_SIGMA_FOG - 0.15).abs() < f32::EPSILON,
+            "CLOUD_FOREST_SIGMA_FOG must be 0.15 (3.1.C candidate A value), got {}",
             CLOUD_FOREST_SIGMA_FOG
         );
-        // fog peak weight must be 0.3 (reduced from the legacy dominant 1.0
-        // contribution — fog now contributes via soil_moisture coupling).
+        // fog peak weight increased from 0.30 to 0.40 in Task 3.1.C candidate A
+        // to strengthen the direct fog suitability term alongside the
+        // soil_moisture coupling increase.
         assert!(
-            (CLOUD_FOREST_FOG_PEAK_WEIGHT - 0.3).abs() < f32::EPSILON,
-            "CLOUD_FOREST_FOG_PEAK_WEIGHT must be 0.3 (DD5 locked value), got {}",
+            (CLOUD_FOREST_FOG_PEAK_WEIGHT - 0.40).abs() < f32::EPSILON,
+            "CLOUD_FOREST_FOG_PEAK_WEIGHT must be 0.40 (3.1.C candidate A value), got {}",
             CLOUD_FOREST_FOG_PEAK_WEIGHT
         );
     }
