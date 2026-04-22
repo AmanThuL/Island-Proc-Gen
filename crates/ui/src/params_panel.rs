@@ -9,10 +9,20 @@ use std::f32::consts::TAU;
 // Declared as pub(crate) constants so the unit tests in this module can verify
 // them without pulling in a live egui context.
 
-/// `space_k_bed` slider range: `1e-4 ..= 2e-2`.
-pub(crate) const SPACE_K_BED_RANGE: std::ops::RangeInclusive<f32> = 1e-4_f32..=2e-2_f32;
-/// `space_k_sed` slider range: `1e-4 ..= 5e-2`.
-pub(crate) const SPACE_K_SED_RANGE: std::ops::RangeInclusive<f32> = 1e-4_f32..=5e-2_f32;
+/// `space_k_bed` slider range: `1e-4 ..= 6e-3`. Upper bound tightened in
+/// Sprint 3.1 post-close from the spec's `2e-2` — the calibration probe
+/// found every K above ~5.5e-3 trips `erosion_no_excessive_sea_crossing`
+/// on at least one grid size (5 % land-cell-loss invariant), and the
+/// default `5.0e-3` sits near the practical maximum. The old `2e-2` cap
+/// let interactive slider drags flood the WARN log as soon as the value
+/// crossed ~7e-3; 6e-3 gives a small experimental margin without
+/// guaranteed tripping.
+pub(crate) const SPACE_K_BED_RANGE: std::ops::RangeInclusive<f32> = 1e-4_f32..=6e-3_f32;
+/// `space_k_sed` slider range: `1e-4 ..= 1.8e-2`. Upper bound tracks
+/// `SPACE_K_BED_RANGE.end * 3` per the DD2 3:1 `K_sed / K_bed` ratio
+/// (both sliders mutate independently, but the range cap preserves the
+/// ratio envelope).
+pub(crate) const SPACE_K_SED_RANGE: std::ops::RangeInclusive<f32> = 1e-4_f32..=1.8e-2_f32;
 /// `h_star` slider range: `0.01 ..= 0.30`.
 pub(crate) const H_STAR_RANGE: std::ops::RangeInclusive<f32> = 0.01_f32..=0.30_f32;
 /// `q_0` slider range: `0.5 ..= 2.0`.
@@ -265,10 +275,10 @@ mod tests {
     fn sprint_3_slider_ranges_match_spec() {
         // SPACE-lite erosion — logarithmic K values
         assert_eq!(*SPACE_K_BED_RANGE.start(), 1e-4_f32, "SPACE_K_BED start");
-        assert_eq!(*SPACE_K_BED_RANGE.end(), 2e-2_f32, "SPACE_K_BED end");
+        assert_eq!(*SPACE_K_BED_RANGE.end(), 6e-3_f32, "SPACE_K_BED end");
 
         assert_eq!(*SPACE_K_SED_RANGE.start(), 1e-4_f32, "SPACE_K_SED start");
-        assert_eq!(*SPACE_K_SED_RANGE.end(), 5e-2_f32, "SPACE_K_SED end");
+        assert_eq!(*SPACE_K_SED_RANGE.end(), 1.8e-2_f32, "SPACE_K_SED end");
 
         assert_eq!(*H_STAR_RANGE.start(), 0.01_f32, "H_STAR start");
         assert_eq!(*H_STAR_RANGE.end(), 0.30_f32, "H_STAR end");
