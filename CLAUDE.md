@@ -472,6 +472,80 @@ app ──▶ render ──▶ gpu ──┐
   3 sediment-aware SPACE-lite leaves intentional deposition lakes
   unfilled. Do NOT remove the defensive code.
 
+### Sprint 3.1 (calibration tail)
+
+- **LFPM v3 precipitation was numerically collapsed pre-3.1.** Phase B
+  measured `mean_precipitation` at ~0.004 across all 5 archetypes
+  (62× drop vs V2Raymarch's 0.235) and `windward_leeward_precip_ratio`
+  up to 773. Root cause documented in
+  `docs/design/sprints/sprint_3_1_lfpm_diagnosis.md`:
+  `CONDENSATION_DT = 1.0` applied per cell with the Sprint 3 default
+  `TAU_F = 0.60` gives `fallout_decay = exp(-1/0.6) ≈ 0.189` — 81 %
+  moisture loss per cell, so `q` depleted within 3-5 cells of the
+  upwind boundary on any 128² domain. Sprint 3.1 Task 3.1.C.0 retuned
+  `TAU_F = 5.0` (18 % per-cell loss), `Q_0 = 1.3` (+30 % boundary
+  vapour), and `MARINE_RECHARGE_DECAY = 0.025` (e-folding scale 12.5
+  → 40 cells, matches ~45-cell island radius at 128²). Post-fix mean
+  precipitation is 0.012-0.031 (6× improvement) but still below V2's
+  0.235; the residual is a normalization artifact (P output is scaled
+  by max(P), and orographic condensation on windward slopes produces
+  large single-cell spikes that squash mean/max ≈ 30). Sprint 4's
+  physical-unit calibration is the natural fix.
+- **SPACE-lite K / H* / hs_init could not be raised within the 5 %
+  sea-crossing invariant.** Sprint 3.1 Task 3.1.A tried the plan's
+  candidate C (`K=1.2e-2`, `H*=0.10`, `hs_init=0.02`) — 12-13 % delta
+  at 128². Fell back to candidate B (`K=8e-3`, `H*=0.15`,
+  `hs_init=0.05`) — 7-8 % delta. A sub-candidate found by targeted
+  probe (`K=5.5e-3`, `H*=0.15`, `hs_init=0.10`) passed 128² stock
+  preset tests but tripped `-p sim --lib` synthetic 40²/64² fixtures
+  by 5.9-9.3 %. Per CLAUDE.md's existing K-grid-sensitivity gotcha
+  (Erosion Sprint 2+ section above), ANY K bump above the Sprint 3
+  default 5.0e-3 tips the smallest test grids over the 5 %
+  `erosion_no_excessive_sea_crossing` invariant. 3.1.A closed
+  DONE_WITH_CONCERNS with K/H*/hs_init retained at Sprint 3 defaults;
+  §10 G4 stays red. Calibration evidence: the smallest grids
+  (`ErosionOuterLoop::tests` 40²) are the binding constraint for any
+  future K sweep, not the 128² baseline.
+- **`HS_INIT_LAND` is now a named const** (was an inline `0.1` literal
+  in `CoastMaskStage::run`). Lives as module-private `const
+  HS_INIT_LAND: f32 = 0.10` in `crates/sim/src/geomorph/coastal.rs`
+  with a value-lock test `hs_init_land_constant_matches_sprint_3_1_lock`
+  mirroring the DD2 SPACE-lite lock pattern. Cross-file references in
+  `invalidation.rs` / `stream_power.rs` doc comments also migrated to
+  the named constant so renames are single-point changes.
+- **3:1 `K_sed = 3 · K_bed` ratio lock is now asserted in tests**
+  (both `sediment.rs::space_lite_constants_match_dd2_lock` and
+  `preset.rs::erosion_params_defaults_match_locked_constants`). Sprint
+  3 DD2's design constraint; silent drift would break the SPACE-lite
+  physics but pass point-wise value checks.
+- **Fog → soil_moisture coupling doubled in 3.1.C.** Candidate A:
+  `FOG_WATER_GAIN = 0.30` (was 0.15), `FOG_TO_SM_COUPLING = 0.60` (was
+  0.40), `CLOUD_FOREST_SIGMA_FOG = 0.15` (was 0.08),
+  `CLOUD_FOREST_FOG_PEAK_WEIGHT = 0.40` (was 0.30). Max SM boost from
+  fog increased from 0.06 to 0.18. Net effect: DryShrub → Grassland
+  shift across every archetype; MontaneWetForest foothold expanded
+  slightly on volcanic_single (0 → 0.12 %) and volcanic_caldera_young
+  (1.1 → 1.17 %). **CloudForest stayed 0 %** — temperature gate
+  (`f_t = bell(T, 15 °C, 4 °C)`) and θ gate (`smoothstep(0.30, 0.75,
+  θ)`) are both unreachable by pure fog tuning at current archetype
+  temperature range (19-24 °C) and max soil_moisture (~0.20). 3.1.C
+  closed DONE_WITH_CONCERNS; CloudForest / CoastalScrub forward to
+  Sprint 3.5.D's biome-suitability rework.
+- **CoastType v2 thresholds cannot produce Cliffs under Sprint 3
+  defaults.** 3.1.B tried `S_CLIFF_HIGH_V2` candidates 0.08 (A) and
+  0.06 (B), both yielded 0/5 archetypes with any Cliff cells at 128²
+  because 3.1.A couldn't sharpen slopes. Retained at Sprint 3's 0.12.
+  Forward G5 Cliff coverage residual to Sprint 3.5.D's hex coast
+  grammar rework (edge-decoration cliff vs cell-discriminant cliff
+  can produce the visual signal without requiring individual-cell
+  slope > 0.06).
+- **Sprint 3.1 net shipped: 1 real fix (LFPM collapse) + 3 structural
+  cleanups (`HS_INIT_LAND` const, 3:1 ratio-lock assertions,
+  diagnostic probes) + extensive calibration evidence recorded in
+  commit messages.** §10 G4 / G5 / G7 all stay red. Forwarded
+  residuals to Sprint 3.5.D (biome + coast rework) and Sprint 4
+  (physical-unit calibration).
+
 ---
 
 ## Commit style
