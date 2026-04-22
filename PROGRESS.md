@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-20 (Roadmap vNext revision — post-Sprint-3 sequence split into Sprint 3 (science) → Sprint 3.5 (hex surface readability) → Sprint 4 (infra/productization) → Sprint 4.5 (beauty/demo) → Sprint 5 (semantic completion). Sprint 2.6 shipped; Sprint 2 residuals pending Sprint 3.)
+**Last Updated:** 2026-04-21 (Sprint 3 fully closed on `dev` 2026-04-20 with 13 atomic commits `ef725eb → 079aeb0`; Sprint 3.1 calibration tail now active — three deferred §10 gates (G4 max_z drop, G5 Cliff ≥ 5 %, G7 CloudForest/CoastalScrub foothold) to close via **const-only retune + narrow 3.1.C.0 LFPM regression-bug escape clause**.)
 
 ---
 
@@ -21,25 +21,59 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 3 — Sediment & Advanced Climate (*scientific closure*).
-**Closure in flight on `dev` 2026-04-20.** Eleven of twelve planned
-tasks shipped across eleven atomic commits (`9dc0ecc → 7255af5`); only
-Task 3.10 (save format bump + 10-shot `sprint_3_sediment_climate/`
-baseline + regen of the three existing `--headless` baselines) is
-outstanding. Every feature commit used the CLAUDE.local.md
-implementer → `code-simplifier` → `superpowers:code-reviewer` cadence;
-reviewer fixed to Opus per user preference; chain-coherence rule
-("Opus implementer ⇒ Opus simplifier + reviewer") applied on the
-load-bearing diffs (3.2 SPACE-lite, 3.3 deposition, 3.6 CoastType v2).
-Test delta: 424 → 509 on `-p core -p sim -p render -p app -p ui -p hex`
-(+85 across 11 commits). `-p data` golden-seed regression stays **red
-until Task 3.10 regen** per sprint §9's explicit instruction that
-baseline regeneration must be its own commit. fmt + clippy + per-crate
-tests green on every commit; the hard `cargo test --workspace` gate
-re-greens once 3.10 lands.
+**Primary:** Sprint 3.1 — Calibration Tail (*§10 G4 / G5 / G7 closure
+via const-only retune, with one narrow escape clause for clear LFPM
+regression bugs found during task 3.1.C.0 — see active-scope
+subsection below*).
 
-Sprint 3 shipped the scientific-credibility closure the roadmap vNext
-revision scoped:
+Sprint 3 **fully closed** on `dev` 2026-04-20 in 13 atomic commits
+(`ef725eb → 079aeb0`). `cargo test --workspace` green (**527 passing**).
+All 4 `--headless` baselines (`sprint_1a_baseline`,
+`sprint_1b_acceptance`, `sprint_2_erosion`, `sprint_3_sediment_climate`)
+exit 0 on idempotent re-run; 16 pipeline-tail invariants hold on every
+shot. Every feature commit used the CLAUDE.local.md implementer →
+`code-simplifier` → `superpowers:code-reviewer` cadence; reviewer fixed
+to Opus per user preference; chain-coherence rule ("Opus implementer ⇒
+Opus simplifier + reviewer") applied on the load-bearing diffs (3.2
+SPACE-lite, 3.3 deposition, 3.6 CoastType v2). Test delta across Sprint
+3: 424 → 527 (+103 across 13 commits). fmt + clippy clean throughout.
+
+Sprint 3 structural thesis **shipped**; parameter calibration
+**deferred to Sprint 3.1** per §11 risk #1's "最多迭代 3 次" provision.
+Three §10 gates still red at the locked Sprint 3 defaults (all measured
+on the 128² 10-shot `sprint_3_sediment_climate/` baseline, `seed 42`):
+
+- **G4** (`erosion_relief_drop_fraction ∈ [0.10, 0.30]` on ≥ 3/5):
+  **0/5**. Actual `metrics.ron` values across the 5 post shots
+  (`SpimVariant::SpaceLite`) are in [0.00144, 0.01447] — 10-200× below
+  the 0.10 lower bound. The metric is clamped to [0, 1] by
+  construction (`crates/data/src/golden.rs:333`) so values cannot be
+  negative; comparing post (SpaceLite) to pre (Plain variant) shows
+  SpaceLite drops slightly *less* than Plain on every archetype
+  (Δ ≈ −0.0009 mean). Root cause: at `hs_init = 0.1 / H* = 0.05`,
+  shielding factor `exp(-2) ≈ 0.135` is applied uniformly from inner
+  step 1, so peaks and valleys see the same effective `K_bed` and the
+  "sediment protects coast, peaks stay exposed" thesis never expresses.
+- **G5** (Cliff ≥ 5 % on ≥ 3/5): **0/5**. V2 fetch-integral classifier
+  produces zero Cliff cells on every archetype. Downstream of G4
+  (terrain isn't eroding → slopes never sharpen) and direct
+  (`S_CLIFF_HIGH_V2 = 0.12` exceeds any slope the 5 archetypes
+  currently produce).
+- **G7** (CloudForest + CoastalScrub suite-level foothold): **0/5 for
+  both biomes**. Actual pre/post precipitation metrics reveal a more
+  serious upstream problem: `post_volcanic_single` mean_precipitation
+  collapsed from pre's `0.2354` to `0.00378` (~62× drop);
+  `windward_leeward_precip_ratio` jumped from `1.05` to `773.46`.
+  This is an LFPM v3 numerical issue masquerading as a biome-bell
+  tuning problem. Sprint 3.1 plan (`docs/design/sprints/sprint_3_1_calibration_tail.md`)
+  accordingly inserts an LFPM-v3 output diagnostic step (3.1.C.0)
+  before any fog/bell tuning (3.1.C).
+
+**Passed cleanly in Sprint 3:** §10 G8 (promoted_lake_count stretch;
+all-zero acceptable); §10 G9 (LavaDelta-only-on-Young: 14.5 % / 18.8 %
+/ 18.5 % Young, 0 % Mature/Old).
+
+Sprint 3 deliverables recap:
 
 1. **Sediment-aware SPIM (SPACE-lite, Task 3.2 + 3.3).**
    `authoritative.sediment` — a `ScalarField2D<f32>` field present
@@ -121,9 +155,12 @@ revision scoped:
    Sprint 2.5's `basin_partition_post_erosion_well_formed`).
    `sediment_bounded` (hs ∈ [0,1] on land, 0 on sea, finite),
    `deposition_zone_fraction_realistic` (hs > 0.15 cell fraction
-   in [0.0, 0.70] — lower bound relaxed from spec's 0.05 pending
-   Task 3.10 256² calibration; inline breadcrumb at the constant
-   flags the tighten target), `coast_type_v2_well_formed`
+   in [0.0, 0.70] — lower bound relaxed from spec's 0.05 for
+   Sprint 3 close-out because Phase B measurement reported
+   `deposition_zone_fraction = 0.0` on every 128² archetype; inline
+   breadcrumb at the constant flags Sprint 3.1 calibration on the
+   128² baseline as the tighten target once K_bed / K_sed retune
+   produces meaningful deposition), `coast_type_v2_well_formed`
    (discriminants 0..=4; LavaDelta only on Young presets;
    Mature/Old must have zero LavaDelta), `precipitation_mass_balance`
    (mean P on land ∈ [1e-4, 1.0], gated to V3Lfpm only).
@@ -142,14 +179,50 @@ revision scoped:
    choice, fog hydrology coupling, CoastType v2 windward-peak sign
    flip, `sprint_3_defaults` rename + new overlay string keys.
 
-Remaining for Sprint 3: **Task 3.10** — `SAVE_FORMAT_VERSION 1 → 2`
-migration (height + sediment present-flag bytes in `Minimal` payload),
-fresh 10-shot `sprint_3_sediment_climate/` baseline
-(5 archetypes × pre/post SPACE-lite × hero camera), and regen of the
-three existing baselines (`sprint_1a_baseline`, `sprint_1b_acceptance`,
-`sprint_2_erosion`). The regen commit must be independent of the
-implementation commits so reviewer can attribute the numerical shift
-to the sediment + LFPM + coast-v2 cohort rather than any single commit.
+**Task 3.10 (Save format + baseline cascade) shipped** across two
+phases: Phase A (`8390a1c`) = save format v1 → v2 migration + new
+Sprint 3 `SummaryMetrics` fields (`mean_sediment_thickness`,
+`deposition_zone_fraction`, `coast_type_counts_v2`, `mean_fog_water_input`,
+`promoted_lake_count`); Phase B (`079aeb0`) = fresh 10-shot
+`sprint_3_sediment_climate/` baseline + regen of the three existing
+baselines (`sprint_1a_baseline`, `sprint_1b_acceptance`,
+`sprint_2_erosion`). Regen commit is independent per sprint §9.
+
+### Sprint 3.1 active scope (from `sprint_3_1_calibration_tail.md`)
+
+Const-only retune across already-shipped SPACE-lite / CoastType v2 /
+Fog-hydrology stages, **with one escape clause**: if 3.1.C.0's LFPM v3
+output diagnostic proves a clear regression bug (sign flip, off-by-one
+in sweep order, or similar localized defect), a minimal behavioural
+fix is allowed. Anything larger — rewriting LFPM's sweep algorithm,
+adding new conditional branches like a coastal-proximity SM floor —
+escalates out of 3.1 to a dedicated mini-sprint (3.2) or to Sprint
+3.5.D. No new stages, overlays, sliders, or `SummaryMetrics` fields
+regardless.
+
+Task order (see sprint doc for full detail):
+
+1. **3.1.A** — SPACE-lite `K_bed / H_STAR / hs_init` retune. First
+   probe candidate: `K_bed = 1.2e-2`, `K_sed = 3.6e-2` (holds 3:1
+   ratio per Sprint 3 DD2 lock), `H* = 0.10`, `hs_init = 0.02`. Must
+   NOT trip `erosion_no_excessive_sea_crossing` on any archetype at
+   128² (and spot-check at 64² / 256² per CLAUDE.md gotcha).
+2. **3.1.B** — CoastType v2 Cliff threshold retune after 3.1.A's
+   slope sharpening. Target: ≥ 5 % Cliff on ≥ 3/5 archetypes.
+3. **3.1.C.0** — **LFPM v3 output diagnostic (NEW, prerequisite to
+   3.1.C).** Verify where the pre→post precipitation collapse comes
+   from: sweep-order cache staleness? `q_scratch` preheat sign? wind
+   direction vs sweep gradient? before touching any bell.
+4. **3.1.C** — Fog/CloudForest bell retune, gated on 3.1.C.0 closing
+   the LFPM collapse.
+5. **3.1.D** — (conditional) CoastalScrub bell touch if 3.1.C didn't
+   pull it above 0 %.
+6. **3.1.E** — (conditional) LFPM v3 default tune (`q_0`, `TAU_F`).
+7. **3.1.F** — 4-baseline cascade regen + close-out.
+8. **3.1.G** — `CLAUDE.md` Gotchas + `PROGRESS.md` roll-forward.
+
+Estimated commit graph: ~6-10 feat/chore(data) pairs, same cadence
+as Sprint 3's 13-commit closure.
 
 ---
 
@@ -346,22 +419,19 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
 > semantic completion. See [§Post-Sprint-3 Roadmap Revision](docs/design/island_generation_complete_roadmap.md#post-sprint-3-roadmap-revision-vnext-2026-04-20)
 > for the full rationale.
 
-1. **Sprint 3** — Sediment + Advanced Climate (*science closure*).
-   SPACE-lite sediment-aware erosion (`K · g(hs)`), LFPM v3
-   precipitation, cloud forest belt + fog hydrology, Coast type v2
-   (fetch integral + LavaDelta). Inherits Sprint 2's two deferred §10
-   clauses (max_z drop range, Cliff coverage). **DualSeason wind is
-   demoted to backlog per roadmap vNext** — no longer part of
-   Sprint 3 scope. Sprint 2.5's 5 archetypes + 15-shot 1B baseline +
-   tuned biome bells + hex debug overlays, and Sprint 2.6's editor
-   layout + World panel + Fuji-like world aspect ratio, together form
-   the starting baseline. Three `--headless` baselines are
-   truth-identical to pre-2.6 state (only beauty PNG framing
-   drifted). Sprint 3 boundary (per vNext revision): does NOT carry
-   hex-final-look, demo-quality screenshot, or "does it look like
-   Felix yet" responsibility — those belong to Sprint 3.5 / 4.5.
-   Doc: `docs/design/sprints/sprint_3_sediment_advanced_climate.md`
-   (drafted, synced to vNext).
+1. **Sprint 3.1** — Calibration Tail (*§10 G4/G5/G7 closure via
+   const-only retune + narrow 3.1.C.0 LFPM regression-bug escape
+   clause*). **Active.** Three gates deferred from
+   Sprint 3 close-out to a focused 6-10-commit branch. LFPM v3
+   precipitation collapse (62× drop pre→post on `volcanic_single`,
+   windward/leeward ratio blowout to 773) was discovered during
+   Phase B measurement and inserted as a new diagnostic task
+   (3.1.C.0) preceding any fog/bell tuning. K tune holds the Sprint
+   3 DD2 3:1 K_sed/K_bed ratio lock (probe C: K_bed=1.2e-2,
+   K_sed=3.6e-2, H*=0.10, hs_init=0.02). All tunes must pass
+   `erosion_no_excessive_sea_crossing` on 128² baseline + spot-check
+   at 64²/256² per CLAUDE.md's K-grid-sensitivity gotcha.
+   Doc: `docs/design/sprints/sprint_3_1_calibration_tail.md`.
 2. **Sprint 3.5** — Hex Surface Readability (*representation*).
    First sprint where hex becomes a readable surface language rather
    than a debug slice. True hex rendering (`HexSurfaceRenderer` + 6-edge
@@ -395,6 +465,31 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
 ---
 
 ## RECENTLY SHIPPED
+
+### Sprint 3 — Sediment & Advanced Climate (2026-04-20, 13 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_3_sediment_advanced_climate.md`](docs/design/sprints/sprint_3_sediment_advanced_climate.md) (Obsidian symlink, gitignored)
+**Test delta:** 424 → 527 passing (+103 across 13 commits). Commits `ef725eb → 079aeb0`.
+**Close-out status:** structural thesis shipped; three §10 calibration gates (G4, G5, G7) deferred to Sprint 3.1 per §11 risk #1. §10 G8 (promoted_lake_count) and G9 (LavaDelta-only-on-Young) passed cleanly.
+
+Sprint 3 turned `authoritative.sediment` from a latent field into first-class runtime state; replaced Sprint 1B's per-cell precipitation raymarch with LFPM v3's stateful water-vapour sweep; rebuilt FogLikelihoodStage around a Gaussian inversion-layer bell + added fog→soil-moisture coupling; and swapped CoastType's single-direction wind proxy for a 16-direction fetch integral with a fifth `LavaDelta` class for Young volcanic archetypes. Save format bumped v1 → v2 to carry the sediment-present flag; 5 new `SummaryMetrics` fields added; 4 new overlays; 6 new Tier-A ParamsPanel sliders; 4 new pipeline-tail invariants (total: **16**).
+
+| Commit | Task | What shipped |
+|---|---|---|
+| `ef725eb` | 3.0 | CLAUDE.md Gotchas + PROGRESS.md roll-forward at sprint start (covers Sprint 3 invariants that will be locked as tasks land). |
+| `…` | 3.1 | `authoritative.sediment` init at end of `CoastMaskStage::run` — land = `HS_INIT = 0.1`, sea = `0.0`, gated on `derived.coast_mask.is_land` oracle (not `height > sea_level`, per diagonal-Moore8/Von4 gotcha). Allocate-if-None-or-size-mismatch, else reuse; locked by `sediment_reused_across_reruns_when_resolution_unchanged`. `TopographyStage` writes a zero placeholder (`SaveMode::Minimal` demands `Some(..)` at the boundary); CoastMaskStage overwrites microseconds later. |
+| `…` | 3.2 | SPACE-lite dual equation dispatch via `preset.erosion.spim_variant`. `SpaceLite` (default) runs bedrock incision `K_bed·A^m·S^n·exp(-hs/H*)` + sediment entrainment `K_sed·A^m·S^n·min(hs, HS_ENTRAIN_MAX)`; `Plain` falls back to Sprint 2's single-equation SPIM (bit-exact for Task 3.10 pre_* regen). Shared `stream_power_kernel` via `#[inline]`. |
+| `…` | 3.3 | `SedimentUpdateStage` + `DepositionStage`. Kahn topo-sorted Qs-routing + deposition in one O(N) pass: `Qs_cap = K_Q·A^m_q·S^n_q`, `D = max(0, Qs_in - Qs_cap)`, `hs += D·dt`, `Qs_out = Qs_in - D` propagates to D8 downstream. `derived.deposition_flux` writes `D[p]`; cleared under Topography arm (not Coastal). `DepositionStage::run` is a diagnostic finalization hook (splitting would force double O(N) traversal). `erosion_inner_step_canonical_order` test locks the 4-stage sequence. |
+| `…` | 3.4 | LFPM v3 `PrecipitationStage` — sequential upwind sweep over stateful water-vapour `q` with orographic condensation + fallout + coast-proximity marine recharge. Sweep order cached in `derived.precipitation_sweep_order: Option<Vec<usize>>`, invalidated under Precipitation arm. 2-pass preheat into `q_scratch` for near-axis-aligned cold-start transients. `PrecipitationVariant::V2Raymarch` preserves Sprint 1B bit-exact for Task 3.10 regen. `ClimateParams` nested struct on `IslandArchetypePreset` exposes `q_0 / tau_c / tau_f` — `#[serde(default)]` keeps Sprint-2-vintage RON deserializable. |
+| `…` | 3.5 | FogLikelihoodStage v2 — Gaussian inversion-layer bell at `0.65·max_relief` (σ = 0.15·max_relief). SoilMoistureStage now adds `fog_water_input · FOG_TO_SM_COUPLING` (0.40) to SM on land, cleared under SoilMoisture arm. CloudForest bell retightened: `sigma_fog 0.08` (was 0.12), direct fog-term weight `0.3` (was 1.0) — fog feeds CloudForest primarily via raised SM rather than as a direct bell multiplier (removes double-counting). |
+| `…` | 3.6 | CoastType v2 — 5-class enum (Cliff / Beach / Estuary / RockyHeadland / **LavaDelta**). `V2FetchIntegral` 16-direction raycast with windward-peaks-at-1.0 weighting. Reviewer I1 caught sign inversion vs DD6's literal `cos(θ − wind_angle)` — impl uses windward-max semantics matching the Chinese spec comment 「迎风 1.0, 背风 0.5」. `V1Cheap` preserves Sprint 2 bit-exact for pre_* regen. New `derived.volcanic_centers: Option<Vec<[f32;2]>>` written by TopographyStage for LavaDelta proximity. `COAST_TYPE_TABLE` palette grew to `[5]`. |
+| `…` | 3.7 | 4 new overlays via `OverlayRegistry::sprint_3_defaults` (atomic rename from `sprint_2_5_defaults`): `sediment_thickness` (Turbo + `ScalarAuthoritative("sediment")`), `deposition_flux` (Viridis + `LogCompressedClampPercentile(0.99)`), `fog_water_input` (Blues + Auto), `lava_delta_mask` (`PaletteId::LavaDeltaMask` sampling only discriminant 4 opaque). Total: 16 → **20**. |
+| `…` | 3.8 | 6 new Tier-A ParamsPanel sliders: `space_k_bed / space_k_sed / h_star` (logarithmic, invalidate_from(ErosionOuterLoop)) + `q_0 / tau_c / tau_f` (invalidate_from(Precipitation)). Follows Sprint 2 slider-changed protocol. |
+| `7255af5` | 3.9 | 4 new pipeline-tail invariants: `sediment_bounded` (hs ∈ [0,1] land, 0 sea, finite); `deposition_zone_fraction_realistic` (hs > 0.15 cell fraction ∈ [0.0, 0.70] — lower bound relaxed from spec's 0.05 pending 3.1 calibration; inline breadcrumb at constant flags tighten target); `coast_type_v2_well_formed` (discriminants 0..=4; LavaDelta only on Young); `precipitation_mass_balance` (mean P on land ∈ [1e-4, 1.0], gated to V3Lfpm). Total: **16**. |
+| `8390a1c` | 3.10 A | Save format `v1 → v2` migration (height + sediment present-flag bytes in `Minimal` payload). New `SummaryMetrics` fields: `mean_sediment_thickness`, `deposition_zone_fraction`, `coast_type_counts_v2`, `mean_fog_water_input`, `promoted_lake_count`. `coast_type_counts` → `coast_type_counts_v1` rename with `#[serde(alias = "coast_type_counts")]` for back-compat. |
+| `079aeb0` | 3.10 B | **Baseline cascade regen.** Fresh 10-shot `sprint_3_sediment_climate/` baseline (5 archetypes × pre/post SPACE-lite × hero camera @ 128²). Regen of three existing baselines (`sprint_1a_baseline`, `sprint_1b_acceptance`, `sprint_2_erosion`). Regen commit independent per sprint §9 so reviewer attributes the numerical shift to the sediment + LFPM + coast-v2 cohort rather than any single commit. `cargo test --workspace` re-greened at this commit. |
+
+**Deferred to Sprint 3.1:** §10 G4 (0/5 archetypes hit drop range; root cause: uniform peak-valley shielding at `hs_init=0.1/H*=0.05`), G5 (0/5 at Cliff ≥ 5 %; root cause: downstream of G4 + `S_CLIFF_HIGH_V2 = 0.12` unreachable), G7 (0/5 for both CloudForest and CoastalScrub; Phase B measurement revealed LFPM v3 precipitation collapse as the dominant upstream issue — inserted as 3.1.C.0 diagnostic before any bell tuning).
 
 ### Sprint 2.6 — Editor Layout, World Proportions & Visual Tail (2026-04-19, 13 commits on `dev`)
 
