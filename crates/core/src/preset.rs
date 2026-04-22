@@ -219,19 +219,23 @@ pub struct ErosionParams {
 
     /// Sprint 3 DD2: SPACE-lite bedrock erodibility `K_bed`. Used in the
     /// `SpimVariant::SpaceLite` branch; ignored under `SpimVariant::Plain`.
-    /// Dimensionless proxy in v1; typical value `5e-3`.
+    /// Dimensionless proxy in v1; typical value `5e-3`. Sprint 3.1's
+    /// calibration probe found no K bump compatible with the 5 %
+    /// `erosion_no_excessive_sea_crossing` invariant across all grid
+    /// sizes (see [`super::ErosionParams`] — 3.1.A closed DONE_WITH_CONCERNS).
     #[serde(default = "default_space_k_bed")]
     pub space_k_bed: f32,
 
     /// Sprint 3 DD2: SPACE-lite sediment entrainability `K_sed`. Larger
     /// `K_sed` ⇒ faster erosion of the sediment layer. Dimensionless proxy
-    /// in v1; typical value `1.5e-2`.
+    /// in v1; typical value `1.5e-2` (preserves the DD2 3:1
+    /// `K_sed / K_bed` ratio lock).
     #[serde(default = "default_space_k_sed")]
     pub space_k_sed: f32,
 
     /// Sprint 3 DD2: cover-thickness `H*` in the bedrock shielding term
     /// `exp(-hs / H*)`. Controls how quickly bedrock incision decays as
-    /// sediment thickens; typical value `0.05` (in normalised height units).
+    /// sediment thickens; typical value `0.05` in normalised height units.
     #[serde(default = "default_h_star")]
     pub h_star: f32,
 
@@ -287,12 +291,13 @@ fn default_n_inner() -> u32 {
     10
 }
 fn default_space_k_bed() -> f32 {
-    // Sprint 3 DD2 locked constant: SPACE_K_BED_DEFAULT. See
-    // `crates/sim/src/geomorph/sediment.rs` for the canonical const.
+    // Sprint 3 DD2 locked constant: SPACE_K_BED_DEFAULT. Retained at
+    // 5.0e-3 per 3.1.A DONE_WITH_CONCERNS. Canonical const + iteration
+    // history: `crates/sim/src/geomorph/sediment.rs`.
     5.0e-3
 }
 fn default_space_k_sed() -> f32 {
-    // Sprint 3 DD2 locked constant: SPACE_K_SED_DEFAULT.
+    // Sprint 3 DD2 locked constant: SPACE_K_SED_DEFAULT (3:1 K_sed/K_bed lock).
     1.5e-2
 }
 fn default_h_star() -> f32 {
@@ -419,9 +424,13 @@ mod tests {
         assert_eq!(ep.n_diff_substep, 4, "n_diff_substep");
         assert_eq!(ep.n_batch, 10, "n_batch");
         assert_eq!(ep.n_inner, 10, "n_inner");
-        // Sprint 3 DD2 SPACE-lite defaults.
+        // Sprint 3 DD2 SPACE-lite defaults (unchanged through Sprint 3.1).
         assert_eq!(ep.space_k_bed, 5.0e-3, "space_k_bed");
         assert_eq!(ep.space_k_sed, 1.5e-2, "space_k_sed");
+        assert!(
+            (ep.space_k_sed - 3.0 * ep.space_k_bed).abs() < 1e-6,
+            "Sprint 3 DD2 3:1 K_sed/K_bed ratio lock"
+        );
         assert_eq!(ep.h_star, 0.05, "h_star");
         assert_eq!(ep.spim_variant, SpimVariant::SpaceLite, "spim_variant");
         // Sprint 3 DD6 CoastType v2 default.

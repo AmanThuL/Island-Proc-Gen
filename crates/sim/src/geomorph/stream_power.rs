@@ -161,7 +161,7 @@ fn run_plain(world: &mut WorldState) -> anyhow::Result<()> {
 ///
 /// # Prerequisite: `authoritative.sediment` must be `Some`.
 ///
-/// Task 3.1 sets `hs_init(p) = 0.1 · is_land(p)` at the end of
+/// Task 3.1 sets `hs_init(p) = HS_INIT_LAND · is_land(p)` at the end of
 /// `CoastMaskStage`, so by the time `ErosionOuterLoop` runs SPIM the
 /// sediment field is always populated. A missing sediment field here is a
 /// bug (Coastal stage didn't run, or `invalidate_from(Coastal)` was

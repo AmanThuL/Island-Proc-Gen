@@ -823,12 +823,14 @@ pub const DEPOSITION_FLAG_THRESHOLD: f32 = 0.15;
 
 /// Lower bound on the fraction of land cells in a deposition zone.
 ///
-/// Set to `0.0` in v1: at the current conservative SPACE-lite parameter
-/// calibration (K_Q = 2e-2, K_bed = 5e-3, 10×10 outer loop), transport
-/// capacity generally exceeds incoming Qs on small/medium grids (64²–128²),
-/// so net-deposition cells may be near 0. A non-zero lower bound would
-/// false-positive on all stock presets. Task 3.10 should tighten this once
-/// the deposition physics is calibrated for the 256² hero shots.
+/// Set to `0.0` in v1: at the Sprint 3 SPACE-lite parameter calibration
+/// (K_Q = 2e-2, K_bed = 5e-3, 10×10 outer loop), transport capacity
+/// generally exceeded incoming Qs on small/medium grids (64²–128²), so
+/// net-deposition cells sat near 0. A non-zero lower bound would
+/// false-positive on all stock presets. Sprint 3.1's K-probe outcome
+/// (see `SPACE_K_BED_DEFAULT` in `crates/sim/src/geomorph/sediment.rs`)
+/// left this bound at `0.0`; Sprint 4's physical-unit calibration is
+/// the natural place to revisit.
 pub const DEPOSITION_ZONE_FRACTION_LO: f32 = 0.0;
 
 /// Upper bound on the fraction of land cells in a deposition zone.

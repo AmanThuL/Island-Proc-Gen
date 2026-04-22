@@ -12,10 +12,11 @@
 //! ## Sediment initialization (Task 3.1)
 //!
 //! After coast classification, `authoritative.sediment` is initialized to the
-//! locked initial condition `hs_init(p) = 0.1 * is_land(p)` (sea cells = 0.0,
-//! land cells = 0.1). Allocation is skipped when an existing field already has
-//! the correct resolution; in that case only the values are overwritten in
-//! place.
+//! locked initial condition `hs_init(p) = HS_INIT_LAND * is_land(p)` (sea
+//! cells = 0.0, land cells = `HS_INIT_LAND`). Allocation is skipped when an
+//! existing field already has the correct resolution; in that case only the
+//! values are overwritten in place. See [`HS_INIT_LAND`] for the Sprint 3.1
+//! calibration-probe outcome.
 
 use island_core::field::{MaskField2D, ScalarField2D, VectorField2D};
 use island_core::neighborhood::COAST_DETECT_NEIGHBORHOOD;
@@ -23,6 +24,18 @@ use island_core::pipeline::SimulationStage;
 use island_core::world::{CoastMask, WorldState};
 
 use super::neighbour_offsets;
+
+/// Land-cell sediment initial condition (Task 3.1).
+///
+/// Extracted from an inline `0.1` literal in Sprint 3.1 as structural
+/// cleanup; the numeric value is unchanged from Sprint 3. The 3.1.A
+/// calibration probe tried `hs_init = 0.05` (candidate B) and `0.02`
+/// (candidate C) but both tripped `erosion_no_excessive_sea_crossing`,
+/// so the value was retained at `0.10` per 3.1.A's DONE_WITH_CONCERNS
+/// outcome (§6 risk table). See
+/// [`crate::geomorph::sediment::SPACE_K_BED_DEFAULT`] for the companion
+/// K-probe history.
+const HS_INIT_LAND: f32 = 0.10;
 
 /// Sprint 1A Task 1A.2: land / sea / coast classification on z_raw.
 pub struct CoastMaskStage;
@@ -138,8 +151,8 @@ impl SimulationStage for CoastMaskStage {
         world.derived.shoreline_normal = Some(shoreline_normal);
 
         // ── Sediment initialization (Task 3.1) ───────────────────────────────
-        // hs_init(p) = 0.1 * is_land(p): land cells start with a uniform 0.1
-        // weathering layer; sea cells are 0.0.
+        // hs_init(p) = HS_INIT_LAND * is_land(p): land cells start with a
+        // uniform `HS_INIT_LAND` (= 0.10) weathering layer; sea cells are 0.0.
         //
         // Re-allocation rule: reuse the existing Vec if the field is already
         // the correct resolution; otherwise allocate fresh. This avoids a heap
@@ -158,7 +171,7 @@ impl SimulationStage for CoastMaskStage {
         }
         let sediment = world.authoritative.sediment.as_mut().unwrap();
         for i in 0..n {
-            sediment.data[i] = if is_land_ref.data[i] == 1 { 0.1 } else { 0.0 };
+            sediment.data[i] = HS_INIT_LAND * is_land_ref.data[i] as f32;
         }
 
         Ok(())
@@ -175,7 +188,7 @@ mod tests {
     use island_core::seed::Seed;
     use island_core::world::{Resolution, WorldState};
 
-    use super::CoastMaskStage;
+    use super::{CoastMaskStage, HS_INIT_LAND};
 
     fn base_preset(sea_level: f32) -> IslandArchetypePreset {
         IslandArchetypePreset {
@@ -458,8 +471,17 @@ mod tests {
         assert!(result.is_err(), "expected Err when height is None");
     }
 
-    // 8. (Task 3.1) sediment is initialized after CoastMaskStage runs:
-    //    land cells = 0.1, sea cells = 0.0.
+    // 8a. (Task 3.1) HS_INIT_LAND value lock — mirrors sediment.rs's
+    //     `space_lite_constants_match_dd2_lock` so drifting the const
+    //     triggers a lock-test failure before the behavioural test
+    //     below silently accepts the new value.
+    #[test]
+    fn hs_init_land_constant_matches_sprint_3_1_lock() {
+        assert_eq!(HS_INIT_LAND, 0.10);
+    }
+
+    // 8. (Task 3.1, retuned Sprint 3.1) sediment is initialized after
+    //    CoastMaskStage runs: land cells = HS_INIT_LAND, sea cells = 0.0.
     #[test]
     fn sediment_initialized_on_land_cells() {
         // 4×4 field: centre 2×2 = land (0.8), border ring = sea (0.2); sea_level = 0.5.
@@ -478,7 +500,7 @@ mod tests {
             for x in 0..4_u32 {
                 let is_centre = (1..=2).contains(&x) && (1..=2).contains(&y);
                 let idx = (y * 4 + x) as usize;
-                let expected = if is_centre { 0.1 } else { 0.0 };
+                let expected = if is_centre { HS_INIT_LAND } else { 0.0 };
                 assert!(
                     (sediment.data[idx] - expected).abs() < f32::EPSILON,
                     "({x},{y}) sediment must be {expected}, got {}",

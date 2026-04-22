@@ -17,10 +17,10 @@ use island_core::world::WorldState;
 /// `TopographyStage` and `ErosionOuterLoop`.
 ///
 /// **Exception (Task 3.1):** `authoritative.sediment` IS cleared by the
-/// `Coastal` arm because its initial condition `hs_init = 0.1 * is_land`
-/// is computed by `CoastMaskStage`. Any frontier at or before `Coastal`
-/// (including `Topography`) therefore resets sediment; the next
-/// `run_from(Coastal)` re-populates it.
+/// `Coastal` arm because its initial condition
+/// `hs_init = HS_INIT_LAND * is_land` is computed by `CoastMaskStage`. Any
+/// frontier at or before `Coastal` (including `Topography`) therefore
+/// resets sediment; the next `run_from(Coastal)` re-populates it.
 ///
 /// Does NOT call the pipeline. The name is `invalidate_from`, not
 /// `rerun_from` — keep the two actions separate so the caller can batch
@@ -172,8 +172,8 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
         // + authoritative.sediment (Task 3.1 initial condition).
         //
         // Sediment is cleared here (not in the Topography arm) because its
-        // initial condition `hs_init(p) = 0.1 * is_land(p)` requires the
-        // coast mask to be computed first. Any `invalidate_from(Topography)`
+        // initial condition `hs_init(p) = HS_INIT_LAND * is_land(p)` requires
+        // the coast mask to be computed first. Any `invalidate_from(Topography)`
         // cascade propagates through here, so the sticky snapshot behaviour
         // is automatic: the next `run_from(Coastal)` will re-populate sediment.
         StageId::Coastal => {
@@ -338,9 +338,9 @@ mod tests {
     /// **Task 3.1 exception**: `authoritative.sediment` IS cleared by a
     /// Topography-level invalidation because it cascades through the Coastal
     /// arm, which owns sediment's initial condition. This is intentional:
-    /// sediment's init (`hs_init = 0.1 * is_land`) depends on `is_land`, which
-    /// is computed by `CoastMaskStage`. Re-running `Coastal` after a Topography
-    /// invalidation will re-populate sediment correctly.
+    /// sediment's init (`hs_init = HS_INIT_LAND * is_land`) depends on
+    /// `is_land`, which is computed by `CoastMaskStage`. Re-running `Coastal`
+    /// after a Topography invalidation will re-populate sediment correctly.
     #[test]
     fn invalidate_from_topography_clears_every_derived_and_baked_field() {
         let mut world = run_full(42);

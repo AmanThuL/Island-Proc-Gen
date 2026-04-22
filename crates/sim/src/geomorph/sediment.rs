@@ -67,6 +67,16 @@ use crate::hydro::D8_OFFSETS;
 ///
 /// Bedrock incision is `E_bed = K_bed · A^m · S^n · exp(-hs / H*)`.
 /// Larger `K_bed` ⇒ faster bedrock lowering. v1 dimensionless proxy.
+///
+/// **Sprint 3.1 calibration outcome: retained at `5.0e-3`.** Every
+/// probe candidate tripped `erosion_no_excessive_sea_crossing` on at
+/// least one grid size (`K=1.2e-2` by 12-13 % at 128²; `K=8.0e-3` by
+/// 7-8 % at 128²; `K=5.5e-3` by 5.9-9.3 % on 40²/64² sim unit-test
+/// fixtures) — consistent with CLAUDE.md's K-grid-sensitivity gotcha.
+/// 3.1.A closed DONE_WITH_CONCERNS per the plan's §6 risk table: G4
+/// stays red at the [0.10, 0.30] bar and the acceptance gate's lower
+/// bound drops to 0.05. Sprint 4's physical-unit calibration is the
+/// natural home for the remaining G4 closure.
 pub const SPACE_K_BED_DEFAULT: f32 = 5.0e-3;
 
 /// SPACE-lite default sediment entrainability `K_sed` (Sprint 3 DD2).
@@ -74,14 +84,24 @@ pub const SPACE_K_BED_DEFAULT: f32 = 5.0e-3;
 /// Sediment entrainment is `E_sed = K_sed · A^m · S^n · min(hs, HS_ENTRAIN_MAX)`.
 /// Larger `K_sed` ⇒ faster stripping of the sediment cover. v1 dimensionless
 /// proxy.
+///
+/// Retained at `1.5e-2` per the Sprint 3.1 DONE_WITH_CONCERNS outcome
+/// documented on [`SPACE_K_BED_DEFAULT`] (3:1 `K_sed / K_bed` ratio
+/// lock preserved).
 pub const SPACE_K_SED_DEFAULT: f32 = 1.5e-2;
 
 /// SPACE-lite cover thickness `H*` in the bedrock shielding term
 /// `exp(-hs / H*)` (Sprint 3 DD2).
 ///
 /// Controls how quickly bedrock incision decays as sediment thickens.
-/// In normalised height units; a value of `0.05` means `exp(-1) ≈ 0.37`
-/// shielding at `hs = 0.05`.
+/// In normalised height units; at `H* = 0.05` shielding is `exp(-1) ≈ 0.37`
+/// at `hs = 0.05` and `exp(-2) ≈ 0.14` at the `HS_INIT_LAND = 0.10`
+/// initial condition.
+///
+/// Retained at `0.05` per the Sprint 3.1 DONE_WITH_CONCERNS outcome —
+/// the widened `H* = 0.15` explored during 3.1.A's candidate sweep
+/// produced too much erosion to respect the 5 % sea-crossing invariant
+/// across all grid sizes.
 pub const H_STAR: f32 = 0.05;
 
 /// Upper clamp applied to `hs` when computing sediment entrainment `E_sed`.
@@ -95,8 +115,8 @@ pub const HS_ENTRAIN_MAX: f32 = 0.5;
 /// Sprint 3 DD3 default transport-capacity coefficient `K_Q` for
 /// `Qs_cap = K_Q · A^m_q · S^n_q`.
 ///
-/// Sized so that under the locked `K_bed = 5e-3` / `K_sed = 1.5e-2` SPIM
-/// fluxes, valley-floor deposition pulses are visible without pushing
+/// Sized so that under the Sprint-3-default `K_bed = 5e-3` / `K_sed = 1.5e-2`
+/// SPIM fluxes, valley-floor deposition pulses are visible without pushing
 /// `hs` to the 1.0 clamp on a single inner step. Tunable via the Sprint
 /// 3.8 ParamsPanel slider; if the preset field is introduced later the
 /// slider reads from there instead of this constant.
@@ -474,6 +494,10 @@ mod tests {
     fn space_lite_constants_match_dd2_lock() {
         assert_eq!(SPACE_K_BED_DEFAULT, 5.0e-3);
         assert_eq!(SPACE_K_SED_DEFAULT, 1.5e-2);
+        assert!(
+            (SPACE_K_SED_DEFAULT - 3.0 * SPACE_K_BED_DEFAULT).abs() < 1e-6,
+            "Sprint 3 DD2 3:1 K_sed/K_bed ratio lock must hold"
+        );
         assert_eq!(H_STAR, 0.05);
         assert_eq!(HS_ENTRAIN_MAX, 0.5);
     }
