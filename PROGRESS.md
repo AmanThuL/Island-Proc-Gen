@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-22 (Sprint 3.1 closed on `dev` 2026-04-22 with 7 atomic commits `1fa1e96 → 86f0e7b`; all three §10 gates closed DONE_WITH_CONCERNS with residuals forwarded to Sprint 3.5.D + Sprint 4. One real fix shipped: **LFPM v3 62× precipitation collapse diagnosed and resolved** via const retune — precipitation floor no longer numerically collapsed, but gate-level G4/G5/G7 closure needs Sprint 3.5/4's structural work. **Sprint 3.4 Module Boundary Cleanup** is now planned as the immediate next sprint — interstitial structural-refactor before 3.5 / 4 expand the same files further; plan doc at `docs/design/sprints/sprint_3_4_module_boundary_cleanup.md`. Sprint 3.5 follows 3.4 close-out.)
+**Last Updated:** 2026-04-23 (**Sprint 3.4 closed on `dev` 2026-04-23** with 5 atomic refactor commits `27cf464 → eb93a91` — zero behavioural change, `cargo test --workspace` strictly 528/8, 4 baselines `summary.ron` bit-identical modulo AD8 whitelist. `runtime.rs` / `validation.rs` / `overlay.rs` directorised; invariant #8 repointed to `overlay/resolve.rs`; Pattern A `core::test_support` extracted. Sprint 3.1 closed on `dev` 2026-04-22 with 7 commits `1fa1e96 → 86f0e7b` — §10 G4/G5/G7 closed DONE_WITH_CONCERNS, LFPM v3 62× collapse fix was the one real improvement. **Sprint 3.5 Hex Surface Readability** is now active-next.)
 
 ---
 
@@ -21,18 +21,25 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 3.4 — Module Boundary Cleanup (*upcoming, planned*).
-Sprint 3.1 calibration tail closed on `dev` 2026-04-22; Sprint 3.4 is
-inserted as an interstitial structural-refactor sprint **before**
-Sprint 3.5 to split three high-friction single files
-(`runtime.rs` / `validation.rs` / `overlay.rs`) and lay down
-`tests/common/mod.rs` shared fixtures, with **zero behavioural change**
-and `summary.ron` bit-identical-modulo-AD8-whitelist on all four
-baselines. Plan doc:
-[`docs/design/sprints/sprint_3_4_module_boundary_cleanup.md`](docs/design/sprints/sprint_3_4_module_boundary_cleanup.md).
-Sprint 3.5 (Hex Surface Readability) follows 3.4 close-out and remains
+**Primary:** Sprint 3.5 — Hex Surface Readability (*active-next*).
+Sprint 3.4 Module Boundary Cleanup closed on `dev` 2026-04-23 in 5
+atomic refactor commits `27cf464 → eb93a91` with zero behavioural
+change — `runtime.rs` / `validation.rs` / `overlay.rs` directorised
+per-responsibility, invariant #8 repointed at `overlay/resolve.rs`,
+`core::test_support` introduced (Pattern A) and consumed by 5
+validation family files. `cargo test --workspace` strictly 528/8
+(pre-3.4 snapshot); four `--headless` baselines re-run with
+`summary.ron` bit-identical modulo AD8 whitelist fields only.
+
+Sprint 3.5 (Hex Surface Readability) inherits a cleaner module
+topology: hex-surface hooks land in `runtime/view_mode.rs` +
+`runtime/events.rs` rather than expanding a 1400-LOC monolith, new
+hex-surface invariants land in `validation/hex.rs`, and new overlay
+descriptors add a single `SourceKey` variant + `resolve.rs` arm
+rather than touching a grab-bag overlay file. Sprint 3.5.D remains
 the home for §10 G5 / G7 residuals (cliff-vs-other edge grammar +
-biome blend at hex scale + hex dominant-surface contract).
+biome blend at hex scale + hex dominant-surface contract) carried
+forward from Sprint 3.1's DONE_WITH_CONCERNS closure.
 
 Sprint 3.1 closed on `dev` 2026-04-22 in 7 atomic commits
 (`1fa1e96 → 86f0e7b`). `cargo test --workspace` green (527 passing).
@@ -145,14 +152,13 @@ those tasks beyond the const edits and structural cleanups).
 (LavaDelta-only-on-Young)** continue to pass cleanly (G8: all-zero
 acceptable; G9: 14.5 % / 18.8 % / 18.5 % Young, 0 % Mature/Old).
 
-Next: Sprint 3.4 (Module Boundary Cleanup) — interstitial structural
-refactor before Sprint 3.5 / 4 expand the same files further. Entry
-point: [Sprint 3.4 plan doc](docs/design/sprints/sprint_3_4_module_boundary_cleanup.md).
-Sprint 3.5 (Hex Surface Readability) follows 3.4 close-out; Sprint
-3.5.D's biome-suitability rework inherits the
+Next: Sprint 3.5 (Hex Surface Readability) — Sprint 3.4 closed
+`2026-04-23` (5 refactor commits on `dev`, `cargo test --workspace`
+strictly 528/8, 4 baselines `summary.ron` bit-identical modulo AD8
+whitelist). Sprint 3.5.D's biome-suitability rework inherits the
 `authoritative.sediment` + `baked.precipitation` + `baked.
-fog_water_input` + `baked.biome_weights` fields as stable contracts
-unchanged across 3.4 (3.4 is zero-behavioural-change by design).
+fog_water_input` + `baked.biome_weights` fields as stable contracts —
+unchanged across 3.4 (3.4 was zero-behavioural-change by design).
 
 **Passed cleanly in Sprint 3:** §10 G8 (promoted_lake_count stretch;
 all-zero acceptable); §10 G9 (LavaDelta-only-on-Young: 14.5 % / 18.8 %
@@ -515,25 +521,14 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
 > [Sprint 3.4 plan doc](docs/design/sprints/sprint_3_4_module_boundary_cleanup.md)
 > (which sharpens roadmap §Sprint 3.4's wording).
 
-1. **Sprint 3.4** — Module Boundary Cleanup (*structural*).
-   **Active-next** — interstitial structural-refactor sprint between
-   Sprint 3.1 close-out and Sprint 3.5. Splits three high-friction
-   single files (`crates/app/src/runtime.rs` 1378 LOC →
-   `runtime/{events,frame,regen,view_mode,tabs}.rs`;
-   `crates/core/src/validation.rs` 2282 LOC →
-   `validation/{hydro,climate,erosion,biome,hex}.rs`; optionally
-   `crates/render/src/overlay.rs` 978 LOC →
-   `overlay/{catalog,range,resolve}.rs` with invariant #8 repointed
-   to `resolve.rs`) and lays down `tests/common/mod.rs`-pattern
-   shared integration-test fixtures. **Zero behavioural change**:
-   four `--headless` baselines bit-identical modulo AD8 whitelist;
-   `cargo test --workspace` count strictly equal to pre-3.4 snapshot
-   (527 passing / 8 ignored). `core` crate stays clean per CLAUDE.md
-   invariants #1 / #2; crate DAG / `WorldState` layout / `StageId` /
-   pipeline order all untouched. Plan doc:
-   `docs/design/sprints/sprint_3_4_module_boundary_cleanup.md`.
-2. **Sprint 3.5** — Hex Surface Readability (*representation*).
-   Follows 3.4 close-out. Sprint 3.5.D (Hex Dominant Surface Contract)
+1. **Sprint 3.5** — Hex Surface Readability (*representation*).
+   **Active-next** — Sprint 3.4 Module Boundary Cleanup closed on
+   `dev` 2026-04-23 in 5 atomic refactor commits `27cf464 → eb93a91`;
+   `runtime.rs` / `validation.rs` / `overlay.rs` directorised,
+   invariant #8 repointed to `overlay/resolve.rs`, `core::test_support`
+   extracted. Zero behavioural change — 4 baselines `summary.ron`
+   bit-identical modulo AD8 whitelist, `cargo test --workspace`
+   strictly 528/8. Sprint 3.5.D (Hex Dominant Surface Contract)
    inherits the G5 Cliff-coverage and G7 CloudForest/CoastalScrub
    residuals from Sprint 3.1's DONE_WITH_CONCERNS closure. Sprint
    3.1's one material win — the LFPM v3 precipitation collapse fix —
@@ -546,10 +541,13 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
    Hex Coast Grammar v1 (5-class readable shoreline cues consuming
    Sprint 3's coast v2), Hex Dominant Surface Contract (biome / elev /
    coast / river = base read), Interaction Readability Pass (hex pick
-   + info panel).
+   + info panel). The 3.4 boundary cleanup means these diffs land on
+   `runtime/view_mode.rs` + `runtime/events.rs` + `validation/hex.rs`
+   + `overlay/{catalog,resolve}.rs` rather than expanding 1000+ LOC
+   monoliths.
    Doc placeholder: `docs/design/sprints/sprint_3_5_hex_surface_readability.md`
-   (TBD — written when Sprint 3.4 closes).
-3. **Sprint 4** — Compute / CLI / Validation Productization (*infra*).
+   (TBD — written when Sprint 3.5 starts).
+2. **Sprint 4** — Compute / CLI / Validation Productization (*infra*).
    GPU parity for hot loops + `island-gen` CLI binary + benchmark
    matrix + artifact system maturity. Consumes Sprint 3's CPU
    reference + 10-shot baseline + Sprint 3.1's LFPM v3 retune;
@@ -557,12 +555,12 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
    the §10 G4 residual forwarded from Sprint 3.1.A. Does NOT rework
    hex surface or produce demo visuals.
    Doc placeholder: `docs/design/sprints/sprint_4_gpu_compute.md` (TBD).
-4. **Sprint 4.5** — Beauty / Demo / Shareability (*presentation*).
+3. **Sprint 4.5** — Beauty / Demo / Shareability (*presentation*).
    Canonical look lock + hero seed pack + demo artifact pack +
    README / release-asset pass. First sprint where the project
    acquires star-signal-grade visuals.
    Doc placeholder: `docs/design/sprints/sprint_4_5_beauty_demo.md` (TBD).
-5. **Sprint 5 (S2 / S3 / S4)** — Semantic Layer Completion.
+4. **Sprint 5 (S2 / S3 / S4)** — Semantic Layer Completion.
    S2 settlement + roads + accessibility, S3 WFC / rule-based
    semantic patches, S4 optional shipping tail (web subset +
    interaction refinement). No longer carries hex-UX-completion
@@ -574,6 +572,40 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
 ---
 
 ## RECENTLY SHIPPED
+
+### Sprint 3.4 — Module Boundary Cleanup (2026-04-23, 5 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_3_4_module_boundary_cleanup.md`](docs/design/sprints/sprint_3_4_module_boundary_cleanup.md) (Obsidian symlink, gitignored)
+**Test delta:** 528 → 528 passing / 8 → 8 ignored (strictly equal per plan's zero-behavioural-change thesis). Commits `27cf464 → eb93a91` (plus kickoff `cf5d52c` and `.claude` untrack `219a372`).
+**Close-out status:** all §5 acceptance criteria met; refactor-only sprint with four `--headless` baselines `summary.ron` bit-identical modulo AD8 whitelist (`timestamp_utc` / `pipeline_ms` / `bake_ms` / `gpu_render_ms` only — truth-path `byte_hash`, `overall_status`, `warnings` unchanged). Sprint 3.5 (Hex Surface Readability) now active-next.
+
+Sprint 3.4 was an interstitial structural-cleanup sprint between Sprint 3.1 close-out and Sprint 3.5's hex-surface / Sprint 4's compute-productization work. It split three high-friction single files into directory modules grouped by responsibility, introduced the first crate-local `test_support` module (Pattern A), and re-pointed CLAUDE.md / AGENTS.md invariant #8 at a single new file (keeping the rule strictly file-scoped, not weakened to "module tree").
+
+| Commit | Task | What shipped |
+|---|---|---|
+| `cf5d52c` | 3.0 | PROGRESS.md Sprint 3.4 roll-forward at sprint start. |
+| `219a372` | — | `chore: untrack .claude/` — orthogonal cleanup folded into the sprint's commit range; `.claude/` now gitignored alongside `CLAUDE.local.md`. |
+| `27cf464` | 3.4.A | `crates/app/src/runtime.rs` (1378 LOC) → `runtime/{mod,events,frame,regen,view_mode,tabs}.rs`. `mod.rs` holds `Runtime` struct + constructor + tests; `events.rs` holds the winit `handle_window_event` body + `cursor_in_rect_physical`; `frame.rs` holds the per-frame `tick`; `regen.rs` holds world-panel regen + slider fast paths; `view_mode.rs` holds the `ViewMode` enum; `tabs.rs` holds `AppTabViewer` + `egui_dock::TabViewer` impl. Visibility unchanged; `Runtime::new` / `handle_window_event` / `tick` / `run_from` stable entry points. No downstream file required edits. |
+| `ae9e41e` | 3.4.B | `crates/core/src/validation.rs` (2282 LOC) → `validation/{mod,hydro,climate,erosion,biome,hex}.rs` grouped by invariant family (hydro: 5 validators, climate: 3, erosion: 6, biome: 1, hex: 1). `mod.rs` holds `ValidationError` enum + `pub use` re-exports; all 16 `island_core::validation::<name>` paths stay byte-identical. No `validate_world` aggregator introduced — orchestration still lives in `sim::ValidationStage::run`. `cargo tree -p core` remains clean. |
+| `6929449` | 3.4.C | `crates/render/src/overlay.rs` (978 LOC) → `overlay/{mod,catalog,range,resolve}.rs`. New `SourceKey` enum handle in `resolve.rs`; `catalog.rs`'s 20 descriptors reference overlay sources via `resolve::source_for(SourceKey::…)` rather than embedding raw `&'static str` field keys. `sprint_3_defaults()` returns the same 20 descriptors with bit-identical palettes, `ValueRange` variants, and alphas. **Invariant #8 in CLAUDE.md + AGENTS.md repointed** in the same commit from `crates/render/src/overlay.rs` to `crates/render/src/overlay/resolve.rs` — still file-scoped. |
+| `eb93a91` | 3.4.D | `crates/core/src/test_support.rs` (new) holds a single `test_preset()`; 5 validation family files (`biome`, `climate`, `erosion`, `hex`, `hydro`) now import from it instead of each carrying an identical inline copy (Pattern A per Sprint 3.4 §DD4). `sim::` was NOT deduped — its 5 copies differ non-trivially per module (name / island_radius / max_relief / sea_level tailored per scenario); deferring to a future sprint if identical duplication appears. Pattern B (`tests/common/mod.rs` + `validation_integration.rs` scaffolding) intentionally deferred — the planned cross-family integration cases don't yet exist (family tests stay family-local post-3.4.B); Sprint 3.5 / 4 will want those integration fixtures anyway. |
+| (this commit) | 3.4.F | CLAUDE.md Gotchas §Sprint 3.4 + PROGRESS.md close-out. |
+
+**Verification evidence (this commit message, for future bisection):**
+
+- `cargo test --workspace` = **528 passed / 8 ignored** (strictly equal to pre-3.4 snapshot captured at `219a372`).
+- `cargo clippy --workspace -- -D warnings` green.
+- `cargo fmt --all --check` green.
+- `cargo tree -p core` — no `wgpu` / `winit` / `egui*` / `png` / `image` / `tempfile` / `naga` — CLAUDE.md invariant #1 held.
+- 4 baselines (`sprint_1a_baseline`, `sprint_1b_acceptance`, `sprint_2_erosion`, `sprint_3_sediment_climate`) — `--headless` exit 0 each; `summary.ron` diff fields: `timestamp_utc`, `pipeline_ms`, `bake_ms`, `gpu_render_ms` (all four baselines show the same set — AD8 whitelist and nothing else). Truth-path `byte_hash`, `overall_status`, `warnings` byte-identical. Baselines restored to pristine checked-in state before commit.
+- `StageId` / `default_pipeline` / `WorldState` layout / crate DAG all untouched.
+- 16-name `use island_core::validation::{…}` block in `crates/sim/src/validation_stage.rs:38-45` byte-identical to pre-3.4.
+
+Sprint 3.4 §10 G4 / G5 / G7 are **untouched** — those remain forwarded to Sprint 3.5.D (biome-suitability + hex coast grammar) and Sprint 4 (physical-unit calibration). Sprint 3.4 is not a scientific sprint.
+
+**Subagent cadence note for future sprints:** Sprint 3.4 dispatched 3.4.A / 3.4.B / 3.4.C in parallel via git-worktree-isolated subagents (per CLAUDE.local.md cadence). 3.4.A and 3.4.B ran cleanly in their worktrees and committed there, cherry-picked onto `dev` afterwards. 3.4.C's subagent wrote files to the main working tree instead of its worktree (harness bug or prompt-path ambiguity — unclear); the work product was reviewed manually, applied in main, and committed. Future parallel subagent dispatch should include explicit absolute-path anchors in the prompt (e.g. "files you create MUST live under `${WORKTREE_PATH}/...`") or run sequentially if worktree isolation cannot be trusted for the task.
+
+---
 
 ### Sprint 3.1 — Calibration Tail (2026-04-22, 7 commits on `dev`)
 

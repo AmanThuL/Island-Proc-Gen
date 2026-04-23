@@ -550,6 +550,97 @@ app ──▶ render ──▶ gpu ──┐
   residuals to Sprint 3.5.D (biome + coast rework) and Sprint 4
   (physical-unit calibration).
 
+### Sprint 3.4 (module boundary cleanup)
+
+- **Three large single files directorised.** Sprint 3.4 split:
+  - `crates/app/src/runtime.rs` (1378 LOC) →
+    `crates/app/src/runtime/{mod,events,frame,regen,view_mode,tabs}.rs`
+    (`mod.rs` holds `Runtime` struct + `new` + tests; `events.rs` holds
+    the winit `handle_window_event` body + `cursor_in_rect_physical`;
+    `frame.rs` holds `tick`; `regen.rs` holds
+    `regenerate_from_world_panel` + `apply_sea_level_fast_path` +
+    `apply_world_aspect`; `view_mode.rs` holds the `ViewMode` enum;
+    `tabs.rs` holds `AppTabViewer` + `egui_dock::TabViewer` impl).
+    Public API surface (`Runtime::new` / `handle_window_event` /
+    `tick` / `run_from`) bit-identical; no downstream file needed
+    edits.
+  - `crates/core/src/validation.rs` (2282 LOC) →
+    `crates/core/src/validation/{mod,hydro,climate,erosion,biome,hex}.rs`
+    grouped by invariant family. `mod.rs` holds `ValidationError` enum
+    + `pub use` re-exports; every `island_core::validation::<name>`
+    import path is byte-identical to pre-3.4 (the 16-name `use` block
+    in `crates/sim/src/validation_stage.rs` unchanged). No
+    `validate_world` aggregator introduced — orchestration still lives
+    in `sim::ValidationStage::run`.
+  - `crates/render/src/overlay.rs` (978 LOC) →
+    `crates/render/src/overlay/{mod,catalog,range,resolve}.rs`.
+    `SourceKey` enum (new handle type) introduced in `resolve.rs`;
+    `catalog.rs`'s 20 descriptors now reference overlay sources via
+    `resolve::source_for(SourceKey::…)` rather than embedding raw
+    field-key strings. Invariant #8 below updated in the same commit
+    to repoint at `overlay/resolve.rs`.
+- **Invariant #8 is now `crates/render/src/overlay/resolve.rs`**
+  (was `crates/render/src/overlay.rs` pre-3.4). Still file-scoped —
+  the invariant was NOT softened to "module tree". The new guardrail
+  is structural: `overlay/catalog.rs`, `overlay/mod.rs`, and
+  `overlay/range.rs` reference sources only via the `SourceKey` enum
+  handle; `resolve.rs` is the single file that matches
+  `SourceKey → OverlaySource(&'static str)` and
+  `OverlaySource → ResolvedField`. Pre-existing raw-string
+  occurrences in `crates/render/src/overlay_export.rs`'s
+  `#[cfg(test)]` block were carried over unchanged (they were
+  test-scaffolding leaks before 3.4 too; cleaning them up is a
+  future sprint item, covered by the "error payloads aside" spirit
+  of the invariant).
+- **Test topology policy (CLAUDE.local.md-adjacent — repo-wide):**
+  - **Inline `#[cfg(test)] mod tests` is the default.** Small,
+    local, adjacent to the code under test.
+  - **Pattern A (`crates/<x>/src/test_support.rs` with
+    `#[cfg(test)] pub(crate) mod test_support;`)** is for sharing
+    fixtures across multiple inline `#[cfg(test)]` blocks within
+    the **same crate**. Sprint 3.4 introduced exactly one:
+    `crates/core/src/test_support.rs` holds a single `test_preset()`
+    consumed by `validation/{biome,climate,erosion,hex,hydro}.rs`.
+    The module is `#[cfg(test)]`-gated, invisible to integration
+    tests.
+  - **Pattern B (`crates/<x>/tests/common/mod.rs`)** is for sharing
+    fixtures across integration tests (`crates/<x>/tests/*.rs`) in
+    the same crate. `common/mod.rs` must live in the subdirectory
+    form (NOT `tests/common.rs`) so cargo doesn't compile it as its
+    own integration binary. Sprint 3.4 did NOT introduce pattern B —
+    the planned `validation_integration.rs` scaffolding would have
+    had no cross-family cases to extract (the family tests stay
+    family-local post-3.4.B). Deferred to Sprint 3.5/4 when
+    hex-surface and CPU/GPU parity integration tests will want it.
+  - **Pattern A and pattern B are separate worlds** — pattern A
+    modules are invisible to integration tests (Rust compiles them
+    as an external crate, `#[cfg(test)]` hides the module). If a
+    helper is needed on both sides, **duplicate it** rather than
+    promoting `test_support` to the crate's public API. This is
+    explicit in CLAUDE.local.md's subagent-driven-development
+    cadence.
+- **`sim::` was NOT deduped.** `crates/sim/src/invalidation.rs` +
+  `crates/sim/src/hydro/{accumulation,rivers,basins,flow_routing}.rs`
+  each have their own `fn test_preset()`, but they differ
+  non-trivially per module (name / island_radius / max_relief /
+  sea_level tailored per scenario). Extracting would require a
+  parameterised builder — more scope than 3.4.D's "按需" (on-demand)
+  guidance warranted. Revisit if a later sprint produces identical
+  duplication.
+- **Sprint 3.4 net shipped: zero behavioural change.** 4 baselines
+  (`sprint_1a_baseline`, `sprint_1b_acceptance`, `sprint_2_erosion`,
+  `sprint_3_sediment_climate`) re-ran with `summary.ron` diffs
+  containing ONLY AD8 whitelist fields (`timestamp_utc`,
+  `pipeline_ms`, `bake_ms`, `gpu_render_ms`); truth-path `byte_hash`,
+  `overall_status`, `warnings` bit-identical. `cargo test
+  --workspace` = 528 passed / 8 ignored strictly equal to pre-3.4
+  snapshot. `cargo tree -p core` clean. No crate DAG change; no
+  `StageId` / `default_pipeline` / `WorldState` change. Sprint 3.5's
+  diff surface now lands on `runtime/view_mode.rs` +
+  `runtime/events.rs` (hex surface hooks) and `validation/hex.rs`
+  (new hex-surface invariants) rather than expanding already-fat
+  single files.
+
 ---
 
 ## Commit style
