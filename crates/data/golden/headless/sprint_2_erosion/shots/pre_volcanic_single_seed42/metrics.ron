@@ -31,7 +31,7 @@
     mean_fog_water_input: 0.09747771,
     promoted_lake_count: 0,
     sediment_blake3: (180, 214, 49, 193, 152, 165, 68, 197, 62, 239, 69, 105, 232, 20, 181, 184, 7, 153, 224, 171, 145, 7, 124, 0, 26, 56, 124, 115, 240, 46, 98, 224),
-    hex_attrs_hash: "a0289adc1d3c7bc9a40b0a67e8239bb1bd567c88e229f8e352d113930b3edcb3",
-    hex_debug_river_crossing_hash: "4de80646fe35f9b75080c282d8be5be035072d27a3aa5bfce3ccd23a79204d27",
+    hex_attrs_hash: "ff038a2afc46f0c7000de95a1143d48fdbfb0098ebb37dd626add5fd0e131ab6",
+    hex_debug_river_crossing_hash: "00a82de10f6d77c2b9466390789953ccef9c54cc54eef83254b42574ac051d28",
     hex_coast_class_hash: "61a77464b55cf44ab9615df1bb1dbf9cd86172315b2580fb7c4c63c1e927ca78",
 )
