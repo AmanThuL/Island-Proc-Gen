@@ -706,6 +706,26 @@ mod tests {
             .expect("hex_surface.wgsl WGSL validation failed");
     }
 
+    // ── tonal_ramp_constants_match_sprint_3_5_dd5_lock ───────────────────────
+
+    /// DD5 locks `TONAL_MIN = 0.55` and `TONAL_MAX = 1.0` as pick-once-and-commit
+    /// scalars. Mirrors the value-lock pattern used for SPACE-lite constants
+    /// (`hs_init_land_constant_matches_sprint_3_1_lock`) and CloudForest bell
+    /// (`cloud_forest_f_t_envelope_matches_sprint_3_5_lock`). Since WGSL consts
+    /// can't be imported into Rust, the test asserts the literal source text.
+    #[test]
+    fn tonal_ramp_constants_match_sprint_3_5_dd5_lock() {
+        let src = include_str!("../../../shaders/hex_surface.wgsl");
+        assert!(
+            src.contains("const TONAL_MIN: f32 = 0.55;"),
+            "hex_surface.wgsl TONAL_MIN drifted from DD5 lock (0.55)"
+        );
+        assert!(
+            src.contains("const TONAL_MAX: f32 = 1.0;"),
+            "hex_surface.wgsl TONAL_MAX drifted from DD5 lock (1.0)"
+        );
+    }
+
     // ── hex_vertex_is_8_bytes ─────────────────────────────────────────────────
 
     /// `HexVertex` must be exactly 8 bytes (2 × f32).

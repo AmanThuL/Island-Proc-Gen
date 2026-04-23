@@ -1,18 +1,27 @@
-// Sprint 3.5.A c6 — hex surface fill pass.
+// Sprint 3.5.A c6 + c7 — hex surface fill pass with DD5 tonal-ramp elevation cue.
 //
 // All per-hex colour is sourced exclusively from per-instance data
 // (`fill_color_rgba` packed RGBA8). There are NO RGB literals in this file.
 // The same §3.2 grep that guards terrain.wgsl and sky.wgsl guards this one.
 //
-// c7 will add the tonal-ramp elevation shading using `elevation`.
+// DD5 tonal ramp (pick-once-and-commit per Sprint 3.5 §2 DD5):
+//   The fragment multiplies the biome fill RGB by a scalar factor derived from
+//   per-instance `elevation` ∈ [0, 1]. Lower elevations darken the fill;
+//   higher elevations run at the full biome-identity colour. The ramp stays
+//   multiplicative on RGB only; alpha is preserved. Biome identity never
+//   drops — a "darker LowlandForest" still reads as LowlandForest, exactly
+//   per DD5's "tonal ramp composes cleanly with biome fill" clause.
+//
 // c8 will wire `coast_class_bits` and `river_mask_bits` for edge decorations.
 
 // ── Uniforms ──────────────────────────────────────────────────────────────────
 
 struct Uniforms {
     view_proj: mat4x4<f32>,
-    // Sprint 3.5.A c6 placeholder — additional uniforms (hex_size, tonal ramp
-    // params, etc.) land in c7.
+    // Reserved padding — used by later sub-commits if additional per-grid
+    // uniforms (e.g. hex_size for non-unit local scaling) become needed.
+    // DD5 tonal ramp is a pair of `const`s rather than uniforms so the
+    // ramp is pick-once-and-commit at build time.
     _pad0: vec4<f32>,
     _pad1: vec4<f32>,
 }
@@ -46,11 +55,24 @@ struct InstanceInput {
     @location(7) _pad1: u32,
 }
 
+// ── Tonal-ramp constants (DD5, pick-once-and-commit) ─────────────────────────
+
+/// Multiplicative RGB factor at elevation = 0 (sea level). Locks the
+/// darkest base-fill shade. Keep in `[0.4, 0.7]`; tighter values saturate
+/// into the biome identity, looser values wash out coastal readability.
+const TONAL_MIN: f32 = 0.55;
+
+/// Multiplicative RGB factor at elevation = 1 (highest peaks). 1.0 keeps
+/// the base fill un-brightened; values > 1.0 would require a tone-mapper
+/// to stay in gamut.
+const TONAL_MAX: f32 = 1.0;
+
 // ── VS/FS IO ──────────────────────────────────────────────────────────────────
 
 struct VSOut {
     @builtin(position) clip_pos:   vec4<f32>,
     @location(0)       fill_color: vec4<f32>,
+    @location(1)       elevation:  f32,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -65,26 +87,33 @@ fn unpack_rgba8(packed: u32) -> vec4<f32> {
     return vec4<f32>(r, g, b, a);
 }
 
+/// DD5 tonal ramp: linear interpolation between `TONAL_MIN` and `TONAL_MAX`
+/// over `elevation ∈ [0, 1]`. Returns a scalar RGB multiplier; alpha is
+/// always preserved by the caller.
+fn tonal_factor(elevation: f32) -> f32 {
+    let t = clamp(elevation, 0.0, 1.0);
+    return mix(TONAL_MIN, TONAL_MAX, t);
+}
+
 // ── Vertex shader ─────────────────────────────────────────────────────────────
 
 @vertex
 fn vs_main(v: VertexInput, i: InstanceInput) -> VSOut {
     // hex_size is baked as 1.0 in the unit mesh; the caller scales the grid
     // by populating `center_xy` from `axial_to_pixel(coord, hex_size)`.
-    // c7 introduces a per-grid hex_size uniform when the tonal-ramp geometry
-    // is finalised.
     let hex_size = 1.0;
 
     // World-space position: instance centre (XZ) + scaled local vertex offset.
-    // Y stays at 0.0 in c6. c7 will use `elevation` to offset Y for the tonal
-    // shading, if DD5 decides on a slight vertical displacement. Sprint 3.5.A
-    // DD5 explicitly does NOT extrude hexes in Z — elevation is for shading only.
+    // Y stays at 0.0 — DD5 explicitly does NOT extrude hexes in Z; the tonal
+    // ramp in `fs_main` is the sole elevation cue. Z-extrusion would compete
+    // with DD4 cliff decorations for the "vertical signal" budget.
     let world_xz = i.center_xy + v.local_xy * hex_size;
     let world_pos = vec4<f32>(world_xz.x, 0.0, world_xz.y, 1.0);
 
     var out: VSOut;
     out.clip_pos   = u.view_proj * world_pos;
     out.fill_color = unpack_rgba8(i.fill_color_rgba);
+    out.elevation  = i.elevation;
     return out;
 }
 
@@ -92,7 +121,9 @@ fn vs_main(v: VertexInput, i: InstanceInput) -> VSOut {
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-    // c6: direct fill colour pass-through.
-    // c7 will blend in elevation-derived tonal ramp here.
-    return in.fill_color;
+    // DD5 tonal ramp: scale biome fill RGB by an elevation-derived factor.
+    // Alpha is preserved — the ramp never affects transparency / compositing.
+    let factor = tonal_factor(in.elevation);
+    let rgb = in.fill_color.rgb * factor;
+    return vec4<f32>(rgb, in.fill_color.a);
 }
