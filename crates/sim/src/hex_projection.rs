@@ -569,12 +569,25 @@ mod tests {
         HexProjectionStage.run(&mut world).expect("stage");
         let attrs = world.derived.hex_attrs.as_ref().unwrap();
 
-        // Sim cell (10, 10) belongs to hex (col=10*64/128=5, row=5)
-        // → hex_id = 5*64 + 5 = 325.
-        let hex_col = 10 * DEFAULT_HEX_COLS / 128;
-        let hex_row = 10 * DEFAULT_HEX_ROWS / 128;
-        assert!(attrs.get(hex_col, hex_row).has_river);
-        // Any other hex should be false.
+        // Under DD2 axial-offset tessellation, sim cell (10, 10) →
+        // hex_id = 389 (col=5, row=6). The old rectangular-box formula
+        // (col = ix * cols / sim_w) no longer holds — the actual mapping
+        // is computed by the Voronoi nearest-centre kernel in `hex::build_hex_grid`.
+        // We assert the hex that DOES contain (10, 10) reports has_river = true.
+        let hex_id = world
+            .derived
+            .hex_grid
+            .as_ref()
+            .expect("hex_grid populated by stage")
+            .hex_id_of_cell
+            .get(10, 10) as u32;
+        let hex_col = hex_id % DEFAULT_HEX_COLS;
+        let hex_row = hex_id / DEFAULT_HEX_COLS;
+        assert!(
+            attrs.get(hex_col, hex_row).has_river,
+            "hex ({hex_col},{hex_row}) containing sim (10,10) must report has_river=true"
+        );
+        // Any hex that does NOT contain (10, 10) should be false; verify (0, 0).
         assert!(!attrs.get(0, 0).has_river);
     }
 
@@ -671,8 +684,8 @@ mod tests {
         let mut world = ready_world(w, h);
 
         // Build a checkerboard slope: alternating 0.0 and 1.0.
-        // Every hex will contain both values, so variance = E[slope²]-(E[slope])²
-        // = 0.5 - 0.25 = 0.25 (assuming 50/50 split), well above zero.
+        // Most hexes will contain both values, so variance = E[slope²]-(E[slope])²
+        // ≈ 0.25, well above zero.
         let mut slope = ScalarField2D::<f32>::new(w, h);
         for iy in 0..h {
             for ix in 0..w {
@@ -685,18 +698,36 @@ mod tests {
         HexProjectionStage.run(&mut world).expect("stage");
 
         let hd = world.derived.hex_debug.as_ref().unwrap();
-        // Every hex should have non-trivial variance (checkerboard spans all hexes).
+        // Under DD2 axial-offset tessellation some edge hexes receive only a
+        // single sim cell (their Voronoi region extends partially outside the
+        // domain). A single-cell hex has variance = 0 by definition regardless
+        // of field values. We therefore assert:
+        //   (a) at least one hex reports nonzero variance (overall sanity), and
+        //   (b) every hex with ≥ 2 assigned cells reports variance > 0.
+        // Hexes with < 2 cells are excluded from the per-hex check.
         let any_nonzero = hd.slope_variance.iter().any(|&v| v > 1e-4);
         assert!(
             any_nonzero,
             "expected at least one hex with slope_variance > 0 on a checkerboard slope field"
         );
-        // More specifically: every hex in the interior should have variance ≈ 0.25.
+
+        let grid = world.derived.hex_grid.as_ref().expect("hex_grid populated");
+        let n_hexes = (grid.cols * grid.rows) as usize;
+        let mut hex_cell_count = vec![0_u32; n_hexes];
+        for iy in 0..h {
+            for ix in 0..w {
+                let id = grid.hex_id_of_cell.get(ix, iy) as usize;
+                hex_cell_count[id] += 1;
+            }
+        }
         for (i, &v) in hd.slope_variance.iter().enumerate() {
-            assert!(
-                v > 1e-4,
-                "hex {i}: expected slope_variance > 0 on checkerboard field, got {v}"
-            );
+            if hex_cell_count[i] >= 2 {
+                assert!(
+                    v > 1e-4,
+                    "hex {i} (cell_count={}): expected slope_variance > 0 on checkerboard field, got {v}",
+                    hex_cell_count[i]
+                );
+            }
         }
     }
 
@@ -729,15 +760,19 @@ mod tests {
         let (w, h) = (128_u32, 128_u32);
         let mut world = ready_world(w, h);
 
-        // Place two river cells in hex (col=1, row=1):
-        // hex x-span: [2, 4), y-span: [2, 4) for a 4x4 hex grid on 128x128.
-        // With 64 cols and 64 rows: each hex spans 2x2 cells.
-        // hex_col = col*sim_w/hex_cols = 1*128/64 = 2 → x in [2, 4)
-        // hex_row = row*sim_h/hex_rows = 1*128/64 = 2 → y in [2, 4)
-        let entry_x = 2_u32; // top-left of hex (1,1)
-        let entry_y = 2_u32;
-        let exit_x = 3_u32;
-        let exit_y = 3_u32;
+        // Under DD2 axial-offset tessellation the old rectangular-box formula
+        // (hex_col = ix * cols / sim_w) no longer holds. We pick two sim cells
+        // that the DD2 kernel assigns to the same hex.
+        //
+        // hex (col=1, row=2) has centre at:
+        //   x = (1 + 0.5) * 2.0 = 3.0  (even row, no x-offset)
+        //   y = (2 + 0.5) * 1.732 ≈ 4.330
+        // Cells (2, 3) → wx=2.5, wy=3.5 and (3, 4) → wx=3.5, wy=4.5 both map
+        // to hex_id = 129 = 2*64 + 1 (verified by hand with the DD2 formula).
+        let entry_x = 2_u32; // upstream (lower accumulation)
+        let entry_y = 3_u32;
+        let exit_x = 3_u32; // downstream (higher accumulation)
+        let exit_y = 4_u32;
 
         let mut river = island_core::field::MaskField2D::new(w, h);
         river.set(entry_x, entry_y, 1);
@@ -751,13 +786,20 @@ mod tests {
 
         HexProjectionStage.run(&mut world).expect("stage");
 
+        // Verify both cells map to the same hex under DD2.
+        let grid = world.derived.hex_grid.as_ref().expect("hex_grid populated");
+        let entry_hex = grid.hex_id_of_cell.get(entry_x, entry_y);
+        let exit_hex = grid.hex_id_of_cell.get(exit_x, exit_y);
+        assert_eq!(
+            entry_hex, exit_hex,
+            "entry ({entry_x},{entry_y}) and exit ({exit_x},{exit_y}) must be in the same hex"
+        );
+
         let hd = world.derived.hex_debug.as_ref().unwrap();
-        // hex_id for (col=1, row=1) on a 64x64 grid = 1*64 + 1 = 65.
-        let hex_id = 1 * DEFAULT_HEX_COLS + 1;
-        let crossing =
-            hd.river_crossing[hex_id as usize].expect("hex (1,1) must have a river crossing");
-        // entry_edge is nearest edge to (entry_x, entry_y) in hex (1,1)
-        // exit_edge is nearest edge to (exit_x, exit_y) in hex (1,1)
+        // hex_id for (col=1, row=2) on a 64×64 grid = 2*64 + 1 = 129.
+        let hex_id = exit_hex as usize;
+        let crossing = hd.river_crossing[hex_id]
+            .expect("hex containing both river cells must have a crossing");
         // Just verify they are valid box-edge values (0..=3).
         assert!(
             crossing.entry_edge <= 3,
