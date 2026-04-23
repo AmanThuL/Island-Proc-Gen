@@ -39,36 +39,42 @@ impl ViewMode {
 /// The ordered list of renderer layers to invoke for a given [`ViewMode`].
 ///
 /// This is pure data — GPU-free. Both the interactive frame path
-/// (`frame.rs::tick`) and the headless executor (c9, `headless/executor.rs`)
+/// (`frame.rs::tick`) and the headless executor (`headless/executor.rs`)
 /// call [`render_stack_for`] so interactive ↔ headless render-path parity is
 /// lockable as a unit test (plan §5 tier-1 gate).
 ///
 /// # Variant semantics
 ///
-/// | Variant      | What it invokes                        |
-/// |--------------|----------------------------------------|
-/// | `Sky`        | `SkyRenderer::draw`                    |
-/// | `Terrain`    | `TerrainRenderer::draw`                |
-/// | `HexSurface` | `HexSurfaceRenderer::draw` (c8+)       |
-/// | `Overlay`    | `OverlayRenderer::draw` (all visibles) |
+/// | Variant      | What it invokes                              |
+/// |--------------|----------------------------------------------|
+/// | `Sky`        | `SkyRenderer::draw`                          |
+/// | `Terrain`    | `TerrainRenderer::draw`                      |
+/// | `HexSurface` | `HexSurfaceRenderer::draw` (c8+)             |
+/// | `HexRiver`   | `HexRiverRenderer::draw` (c4 of 3.5.B)      |
+/// | `Overlay`    | `OverlayRenderer::draw` (all visibles)       |
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderLayer {
     Sky,
     Terrain,
     HexSurface,
+    /// Sprint 3.5.B c4: river polyline pass, drawn AFTER `HexSurface` and
+    /// BEFORE `Overlay` so rivers read over the hex fill but under overlays.
+    HexRiver,
     Overlay,
 }
 
-/// Returns the renderer stack for a [`ViewMode`] per plan §2 DD5 + §3 c8.
+/// Returns the renderer stack for a [`ViewMode`] per plan §2 DD3 + §3 c4.
 ///
-/// | Mode          | Stack                                        |
-/// |---------------|----------------------------------------------|
-/// | `Continuous`  | `[Sky, Terrain, Overlay]`                    |
-/// | `HexOverlay`  | `[Sky, Terrain, HexSurface, Overlay]`        |
-/// | `HexOnly`     | `[Sky, HexSurface]`                          |
+/// | Mode          | Stack                                             |
+/// |---------------|---------------------------------------------------|
+/// | `Continuous`  | `[Sky, Terrain, Overlay]`                         |
+/// | `HexOverlay`  | `[Sky, Terrain, HexSurface, HexRiver, Overlay]`   |
+/// | `HexOnly`     | `[Sky, HexSurface, HexRiver]`                     |
 ///
 /// `Continuous` returns the exact pre-Sprint-3.5 render order, so this
 /// function is safe to adopt without changing the existing visual output.
+/// `HexRiver` is sandwiched between `HexSurface` and `Overlay` so rivers
+/// draw on top of the fill but below overlay textures.
 pub fn render_stack_for(mode: ViewMode) -> Vec<RenderLayer> {
     match mode {
         ViewMode::Continuous => {
@@ -78,9 +84,14 @@ pub fn render_stack_for(mode: ViewMode) -> Vec<RenderLayer> {
             RenderLayer::Sky,
             RenderLayer::Terrain,
             RenderLayer::HexSurface,
+            RenderLayer::HexRiver,
             RenderLayer::Overlay,
         ],
-        ViewMode::HexOnly => vec![RenderLayer::Sky, RenderLayer::HexSurface],
+        ViewMode::HexOnly => vec![
+            RenderLayer::Sky,
+            RenderLayer::HexSurface,
+            RenderLayer::HexRiver,
+        ],
     }
 }
 
@@ -117,12 +128,17 @@ mod tests {
                 RenderLayer::Sky,
                 RenderLayer::Terrain,
                 RenderLayer::HexSurface,
+                RenderLayer::HexRiver,
                 RenderLayer::Overlay,
             ],
         );
         assert_eq!(
             render_stack_for(ViewMode::HexOnly),
-            vec![RenderLayer::Sky, RenderLayer::HexSurface],
+            vec![
+                RenderLayer::Sky,
+                RenderLayer::HexSurface,
+                RenderLayer::HexRiver,
+            ],
         );
     }
 
@@ -160,6 +176,7 @@ mod tests {
                 RenderLayer::Sky => true,
                 RenderLayer::Terrain => true,
                 RenderLayer::HexSurface => true,
+                RenderLayer::HexRiver => true,
                 RenderLayer::Overlay => true,
             };
         }
@@ -176,7 +193,8 @@ mod tests {
         assert_eq!(stack[2], RenderLayer::Overlay);
     }
 
-    /// HexOnly mode must NOT include `RenderLayer::Terrain`.
+    /// HexOnly mode must NOT include `RenderLayer::Terrain` and MUST include
+    /// both `HexSurface` and `HexRiver` (Sprint 3.5.B c4 adds `HexRiver`).
     #[test]
     fn render_stack_for_hex_only_excludes_terrain() {
         let stack = render_stack_for(ViewMode::HexOnly);
@@ -187,6 +205,20 @@ mod tests {
         assert!(
             stack.contains(&RenderLayer::HexSurface),
             "HexOnly render stack must include HexSurface; got {stack:?}"
+        );
+        assert!(
+            stack.contains(&RenderLayer::HexRiver),
+            "HexOnly render stack must include HexRiver (Sprint 3.5.B c4); got {stack:?}"
+        );
+        // Expected exact stack: [Sky, HexSurface, HexRiver]
+        assert_eq!(
+            stack,
+            vec![
+                RenderLayer::Sky,
+                RenderLayer::HexSurface,
+                RenderLayer::HexRiver
+            ],
+            "HexOnly stack must be [Sky, HexSurface, HexRiver]"
         );
     }
 }

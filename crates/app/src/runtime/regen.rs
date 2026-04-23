@@ -22,6 +22,19 @@ impl Runtime {
             .upload_instances(&self.gpu.device, &self.gpu.queue, &instances);
     }
 
+    /// Rebuild the hex-river instance buffer from `world.derived.hex_debug`.
+    ///
+    /// Called alongside `rebuild_hex_surface_instances` everywhere the hex
+    /// data changes so river threads stay in sync with the surface fill.
+    ///
+    /// If `hex_grid` or `hex_debug` is `None` (partial pipeline run), an
+    /// empty instance buffer is uploaded — the draw call becomes a no-op.
+    pub(super) fn rebuild_hex_river_instances(&mut self) {
+        let instances = super::build_hex_river_instances(&self.world, self.world_xz_extent);
+        self.hex_river
+            .upload_instances(&self.gpu.device, &self.gpu.queue, &instances);
+    }
+
     /// Full world rebuild triggered by the `Regenerate` button.
     ///
     /// Reads the current `world_panel` state (preset name, seed, three slider
@@ -77,8 +90,9 @@ impl Runtime {
         self.world_panel.max_relief = self.preset.max_relief;
         self.world_panel.sea_level = self.preset.sea_level;
 
-        // 8. Rebuild hex-surface instance buffer from the new derived caches.
+        // 8. Rebuild hex-surface + hex-river instance buffers from the new derived caches.
         self.rebuild_hex_surface_instances();
+        self.rebuild_hex_river_instances();
 
         Ok(())
     }
@@ -106,9 +120,10 @@ impl Runtime {
         // 5. Move camera target Y to the new water line.
         self.camera.target.y = new_sea_level;
 
-        // 6. Rebuild hex-surface instances — sea level change re-runs Coastal +
-        //    downstream, which updates hex_attrs.elevation.
+        // 6. Rebuild hex-surface + hex-river instances — sea level change re-runs
+        //    Coastal + downstream, which updates hex_attrs.elevation and hex_debug.
         self.rebuild_hex_surface_instances();
+        self.rebuild_hex_river_instances();
 
         Ok(())
     }
@@ -146,7 +161,8 @@ impl Runtime {
         self.camera.distance *= scale;
 
         // Rebuild hex instances at the new world extent — the sim_to_world_scale
-        // factor changes with extent even though hex_attrs are unchanged.
+        // factor changes with extent even though hex_attrs / hex_debug are unchanged.
         self.rebuild_hex_surface_instances();
+        self.rebuild_hex_river_instances();
     }
 }

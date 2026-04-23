@@ -35,8 +35,8 @@ use island_core::{
 };
 use render::HexInstance;
 use render::{
-    DEFAULT_WORLD_XZ_EXTENT, HexSurfaceRenderer, OverlayRenderer, SkyRenderer, TerrainRenderer,
-    ViewportTextureSet, overlay::OverlayRegistry,
+    DEFAULT_WORLD_XZ_EXTENT, HexRiverInstance, HexRiverRenderer, HexSurfaceRenderer,
+    OverlayRenderer, SkyRenderer, TerrainRenderer, ViewportTextureSet, overlay::OverlayRegistry,
 };
 use sim::default_pipeline;
 
@@ -83,6 +83,12 @@ pub struct Runtime {
     /// `rebuild_hex_surface_instances` after each pipeline run that updates
     /// `derived.hex_grid` / `derived.hex_attrs`.
     pub(super) hex_surface: HexSurfaceRenderer,
+
+    /// Sprint 3.5.B c4: hex river polyline renderer.  Drawn after the hex
+    /// surface fill pass so rivers read over the fill colour.  Instance buffer
+    /// is rebuilt by `rebuild_hex_river_instances` alongside the hex-surface
+    /// rebuild everywhere the hex data changes.
+    pub(super) hex_river: HexRiverRenderer,
 
     // egui
     pub(super) egui_ctx: egui::Context,
@@ -247,6 +253,12 @@ impl Runtime {
         let initial_instances = build_hex_instances(&world, world_xz_extent);
         hex_surface.upload_instances(&gpu.device, &gpu.queue, &initial_instances);
 
+        // ── Hex-river renderer (Sprint 3.5.B c4) ─────────────────────────────
+        let mut hex_river =
+            HexRiverRenderer::new(&gpu.device, gpu.surface_format, gpu.depth_format);
+        let initial_river_instances = build_hex_river_instances(&world, world_xz_extent);
+        hex_river.upload_instances(&gpu.device, &gpu.queue, &initial_river_instances);
+
         // Centre the camera on the island mesh ([0, world_xz_extent] on XZ, Y=height).
         camera.target = glam::Vec3::new(
             world_xz_extent * 0.5,
@@ -287,6 +299,7 @@ impl Runtime {
             overlay,
             sky,
             hex_surface,
+            hex_river,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -467,6 +480,69 @@ pub(crate) fn build_hex_instances(world: &WorldState, world_extent: f32) -> Vec<
                 river_mask_bits,
                 _pad: [0u32; 2],
             });
+        }
+    }
+    instances
+}
+
+// ── Hex-river instance builder (Sprint 3.5.B c4) ─────────────────────────────
+
+/// Build the per-instance GPU data for the hex river renderer.
+///
+/// Reads `world.derived.hex_debug` to access `river_crossing` and
+/// `river_width` per hex. If `hex_grid` or `hex_debug` is `None` (pipeline not
+/// yet run, or partial run), returns an empty `Vec` — a 0-instance upload
+/// makes `HexRiverRenderer::draw` a no-op.
+///
+/// An instance is emitted only for hexes where **both** `river_crossing` and
+/// `river_width` are `Some`. This matches the validator invariant from c3:
+/// exactly one must be Some iff the other is Some.
+///
+/// Positions are converted from sim space to world space via
+/// [`sim_to_world_scale`] using the same formula as `build_hex_instances`.
+pub(crate) fn build_hex_river_instances(
+    world: &WorldState,
+    world_extent: f32,
+) -> Vec<HexRiverInstance> {
+    let (hex_grid, hex_debug) = match (
+        world.derived.hex_grid.as_ref(),
+        world.derived.hex_debug.as_ref(),
+    ) {
+        (Some(g), Some(d)) => (g, d),
+        _ => return Vec::new(),
+    };
+
+    let sim_width = world.resolution.sim_width;
+    let scale = sim_to_world_scale(sim_width, world_extent);
+    let origin = default_grid_origin(hex_grid.hex_size);
+
+    let total = (hex_grid.cols * hex_grid.rows) as usize;
+    let mut instances = Vec::with_capacity(total / 4); // rivers are a fraction of hexes
+
+    for row in 0..hex_grid.rows {
+        for col in 0..hex_grid.cols {
+            let idx = (row * hex_grid.cols + col) as usize;
+
+            // Both must be Some — if either is None, skip this hex.
+            let (crossing, width) = match (
+                hex_debug.river_crossing.get(idx).and_then(|v| *v),
+                hex_debug.river_width.get(idx).and_then(|v| *v),
+            ) {
+                (Some(c), Some(w)) => (c, w),
+                _ => continue,
+            };
+
+            // Sim-space centre → world-space centre.
+            let (sim_cx, sim_cy) = offset_to_pixel(col, row, hex_grid.hex_size, origin);
+            let world_cx = sim_cx * scale;
+            let world_cy = sim_cy * scale;
+
+            instances.push(HexRiverInstance::pack(
+                [world_cx, world_cy],
+                crossing.entry_edge,
+                crossing.exit_edge,
+                width as u8,
+            ));
         }
     }
     instances

@@ -20,6 +20,7 @@ impl Runtime {
         self.overlay
             .refresh(&self.gpu, &self.world, &self.overlay_registry);
         self.rebuild_hex_surface_instances();
+        self.rebuild_hex_river_instances();
     }
 
     pub(super) fn tick(&mut self) {
@@ -69,6 +70,15 @@ impl Runtime {
             })
             .unwrap_or(1.0);
         self.hex_surface.update_view_projection(
+            &self.gpu.queue,
+            &vp.to_cols_array_2d(),
+            world_hex_size,
+        );
+
+        // ── Hex-river uniform update (per-frame) ──────────────────────────────
+        // Uses the same world_hex_size as the hex-surface so rivers scale with
+        // the grid. River colour is re-uploaded from palette::RIVER each frame.
+        self.hex_river.update_view_projection(
             &self.gpu.queue,
             &vp.to_cols_array_2d(),
             world_hex_size,
@@ -149,6 +159,7 @@ impl Runtime {
                     RenderLayer::Sky => self.sky.draw(&mut rpass),
                     RenderLayer::Terrain => self.terrain.draw(&mut rpass),
                     RenderLayer::HexSurface => self.hex_surface.draw(&mut rpass),
+                    RenderLayer::HexRiver => self.hex_river.draw(&mut rpass),
                     RenderLayer::Overlay => {
                         self.overlay
                             .draw(&mut rpass, &self.overlay_registry, &self.gpu.queue);

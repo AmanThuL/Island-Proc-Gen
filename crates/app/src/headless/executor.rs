@@ -441,6 +441,16 @@ fn render_beauty_shot(
     let hex_instances = crate::runtime::build_hex_instances(world, render::DEFAULT_WORLD_XZ_EXTENT);
     hex_surface.upload_instances(&gpu.device, &gpu.queue, &hex_instances);
 
+    // ── Hex-river renderer (Sprint 3.5.B c4) ─────────────────────────────────
+    // Drawn after the hex-surface fill pass (RenderLayer::HexRiver position in
+    // the stack) so rivers read over the fill colour. Continuous shots have
+    // 0 instances (river layer not in Continuous stack); draw is a no-op.
+    let mut hex_river =
+        render::HexRiverRenderer::new(&gpu.device, gpu.surface_format, gpu.depth_format);
+    let river_instances =
+        crate::runtime::build_hex_river_instances(world, render::DEFAULT_WORLD_XZ_EXTENT);
+    hex_river.upload_instances(&gpu.device, &gpu.queue, &river_instances);
+
     // ── Upload camera — headless uses DEFAULT_WORLD_XZ_EXTENT explicitly ──────
     // Baselines were captured at DEFAULT_WORLD_XZ_EXTENT = 5.0. The interactive
     // Runtime may use a different extent (aspect ComboBox), but the headless path
@@ -475,6 +485,7 @@ fn render_beauty_shot(
         .map(|g| g.hex_size * scale)
         .unwrap_or(1.0);
     hex_surface.update_view_projection(&gpu.queue, &vp.to_cols_array_2d(), world_hex_size);
+    hex_river.update_view_projection(&gpu.queue, &vp.to_cols_array_2d(), world_hex_size);
 
     // ── Offscreen capture ───────────────────────────────────────────────────
     let rgba = gpu
@@ -519,6 +530,7 @@ fn render_beauty_shot(
                     RenderLayer::Sky => sky.draw(&mut rpass),
                     RenderLayer::Terrain => terrain.draw(&mut rpass),
                     RenderLayer::HexSurface => hex_surface.draw(&mut rpass),
+                    RenderLayer::HexRiver => hex_river.draw(&mut rpass),
                     RenderLayer::Overlay => {
                         overlay_renderer.draw(&mut rpass, &registry, &gpu.queue);
                     }

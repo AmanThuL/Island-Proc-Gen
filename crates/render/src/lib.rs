@@ -1,6 +1,7 @@
 //! Rendering layer — terrain placeholder quad + overlay descriptor registry.
 
 pub mod camera;
+pub mod hex_river;
 pub mod hex_surface;
 pub mod noise;
 pub mod overlay;
@@ -15,6 +16,7 @@ pub use camera::{
     ALL_PRESETS, CameraPreset, CameraPresetId, PRESET_HERO, PRESET_LOW_OBLIQUE, PRESET_TOP_DEBUG,
     eye_position, preset_by_id, preset_by_name, view_projection as camera_view_projection,
 };
+pub use hex_river::{HexRiverInstance, HexRiverRenderer};
 pub use hex_surface::{HexInstance, HexSurfaceRenderer};
 pub use noise::{BlueNoiseTexture, NoiseLoadError, load_blue_noise_2d};
 pub use overlay::{OverlayDescriptor, OverlayRegistry, OverlaySource, ValueRange};
