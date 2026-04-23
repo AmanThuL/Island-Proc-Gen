@@ -613,6 +613,56 @@ mod tests {
         }
     }
 
+    /// Sprint 3.5 §4 item 1: `HexAttributes` must have exactly the 8 fields
+    /// {elevation, slope, rainfall, temperature, moisture, biome_weights,
+    /// dominant_biome, has_river}. This is the Sprint 5 S2 settlement /
+    /// suitability consumer contract — adding, removing, or renaming a
+    /// field here is a breaking change for downstream stages.
+    ///
+    /// Enforcement mechanism: exhaustive destructure of the struct. Adding a
+    /// field makes the destructure inexhaustive → compile error. Removing a
+    /// field makes the destructure reference a non-existent ident → compile
+    /// error. Renaming a field does the same. The destructure must NOT use
+    /// `..` — that would silently tolerate new fields.
+    ///
+    /// Net: this is a compile-time anchor, not a runtime assertion. The
+    /// `#[test]` wrapper is only here so `cargo test` reports it; its body
+    /// never actually exercises behaviour.
+    #[test]
+    fn hex_attributes_eight_fields_stable() {
+        let h = HexAttributes {
+            elevation: 0.0,
+            slope: 0.0,
+            rainfall: 0.0,
+            temperature: 0.0,
+            moisture: 0.0,
+            biome_weights: Vec::new(),
+            dominant_biome: BiomeType::CoastalScrub,
+            has_river: false,
+        };
+        // Exhaustive destructure — no `..`. Drift in any field fails compile.
+        let HexAttributes {
+            elevation,
+            slope,
+            rainfall,
+            temperature,
+            moisture,
+            biome_weights,
+            dominant_biome,
+            has_river,
+        } = h;
+        let _ = (
+            elevation,
+            slope,
+            rainfall,
+            temperature,
+            moisture,
+            biome_weights,
+            dominant_biome,
+            has_river,
+        );
+    }
+
     // 1. new() produces a world with empty authoritative / baked / derived.
     #[test]
     fn world_state_new_defaults() {

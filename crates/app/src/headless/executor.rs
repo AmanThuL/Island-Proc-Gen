@@ -946,4 +946,86 @@ mod tests {
             "beauty PNG must not be written when GPU was Skipped"
         );
     }
+
+    /// Sprint 3.5 DD8 end-to-end lock: `RunSummary.schema_version` MUST
+    /// mirror the input `CaptureRequest.schema_version` across every shipped
+    /// schema version. The plan §5 "DD8 schema backwards compat gate" names
+    /// this stamping behaviour explicitly — the pre-existing
+    /// `schema_v1_and_v2_still_parse_under_v3_binary` covers parse but not
+    /// the round-trip stamping.
+    ///
+    /// This test loops over the 3 shipped versions (1, 2, 3). For each, it
+    /// writes a minimal request RON fixture, runs the headless executor with
+    /// GPU bootstrap force-failed (truth path still runs; beauty skipped),
+    /// reads the generated `summary.ron`, and asserts
+    /// `summary.schema_version == input.schema_version`. A regression in
+    /// the stamping line at `executor.rs::run_request` (see "Propagate the
+    /// request's schema_version into the output" comment block) would fire
+    /// exactly here.
+    #[test]
+    fn run_summary_stamps_input_schema_version_v1_v2_v3() {
+        let _lock = pipeline_test_lock();
+
+        for schema_version in [1_u32, 2_u32, 3_u32] {
+            let dir = tempfile::tempdir().expect("tempdir");
+
+            // Build a minimal truth-only request (no beauty → no GPU need).
+            // view_mode is None for all 3 — v1/v2 didn't have the field;
+            // v3 with None is additive-compatible.
+            let req = CaptureRequest {
+                schema_version,
+                run_id: Some(format!("schema_v{schema_version}_stamp_test")),
+                output_dir: Some(dir.path().join("run")),
+                shots: vec![CaptureShot {
+                    id: "truth_only".into(),
+                    seed: 42,
+                    preset: "volcanic_single".into(),
+                    sim_resolution: 64,
+                    truth: TruthSpec {
+                        overlays: vec!["final_elevation".into()],
+                        include_metrics: true,
+                    },
+                    beauty: None,
+                    preset_override: None,
+                    view_mode: None,
+                }],
+            };
+            let req_path = write_request(dir.path(), &req);
+
+            // Force-skip GPU so beauty doesn't gate the test on adapter
+            // availability; truth path runs to completion.
+            // SAFETY: serialised by `pipeline_test_lock` above.
+            unsafe {
+                std::env::set_var(FORCE_GPU_FAIL_ENV, "1");
+            }
+
+            let run_status = run_request(&req_path);
+
+            unsafe {
+                std::env::remove_var(FORCE_GPU_FAIL_ENV);
+            }
+
+            let status = run_status.expect("run_request must not Err");
+            match status {
+                OverallStatus::Passed | OverallStatus::PassedWithBeautySkipped { .. } => {}
+                other => panic!(
+                    "schema_version {schema_version}: expected Passed/PassedWithBeautySkipped, got {other:?}"
+                ),
+            }
+
+            // Read the written summary.ron and confirm the stamped version.
+            let summary_path = req.output_dir.as_ref().unwrap().join("summary.ron");
+            let summary_text =
+                std::fs::read_to_string(&summary_path).expect("summary.ron must exist");
+            let summary: RunSummary =
+                ron::de::from_str(&summary_text).expect("summary.ron must parse");
+
+            assert_eq!(
+                summary.schema_version, schema_version,
+                "schema_version {schema_version}: summary.ron stamped \
+                 {} instead of the input's {schema_version}",
+                summary.schema_version
+            );
+        }
+    }
 }
