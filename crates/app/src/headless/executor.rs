@@ -24,6 +24,7 @@ use std::time::Instant;
 use anyhow::{Context as _, Result, bail};
 use tracing::{error, info, warn};
 
+use crate::runtime::view_mode::{RenderLayer, ViewMode, render_stack_for};
 use data::golden::SummaryMetrics;
 use gpu::GpuContext;
 use island_core::{
@@ -326,7 +327,16 @@ pub fn run_shot(
         // BeautySpec present and GPU available → render.
         (Some(beauty_spec), Some(gpu)) => {
             let gpu_start = Instant::now();
-            let summary = render_beauty_shot(gpu, &world, &preset, beauty_spec, layout, &shot.id)?;
+            let view_mode = shot.view_mode.unwrap_or(ViewMode::Continuous);
+            let summary = render_beauty_shot(
+                gpu,
+                &world,
+                &preset,
+                beauty_spec,
+                layout,
+                &shot.id,
+                view_mode,
+            )?;
             (Some(summary), Some(elapsed_ms(gpu_start)))
         }
     };
@@ -347,10 +357,13 @@ pub fn run_shot(
 ///
 /// Mirrors the construction order used by [`crate::runtime::Runtime::new`]:
 /// the GPU context + the populated world drive a [`render::TerrainRenderer`],
-/// a [`render::SkyRenderer`], and a [`render::OverlayRenderer`] (the overlay
-/// renderer is only drawn when the caller supplied a non-empty
-/// `overlay_stack`). All three are dropped at the end of this function so
-/// they release their wgpu resources before the next shot bootstraps.
+/// a [`render::SkyRenderer`], a [`render::HexSurfaceRenderer`], and a
+/// [`render::OverlayRenderer`] (the overlay renderer is only drawn when the
+/// caller supplied a non-empty `overlay_stack`). The draw sequence is
+/// determined by [`render_stack_for`]`(view_mode)` — the same pure function
+/// used by `frame.rs::tick` — ensuring interactive ↔ headless render-path
+/// parity. All renderers are dropped at the end of this function so they
+/// release their wgpu resources before the next shot bootstraps.
 fn render_beauty_shot(
     gpu: &GpuContext,
     world: &WorldState,
@@ -358,6 +371,7 @@ fn render_beauty_shot(
     beauty: &crate::headless::request::BeautySpec,
     layout: &RunLayout,
     shot_id: &str,
+    view_mode: ViewMode,
 ) -> Result<BeautySummary> {
     use render::camera::{eye_position, preset_by_name, view_projection};
 
@@ -401,7 +415,7 @@ fn render_beauty_shot(
     // ── Construct renderers ─────────────────────────────────────────────────
     //
     // TerrainRenderer::new picks up `gpu.surface_format`, which on a headless
-    // context is `HEADLESS_COLOR_FORMAT = Rgba8Unorm` — so all three pipelines
+    // context is `HEADLESS_COLOR_FORMAT = Rgba8Unorm` — so all four pipelines
     // target `Rgba8Unorm` automatically. No fork between windowed / headless.
     //
     // Headless always uses DEFAULT_WORLD_XZ_EXTENT so baselines remain
@@ -418,8 +432,17 @@ fn render_beauty_shot(
     );
     let sky = render::SkyRenderer::new(gpu);
 
+    // ── Hex-surface renderer (c9) ─────────────────────────────────────────────
+    // Constructed with the same format/depth targets as terrain so both can
+    // share the same render pass. Instance buffer is populated from the
+    // freshly-run pipeline; 0 instances → draw is a no-op for Continuous shots.
+    let mut hex_surface =
+        render::HexSurfaceRenderer::new(&gpu.device, gpu.surface_format, gpu.depth_format);
+    let hex_instances = crate::runtime::build_hex_instances(world, render::DEFAULT_WORLD_XZ_EXTENT);
+    hex_surface.upload_instances(&gpu.device, &gpu.queue, &hex_instances);
+
     // ── Upload camera — headless uses DEFAULT_WORLD_XZ_EXTENT explicitly ──────
-    // Baselines were captured at DEFAULT_WORLD_XZ_EXTENT = 3.0. The interactive
+    // Baselines were captured at DEFAULT_WORLD_XZ_EXTENT = 5.0. The interactive
     // Runtime may use a different extent (aspect ComboBox), but the headless path
     // has no UI state so it always uses the stable default.
     let (width, height) = beauty.resolution;
@@ -436,6 +459,22 @@ fn render_beauty_shot(
         render::DEFAULT_WORLD_XZ_EXTENT,
     );
     terrain.update_view(&gpu.queue, vp, eye);
+
+    // ── Hex-surface uniform update ────────────────────────────────────────────
+    // Compute world-space hex_size from the sim-space value in hex_grid.
+    // If hex_grid is not yet populated, fall back to 1.0; draw is a no-op
+    // when instance_count == 0 (Continuous shots with empty hex_instances).
+    let scale = hex::geometry::sim_to_world_scale(
+        world.resolution.sim_width,
+        render::DEFAULT_WORLD_XZ_EXTENT,
+    );
+    let world_hex_size = world
+        .derived
+        .hex_grid
+        .as_ref()
+        .map(|g| g.hex_size * scale)
+        .unwrap_or(1.0);
+    hex_surface.update_view_projection(&gpu.queue, &vp.to_cols_array_2d(), world_hex_size);
 
     // ── Offscreen capture ───────────────────────────────────────────────────
     let rgba = gpu
@@ -471,9 +510,20 @@ fn render_beauty_shot(
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            sky.draw(&mut rpass);
-            terrain.draw(&mut rpass);
-            overlay_renderer.draw(&mut rpass, &registry, &gpu.queue);
+            // Dispatch via render_stack_for — the same pure function used by
+            // frame.rs::tick. Exhaustive match (no `_` arm) ensures adding a
+            // future RenderLayer variant fails to compile here AND in frame.rs,
+            // keeping both call sites in sync (plan §5 tier-1 parity gate).
+            for layer in render_stack_for(view_mode) {
+                match layer {
+                    RenderLayer::Sky => sky.draw(&mut rpass),
+                    RenderLayer::Terrain => terrain.draw(&mut rpass),
+                    RenderLayer::HexSurface => hex_surface.draw(&mut rpass),
+                    RenderLayer::Overlay => {
+                        overlay_renderer.draw(&mut rpass, &registry, &gpu.queue);
+                    }
+                }
+            }
         })
         .map_err(|e| ShotError::GpuRuntime(format!("capture_offscreen_rgba8 failed: {e:#}")))?;
 

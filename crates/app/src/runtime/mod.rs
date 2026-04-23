@@ -420,7 +420,7 @@ fn load_preset() -> IslandArchetypePreset {
 /// The biome → fill colour uses the same `PaletteId::Categorical` +
 /// `ValueRange::Fixed(0.0, 7.0)` mapping as the `hex_aggregated` overlay
 /// descriptor in `OverlayRegistry::sprint_3_defaults` (catalog.rs line ~141).
-pub(super) fn build_hex_instances(world: &WorldState, world_extent: f32) -> Vec<HexInstance> {
+pub(crate) fn build_hex_instances(world: &WorldState, world_extent: f32) -> Vec<HexInstance> {
     let (hex_grid, hex_attrs) = match (
         world.derived.hex_grid.as_ref(),
         world.derived.hex_attrs.as_ref(),

@@ -90,10 +90,20 @@ pub fn render_stack_for(mode: ViewMode) -> Vec<RenderLayer> {
 mod tests {
     use super::*;
 
-    /// Tier-1 parity gate (plan §5): `render_stack_for` returns the same
-    /// sequence from every call site — it is pure, GPU-free, and stateless.
-    /// c9's headless executor will call this same function, so this test
-    /// locks interactive ↔ headless render-path parity in a single assertion.
+    /// Tier-1 parity gate (plan §5): both `frame.rs::tick` and
+    /// `headless/executor.rs::render_beauty_shot` iterate the `render_stack_for`
+    /// output with an **exhaustive** match on `RenderLayer` (no `_` arm). This
+    /// means adding a future `RenderLayer` variant is a compile error at both
+    /// call sites simultaneously — the variant must be handled in frame.rs AND
+    /// executor.rs before the build succeeds. The `render_layer_exhaustive_match_enforced`
+    /// test below carries a third exhaustive match in this test module to make
+    /// that invariant visible to a code reviewer and to catch any drift if
+    /// Strategy A (exhaustive match) is accidentally weakened to a `_ =>` arm.
+    ///
+    /// Enforcement strategy: **Strategy A** (exhaustive-match compile-time
+    /// guarantee) was chosen over Strategy B (source-text grep) because it is
+    /// robust to rename/move, zero runtime overhead, and locks both call sites
+    /// without depending on fragile string matching.
     #[test]
     fn view_mode_dispatches_identically_in_frame_and_executor() {
         // Verify all three variants return the documented stacks.
@@ -114,6 +124,45 @@ mod tests {
             render_stack_for(ViewMode::HexOnly),
             vec![RenderLayer::Sky, RenderLayer::HexSurface],
         );
+    }
+
+    /// Compile-time enforcement of the exhaustive-match contract.
+    ///
+    /// This test contains a third exhaustive `match` on `RenderLayer` (mirrors
+    /// the ones in `frame.rs::tick` and `executor.rs::render_beauty_shot`).
+    /// When a new `RenderLayer` variant is added the build fails here **and**
+    /// at both production call sites — the compiler prevents shipping a binary
+    /// where one call site handles the new variant but the other silently skips
+    /// it.
+    ///
+    /// If you are adding a new `RenderLayer` variant, update all three matches:
+    /// 1. `crates/app/src/runtime/frame.rs` — `frame.rs::tick` scene pass
+    /// 2. `crates/app/src/headless/executor.rs` — `render_beauty_shot`
+    /// 3. This test (below)
+    #[test]
+    fn render_layer_exhaustive_match_enforced() {
+        // Iterate every layer returned across all ViewMode variants and dispatch
+        // via an exhaustive match. The returned bool just gives each arm a
+        // reachable, non-trivial body so the compiler won't optimise the match
+        // away. Any future `RenderLayer` variant added without updating this
+        // block will cause a compile error here.
+        let all_layers: Vec<RenderLayer> = [
+            ViewMode::Continuous,
+            ViewMode::HexOverlay,
+            ViewMode::HexOnly,
+        ]
+        .iter()
+        .flat_map(|&m| render_stack_for(m))
+        .collect();
+
+        for layer in all_layers {
+            let _recognised = match layer {
+                RenderLayer::Sky => true,
+                RenderLayer::Terrain => true,
+                RenderLayer::HexSurface => true,
+                RenderLayer::Overlay => true,
+            };
+        }
     }
 
     /// Continuous mode must return `[Sky, Terrain, Overlay]` exactly — this
