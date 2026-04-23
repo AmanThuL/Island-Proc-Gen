@@ -46,8 +46,11 @@ secrets.json
 
 # ─── Claude Code / AI tool per-user overrides ─────────────────────────
 # CLAUDE.md is committed (team context); CLAUDE.local.md is per-user
-# and must not be shared.
+# and must not be shared. `.claude/` holds per-machine settings +
+# worktrees the agent harness creates during parallel subagent runs —
+# operator-local, never committed.
 CLAUDE.local.md
+.claude/
 
 # ─── macOS ────────────────────────────────────────────────────────────
 .DS_Store
