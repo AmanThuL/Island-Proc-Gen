@@ -1,6 +1,6 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-22 (Sprint 3.1 closed on `dev` 2026-04-22 with 7 atomic commits `1fa1e96 → 86f0e7b`; all three §10 gates closed DONE_WITH_CONCERNS with residuals forwarded to Sprint 3.5.D + Sprint 4. One real fix shipped: **LFPM v3 62× precipitation collapse diagnosed and resolved** via const retune — precipitation floor no longer numerically collapsed, but gate-level G4/G5/G7 closure needs Sprint 3.5/4's structural work. Sprint 3.5 Hex Surface Readability is the next active phase.)
+**Last Updated:** 2026-04-22 (Sprint 3.1 closed on `dev` 2026-04-22 with 7 atomic commits `1fa1e96 → 86f0e7b`; all three §10 gates closed DONE_WITH_CONCERNS with residuals forwarded to Sprint 3.5.D + Sprint 4. One real fix shipped: **LFPM v3 62× precipitation collapse diagnosed and resolved** via const retune — precipitation floor no longer numerically collapsed, but gate-level G4/G5/G7 closure needs Sprint 3.5/4's structural work. **Sprint 3.4 Module Boundary Cleanup** is now planned as the immediate next sprint — interstitial structural-refactor before 3.5 / 4 expand the same files further; plan doc at `docs/design/sprints/sprint_3_4_module_boundary_cleanup.md`. Sprint 3.5 follows 3.4 close-out.)
 
 ---
 
@@ -21,11 +21,18 @@ Three questions this file must always answer:
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 3.5 — Hex Surface Readability (*upcoming*).
-Sprint 3.1 calibration tail closed on `dev` 2026-04-22 — see the
-Sprint 3.1 close-out immediately below; Sprint 3.5's scope (hex
-dominant-surface contract + cliff-vs-other edge grammar + biome
-blend at hex scale) is where the §10 G5 / G7 residuals land.
+**Primary:** Sprint 3.4 — Module Boundary Cleanup (*upcoming, planned*).
+Sprint 3.1 calibration tail closed on `dev` 2026-04-22; Sprint 3.4 is
+inserted as an interstitial structural-refactor sprint **before**
+Sprint 3.5 to split three high-friction single files
+(`runtime.rs` / `validation.rs` / `overlay.rs`) and lay down
+`tests/common/mod.rs` shared fixtures, with **zero behavioural change**
+and `summary.ron` bit-identical-modulo-AD8-whitelist on all four
+baselines. Plan doc:
+[`docs/design/sprints/sprint_3_4_module_boundary_cleanup.md`](docs/design/sprints/sprint_3_4_module_boundary_cleanup.md).
+Sprint 3.5 (Hex Surface Readability) follows 3.4 close-out and remains
+the home for §10 G5 / G7 residuals (cliff-vs-other edge grammar +
+biome blend at hex scale + hex dominant-surface contract).
 
 Sprint 3.1 closed on `dev` 2026-04-22 in 7 atomic commits
 (`1fa1e96 → 86f0e7b`). `cargo test --workspace` green (527 passing).
@@ -138,10 +145,14 @@ those tasks beyond the const edits and structural cleanups).
 (LavaDelta-only-on-Young)** continue to pass cleanly (G8: all-zero
 acceptable; G9: 14.5 % / 18.8 % / 18.5 % Young, 0 % Mature/Old).
 
-Next: Sprint 3.5 (Hex Surface Readability). Entry point: roadmap's
-Sprint 3.5 section. Sprint 3.5.D's biome-suitability rework inherits
-the `authoritative.sediment` + `baked.precipitation` + `baked.
-fog_water_input` + `baked.biome_weights` fields as stable contracts.
+Next: Sprint 3.4 (Module Boundary Cleanup) — interstitial structural
+refactor before Sprint 3.5 / 4 expand the same files further. Entry
+point: [Sprint 3.4 plan doc](docs/design/sprints/sprint_3_4_module_boundary_cleanup.md).
+Sprint 3.5 (Hex Surface Readability) follows 3.4 close-out; Sprint
+3.5.D's biome-suitability rework inherits the
+`authoritative.sediment` + `baked.precipitation` + `baked.
+fog_water_input` + `baked.biome_weights` fields as stable contracts
+unchanged across 3.4 (3.4 is zero-behavioural-change by design).
 
 **Passed cleanly in Sprint 3:** §10 G8 (promoted_lake_count stretch;
 all-zero acceptable); §10 G9 (LavaDelta-only-on-Young: 14.5 % / 18.8 %
@@ -494,30 +505,51 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
 
 **Next session priorities** (see [QUICK REFERENCE](#quick-reference)):
 
-> **Roadmap vNext (2026-04-20):** post-Sprint-3 sequence is now
-> **3 → 3.5 → 4 → 4.5 → 5 (S2/S3/S4)**. Each sprint has a single
-> thesis: science / hex readability / productization / beauty-demo /
-> semantic completion. See [§Post-Sprint-3 Roadmap Revision](docs/design/island_generation_complete_roadmap.md#post-sprint-3-roadmap-revision-vnext-2026-04-20)
-> for the full rationale.
+> **Roadmap vNext (2026-04-20, with 2026-04-22 3.4 insertion):**
+> post-Sprint-3 sequence is now
+> **3 → 3.1 → 3.4 → 3.5 → 4 → 4.5 → 5 (S2/S3/S4)**. Each sprint has a
+> single thesis: science / calibration / structural cleanup / hex
+> readability / productization / beauty-demo / semantic completion.
+> See [§Post-Sprint-3 Roadmap Revision](docs/design/island_generation_complete_roadmap.md#post-sprint-3-roadmap-revision-vnext-2026-04-20)
+> for the full rationale; 3.4 is documented in the
+> [Sprint 3.4 plan doc](docs/design/sprints/sprint_3_4_module_boundary_cleanup.md)
+> (which sharpens roadmap §Sprint 3.4's wording).
 
-1. **Sprint 3.5** — Hex Surface Readability (*representation*).
-   **Active-next** — Sprint 3.1 closed 2026-04-22 DONE_WITH_CONCERNS
-   on §10 G4/G5/G7; Sprint 3.5.D (Hex Dominant Surface Contract)
+1. **Sprint 3.4** — Module Boundary Cleanup (*structural*).
+   **Active-next** — interstitial structural-refactor sprint between
+   Sprint 3.1 close-out and Sprint 3.5. Splits three high-friction
+   single files (`crates/app/src/runtime.rs` 1378 LOC →
+   `runtime/{events,frame,regen,view_mode,tabs}.rs`;
+   `crates/core/src/validation.rs` 2282 LOC →
+   `validation/{hydro,climate,erosion,biome,hex}.rs`; optionally
+   `crates/render/src/overlay.rs` 978 LOC →
+   `overlay/{catalog,range,resolve}.rs` with invariant #8 repointed
+   to `resolve.rs`) and lays down `tests/common/mod.rs`-pattern
+   shared integration-test fixtures. **Zero behavioural change**:
+   four `--headless` baselines bit-identical modulo AD8 whitelist;
+   `cargo test --workspace` count strictly equal to pre-3.4 snapshot
+   (527 passing / 8 ignored). `core` crate stays clean per CLAUDE.md
+   invariants #1 / #2; crate DAG / `WorldState` layout / `StageId` /
+   pipeline order all untouched. Plan doc:
+   `docs/design/sprints/sprint_3_4_module_boundary_cleanup.md`.
+2. **Sprint 3.5** — Hex Surface Readability (*representation*).
+   Follows 3.4 close-out. Sprint 3.5.D (Hex Dominant Surface Contract)
    inherits the G5 Cliff-coverage and G7 CloudForest/CoastalScrub
-   residuals. Sprint 3.1's one material win — the LFPM v3
-   precipitation collapse fix — un-blocks 3.5.D's biome-suitability
-   rework against a meaningful `mean_precipitation` / `fog_water_input`
-   signal rather than the pre-3.1 numerical floor.
+   residuals from Sprint 3.1's DONE_WITH_CONCERNS closure. Sprint
+   3.1's one material win — the LFPM v3 precipitation collapse fix —
+   un-blocks 3.5.D's biome-suitability rework against a meaningful
+   `mean_precipitation` / `fog_water_input` signal rather than the
+   pre-3.1 numerical floor.
    First sprint where hex becomes a readable surface language rather
    than a debug slice. True hex rendering (`HexSurfaceRenderer` + 6-edge
    geometry), Hex River Grammar v1 (continuous polyline crossings),
    Hex Coast Grammar v1 (5-class readable shoreline cues consuming
    Sprint 3's coast v2), Hex Dominant Surface Contract (biome / elev /
    coast / river = base read), Interaction Readability Pass (hex pick
-   + info panel). Depends on Sprint 3 closing first.
+   + info panel).
    Doc placeholder: `docs/design/sprints/sprint_3_5_hex_surface_readability.md`
-   (TBD — written when Sprint 3 closes).
-2. **Sprint 4** — Compute / CLI / Validation Productization (*infra*).
+   (TBD — written when Sprint 3.4 closes).
+3. **Sprint 4** — Compute / CLI / Validation Productization (*infra*).
    GPU parity for hot loops + `island-gen` CLI binary + benchmark
    matrix + artifact system maturity. Consumes Sprint 3's CPU
    reference + 10-shot baseline + Sprint 3.1's LFPM v3 retune;
@@ -525,12 +557,12 @@ natural fits for the next sprint's work, not Sprint 2 blockers.
    the §10 G4 residual forwarded from Sprint 3.1.A. Does NOT rework
    hex surface or produce demo visuals.
    Doc placeholder: `docs/design/sprints/sprint_4_gpu_compute.md` (TBD).
-3. **Sprint 4.5** — Beauty / Demo / Shareability (*presentation*).
+4. **Sprint 4.5** — Beauty / Demo / Shareability (*presentation*).
    Canonical look lock + hero seed pack + demo artifact pack +
    README / release-asset pass. First sprint where the project
    acquires star-signal-grade visuals.
    Doc placeholder: `docs/design/sprints/sprint_4_5_beauty_demo.md` (TBD).
-4. **Sprint 5 (S2 / S3 / S4)** — Semantic Layer Completion.
+5. **Sprint 5 (S2 / S3 / S4)** — Semantic Layer Completion.
    S2 settlement + roads + accessibility, S3 WFC / rule-based
    semantic patches, S4 optional shipping tail (web subset +
    interaction refinement). No longer carries hex-UX-completion
@@ -1511,14 +1543,16 @@ starts at Sprint 3. Per-sprint plan docs are written **one at a time**
 after the previous sprint closes — the roadmap carries the forward-
 looking vision until each sprint's doc gets authored.
 
-> **Roadmap vNext (2026-04-20):** post-Sprint-3 sequence is now
-> `3 (science) → 3.5 (hex readability) → 4 (infra) → 4.5 (beauty/demo) → 5 (semantic completion)`.
+> **Roadmap vNext (2026-04-20, with 2026-04-22 3.4 insertion):**
+> post-Sprint-3 sequence is now
+> `3 (science) → 3.1 (calibration) → 3.4 (structural cleanup) → 3.5 (hex readability) → 4 (infra) → 4.5 (beauty/demo) → 5 (semantic completion)`.
 > Each sprint has a single thesis and its own out-of-scope list.
 > See [roadmap §Post-Sprint-3 Roadmap Revision](docs/design/island_generation_complete_roadmap.md#post-sprint-3-roadmap-revision-vnext-2026-04-20).
 
 | Sprint | Type | Focus | Source of truth |
 |---|---|---|---|
 | 3 | science | Sediment v1 + SPACE-inspired dual-equation erosion with `K·g(hs)` modulation (unlocks Sprint 2's deferred "max_z drop 10-30 %" + CoastType Cliff bin), LFPM v3 precipitation, cloud-forest inversion, Coast v2 (fetch integral + LavaDelta). Sprint 2.6 delivered the interactive tuning surface that makes Sprint 3's Pareto-probe in-window work pleasant. **DualSeason demoted to backlog per vNext.** | Roadmap §Sprint 3 |
+| 3.4 | structural | Module boundary cleanup before Sprint 3.5 / 4 expand the same files further. Splits `crates/app/src/runtime.rs` (1378 LOC) → `runtime/`, `crates/core/src/validation.rs` (2282 LOC) → `validation/{hydro,climate,erosion,biome,hex}.rs`, optionally `crates/render/src/overlay.rs` (978 LOC) → `overlay/{catalog,range,resolve}.rs` (with invariant #8 repointed to `resolve.rs`); introduces `tests/common/mod.rs` shared fixtures. Zero behavioural change, four baselines bit-identical modulo AD8 whitelist. | [Sprint 3.4 plan doc](docs/design/sprints/sprint_3_4_module_boundary_cleanup.md) (sharpens roadmap §Sprint 3.4) |
 | 3.5 | representation | True hex surface rendering (`HexSurfaceRenderer` + 6-edge geometry replacing the 4-edge debug box), Hex River Grammar v1 (continuous polyline), Hex Coast Grammar v1 (5-class readable shoreline cues), Hex Dominant Surface Contract (biome/elev/coast/river as base read), Interaction Readability Pass (hex pick + info panel). First sprint where hex becomes a readable final surface, not a debug slice. | Roadmap §Sprint 3.5 |
 | 4 | infra | `crates/gpu/` + `ComputeBackend` refactor, GPU passes (hillslope / rainfall-proxy-v2 / hex-projection + stream-power / flow-accumulation), `island-gen` CLI productization, CPU/GPU parity harness, artifact-system maturity (index + named experiment packs + one-command baseline cascade-regen). Does NOT do first-pass beauty, semantic layer, or re-shape hex readability. | Roadmap §Sprint 4 |
 | 4.5 | presentation | Canonical base-look lock (sky / fog / sea tonality, terrain shading polish, day-light rig), Water/Coast Presentation Pass, Depth & Framing Pass, Hero Seed Pack (6–10 curated worlds), Demo Artifact Pack (polished screenshots + GIFs + before/after strip), README / Demo Story Pass. First sprint where screenshots alone sell the repo. | Roadmap §Sprint 4.5 |
