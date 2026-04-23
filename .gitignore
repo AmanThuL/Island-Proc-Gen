@@ -23,12 +23,14 @@ cobertura.xml
 # those artefacts must NOT be committed — compare reads summary.ron hashes.
 /crates/data/golden/headless/**/*.png
 
-# ─── Obsidian vault symlink (local editing convenience) ───────────────
-# docs/design is a symlink into the author's personal Obsidian vault —
-# absolute paths that won't resolve on any other machine. Sprint plans
-# and design docs live outside the repo for now. docs/architecture was
-# previously symlinked too but is now a real tracked directory.
+# ─── Obsidian vault symlinks (local editing convenience) ──────────────
+# docs/design and docs/history are symlinks into the author's personal
+# Obsidian vault — absolute paths that won't resolve on any other machine.
+# Sprint plans, design docs, and archived close-out history live outside
+# the repo for now. docs/architecture was previously symlinked too but is
+# now a real tracked directory.
 /docs/design
+/docs/history
 
 # ─── Logs ─────────────────────────────────────────────────────────────
 *.log
