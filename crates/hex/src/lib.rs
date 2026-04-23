@@ -8,6 +8,8 @@
 //! provides pure math helpers and the builder function that
 //! constructs a `HexGrid` from a sim-resolution domain.
 
+pub mod geometry;
+
 use island_core::field::ScalarField2D;
 use island_core::world::{HexGrid, HexLayout};
 
