@@ -8,9 +8,20 @@ use sim::invalidate_from;
 
 use super::Runtime;
 use super::tabs::AppTabViewer;
-use super::view_mode::ViewMode;
+use super::view_mode::{RenderLayer, ViewMode, render_stack_for};
 
 impl Runtime {
+    /// Refresh the overlay texture bakes + rebuild the hex-surface instance
+    /// buffer after a slider re-run or regen. Shared by the three slider
+    /// branches (`wind_dir_changed`, `erosion`/`space`, `climate`) so
+    /// derived-view updates land in lockstep instead of drifting across
+    /// three copy-paste call sites. Future slider additions also hook here.
+    fn refresh_derived_views(&mut self) {
+        self.overlay
+            .refresh(&self.gpu, &self.world, &self.overlay_registry);
+        self.rebuild_hex_surface_instances();
+    }
+
     pub(super) fn tick(&mut self) {
         // FPS (exponential moving average)
         let now = Instant::now();
@@ -39,6 +50,29 @@ impl Runtime {
         let vp = self.camera.view_projection();
         let eye = self.camera.eye();
         self.terrain.update_view(&self.gpu.queue, vp, eye);
+
+        // ── Hex-surface uniform update (per-frame, Fix E) ─────────────────────
+        // Compute the world-space hex_size from the sim-space value in hex_grid.
+        // If hex_grid is not yet populated, fall back to 1.0 (the renderer's
+        // initial default); the 0-instance draw in HexSurface is a no-op.
+        let world_hex_size = self
+            .world
+            .derived
+            .hex_grid
+            .as_ref()
+            .map(|g| {
+                g.hex_size
+                    * hex::geometry::sim_to_world_scale(
+                        self.world.resolution.sim_width,
+                        self.world_xz_extent,
+                    )
+            })
+            .unwrap_or(1.0);
+        self.hex_surface.update_view_projection(
+            &self.gpu.queue,
+            &vp.to_cols_array_2d(),
+            world_hex_size,
+        );
 
         // ── Acquire surface ───────────────────────────────────────────────────
         //
@@ -72,14 +106,18 @@ impl Runtime {
                 label: Some("frame_encoder"),
             });
 
-        // ── Terrain pass — renders into the offscreen viewport texture ────────
-        // B.1: colour target is viewport_tex.color_view() (not the window
-        // surface). egui will composite the result via egui::Image in the
-        // CentralPanel below. The clear colour is the fallback background
-        // visible under the sky renderer when sky doesn't cover the full quad.
+        // ── 3D scene pass — renders into the offscreen viewport texture ───────
+        // Colour target is viewport_tex.color_view() (not the window surface).
+        // egui composites the result via egui::Image in the CentralPanel below.
+        // The clear colour is the fallback background visible under the sky
+        // renderer when sky doesn't cover the full quad.
+        //
+        // The render layer sequence is determined by `render_stack_for(view_mode)`
+        // (Sprint 3.5.A c8) so the same pure function controls both the interactive
+        // and the headless executor paths (plan §5 tier-1 parity gate).
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("terrain_pass"),
+                label: Some("scene_pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: self.viewport_tex.color_view(),
                     resolve_target: None,
@@ -106,10 +144,17 @@ impl Runtime {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            self.sky.draw(&mut rpass);
-            self.terrain.draw(&mut rpass);
-            self.overlay
-                .draw(&mut rpass, &self.overlay_registry, &self.gpu.queue);
+            for layer in render_stack_for(self.view_mode) {
+                match layer {
+                    RenderLayer::Sky => self.sky.draw(&mut rpass),
+                    RenderLayer::Terrain => self.terrain.draw(&mut rpass),
+                    RenderLayer::HexSurface => self.hex_surface.draw(&mut rpass),
+                    RenderLayer::Overlay => {
+                        self.overlay
+                            .draw(&mut rpass, &self.overlay_registry, &self.gpu.queue);
+                    }
+                }
+            }
         }
 
         // ── egui pass ─────────────────────────────────────────────────────────
@@ -195,8 +240,7 @@ impl Runtime {
             {
                 warn!("slider re-run failed: {err}");
             } else {
-                self.overlay
-                    .refresh(&self.gpu, &self.world, &self.overlay_registry);
+                self.refresh_derived_views();
             }
         }
 
@@ -216,8 +260,7 @@ impl Runtime {
             {
                 warn!("erosion/space slider re-run failed: {err}");
             } else {
-                self.overlay
-                    .refresh(&self.gpu, &self.world, &self.overlay_registry);
+                self.refresh_derived_views();
             }
         }
 
@@ -231,8 +274,7 @@ impl Runtime {
             {
                 warn!("climate slider re-run failed: {err}");
             } else {
-                self.overlay
-                    .refresh(&self.gpu, &self.world, &self.overlay_registry);
+                self.refresh_derived_views();
             }
         }
 

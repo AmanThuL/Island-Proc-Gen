@@ -17,6 +17,7 @@ path = "src/main.rs"
 island_core        = { path = "../core", package = "core" }
 data               = { path = "../data" }
 gpu                = { path = "../gpu" }
+hex                = { path = "../hex" }
 render             = { path = "../render" }
 sim                = { path = "../sim" }
 ui                 = { path = "../ui" }

@@ -26,15 +26,17 @@ use winit::{
 };
 
 use gpu::GpuContext;
+use hex::geometry::{default_grid_origin, offset_to_pixel, sim_to_world_scale};
 use island_core::{
     pipeline::SimulationPipeline,
     preset::IslandArchetypePreset,
     seed::Seed,
     world::{Resolution, WorldState},
 };
+use render::HexInstance;
 use render::{
-    DEFAULT_WORLD_XZ_EXTENT, OverlayRenderer, SkyRenderer, TerrainRenderer, ViewportTextureSet,
-    overlay::OverlayRegistry,
+    DEFAULT_WORLD_XZ_EXTENT, HexSurfaceRenderer, OverlayRenderer, SkyRenderer, TerrainRenderer,
+    ViewportTextureSet, overlay::OverlayRegistry,
 };
 use sim::default_pipeline;
 
@@ -48,7 +50,7 @@ pub(super) mod regen;
 pub(super) mod tabs;
 pub(super) mod view_mode;
 
-pub use view_mode::ViewMode;
+pub use view_mode::{RenderLayer, ViewMode, render_stack_for};
 
 // ── Startup defaults (edit here to change initial window / camera state) ──────
 
@@ -76,6 +78,11 @@ pub struct Runtime {
     pub(super) terrain: TerrainRenderer,
     pub(super) overlay: OverlayRenderer,
     pub(super) sky: SkyRenderer,
+    /// Sprint 3.5.A c8: hex-surface fill renderer.  Constructed alongside
+    /// terrain/overlay/sky; instance buffer is rebuilt by
+    /// `rebuild_hex_surface_instances` after each pipeline run that updates
+    /// `derived.hex_grid` / `derived.hex_attrs`.
+    pub(super) hex_surface: HexSurfaceRenderer,
 
     // egui
     pub(super) egui_ctx: egui::Context,
@@ -228,6 +235,18 @@ impl Runtime {
         // ── Sky renderer (depends only on gpu) ───────────────────────────────
         let sky = SkyRenderer::new(&gpu);
 
+        // ── Hex-surface renderer (c8) ─────────────────────────────────────────
+        // Constructed with the same format/depth targets as terrain so both
+        // renderers can share the same render pass in frame.rs.
+        let mut hex_surface =
+            HexSurfaceRenderer::new(&gpu.device, gpu.surface_format, gpu.depth_format);
+
+        // Populate the initial instance buffer from the freshly-run pipeline.
+        // If hex_grid / hex_attrs are not yet populated (partial pipeline),
+        // upload_instances with an empty slice — draw is a no-op for 0 instances.
+        let initial_instances = build_hex_instances(&world, world_xz_extent);
+        hex_surface.upload_instances(&gpu.device, &gpu.queue, &initial_instances);
+
         // Centre the camera on the island mesh ([0, world_xz_extent] on XZ, Y=height).
         camera.target = glam::Vec3::new(
             world_xz_extent * 0.5,
@@ -267,6 +286,7 @@ impl Runtime {
             terrain,
             overlay,
             sky,
+            hex_surface,
             egui_ctx,
             egui_state,
             egui_renderer,
@@ -385,6 +405,71 @@ fn load_preset() -> IslandArchetypePreset {
             }
         }
     }
+}
+
+// ── Hex-surface instance builder (c8) ────────────────────────────────────────
+
+/// Build the per-instance GPU data for the hex surface renderer.
+///
+/// Reads `world.derived.hex_grid` and `world.derived.hex_attrs`.  If either
+/// is `None` (pipeline not yet run, or partial run), returns an empty `Vec`
+/// — a 0-instance upload makes `HexSurfaceRenderer::draw` a no-op.
+///
+/// Positions are converted from sim space to world space via
+/// [`sim_to_world_scale`] so hexes overlay the terrain mesh correctly.
+/// The biome → fill colour uses the same `PaletteId::Categorical` +
+/// `ValueRange::Fixed(0.0, 7.0)` mapping as the `hex_aggregated` overlay
+/// descriptor in `OverlayRegistry::sprint_3_defaults` (catalog.rs line ~141).
+pub(super) fn build_hex_instances(world: &WorldState, world_extent: f32) -> Vec<HexInstance> {
+    let (hex_grid, hex_attrs) = match (
+        world.derived.hex_grid.as_ref(),
+        world.derived.hex_attrs.as_ref(),
+    ) {
+        (Some(g), Some(a)) => (g, a),
+        _ => return Vec::new(),
+    };
+
+    let sim_width = world.resolution.sim_width;
+    let scale = sim_to_world_scale(sim_width, world_extent);
+    let origin = default_grid_origin(hex_grid.hex_size);
+
+    let total = (hex_grid.cols * hex_grid.rows) as usize;
+    let mut instances = Vec::with_capacity(total);
+
+    for row in 0..hex_grid.rows {
+        for col in 0..hex_grid.cols {
+            let attr = hex_attrs.get(col, row);
+
+            // Sim-space centre → world-space centre.
+            let (sim_cx, sim_cy) = offset_to_pixel(col, row, hex_grid.hex_size, origin);
+            let world_cx = sim_cx * scale;
+            let world_cy = sim_cy * scale;
+
+            // Biome → fill colour via the Categorical palette at t = biome_index / 7.0,
+            // matching the hex_aggregated overlay descriptor (PaletteId::Categorical,
+            // ValueRange::Fixed(0.0, 7.0)).  See crates/render/src/overlay/catalog.rs.
+            let biome_index = attr.dominant_biome as u8;
+            let t = biome_index as f32 / 7.0;
+            let [r, g, b, a] = render::palette_sample_f32(render::PaletteId::Categorical, t);
+            let fill_color_rgba = HexInstance::pack_rgba(r, g, b, a);
+
+            // river_mask_bits: low byte = 1 if any river crosses this hex.
+            let river_mask_bits = u32::from(attr.has_river);
+
+            // coast_class_bits: 0 = Inland sentinel; 3.5.C DD4 will populate this.
+            let coast_class_bits = 0u32;
+
+            instances.push(HexInstance {
+                center_xy: [world_cx, world_cy],
+                elevation: attr.elevation.clamp(0.0, 1.0),
+                fill_color_rgba,
+                coast_class_bits,
+                river_mask_bits,
+                _pad: [0u32; 2],
+            });
+        }
+    }
+    instances
 }
 
 // ── ViewMode unit tests ───────────────────────────────────────────────────────

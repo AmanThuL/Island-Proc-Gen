@@ -189,15 +189,67 @@ pub fn hex_polygon_vertices(hex_center: (f32, f32), hex_size: f32) -> [(f32, f32
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Sim-space / world-space bridge (c8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Sim-space → world-space scale factor for DD2 hex grids.
+///
+/// The DD2 hex kernel in `build_hex_grid` produces `HexGrid.hex_size` and
+/// `hex_id_of_cell` positions in **sim-resolution units** (one unit = one
+/// sim cell). Terrain rendering uses **world-space units** `[0, extent]`
+/// (see `crates/render/src/terrain.rs::build_terrain_mesh`).
+///
+/// This helper returns the multiplicative scale factor that converts a
+/// sim-space coordinate (centre, size, distance) to its world-space
+/// equivalent, matching terrain's per-cell step **exactly**:
+/// `world = sim * (extent / (sim_width - 1))`.
+///
+/// Rationale for `(sim_width - 1)` over `sim_width`:
+/// terrain.rs's mesh builder places vertex at sim index 0 at world x=0 and
+/// vertex at sim index `sim_width - 1` at world x=extent — so per-cell step
+/// = `extent / (sim_width - 1)`. Matching this exactly gives hex edges that
+/// align with terrain cell corners within the rendered region. Using
+/// `extent / sim_width` would produce a ~0.8% (~10 px at 1280w) systematic
+/// rim offset between hex overlay and terrain mesh.
+///
+/// Edge case: when `sim_width <= 1` the formula degenerates; we clamp the
+/// divisor to 1 to avoid division by zero, which is only reachable on
+/// degenerate 1×1 test grids.
+///
+/// Callers that position hex instances in world space should apply this
+/// to both [`offset_to_pixel`] results (hex centres) AND to `hex_size`
+/// before passing to `HexSurfaceRenderer::update_view_projection`.
+///
+/// # Example
+///
+/// ```
+/// use hex::geometry::sim_to_world_scale;
+///
+/// // 128² sim domain, 5.0 world extent (DEFAULT_WORLD_XZ_EXTENT).
+/// // Matches terrain's 1/(W-1) cell step exactly.
+/// let scale = sim_to_world_scale(128, 5.0);
+/// assert!((scale - 5.0 / 127.0).abs() < 1e-6);
+/// ```
+#[inline]
+pub fn sim_to_world_scale(sim_width: u32, world_extent: f32) -> f32 {
+    let denom = (sim_width.max(2) - 1) as f32;
+    world_extent / denom
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Offset-coord ↔ pixel conversion (DD2 odd-r-offset convention)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The canonical origin for the DD2 sim-aligned hex grid.
+/// The canonical origin for the DD2 sim-aligned hex grid in **sim space**.
 ///
-/// Returns `(0.5 * hex_width, 0.5 * row_spacing)`, which is the world-space
+/// Returns `(0.5 * hex_width, 0.5 * row_spacing)`, which is the **sim-space**
 /// centre of hex `(col=0, row=0)` as placed by `build_hex_grid`. Pass this
 /// as the `origin` argument to [`offset_to_pixel`] and [`pixel_to_offset`]
 /// to work in the same coordinate frame as the aggregation kernel.
+///
+/// The returned coordinates are in **sim-space units** (one unit = one sim
+/// cell). Multiply by [`sim_to_world_scale`] to convert to world-space
+/// units `[0, extent]`.
 ///
 /// ## Derivation
 ///
@@ -214,8 +266,8 @@ pub fn default_grid_origin(hex_size: f32) -> (f32, f32) {
     (0.5 * hex_width, 0.5 * row_spacing)
 }
 
-/// Convert an offset coord `(col, row)` to the pixel centre of its hex under
-/// the DD2 odd-r-offset convention used by `build_hex_grid`.
+/// Convert an offset coord `(col, row)` to the **sim-space** pixel centre of
+/// its hex under the DD2 odd-r-offset convention used by `build_hex_grid`.
 ///
 /// Odd rows (`row & 1 == 1`) are shifted horizontally by `+0.5 * hex_width`
 /// relative to even rows, matching `build_hex_grid`'s Voronoi construction.
@@ -223,6 +275,11 @@ pub fn default_grid_origin(hex_size: f32) -> (f32, f32) {
 /// Unlike [`axial_to_pixel`] (which puts axial origin `(0, 0)` at pixel
 /// `(0, 0)`), this function places hex `(col=0, row=0)` at `origin`.  For
 /// the DD2 sim-aligned grid, pass `default_grid_origin(hex_size)`.
+///
+/// The returned coordinates are in **sim-space units** (one unit = one sim
+/// cell). To convert to world space — the `[0, extent]` coordinate frame used
+/// by the terrain renderer — multiply both components by
+/// [`sim_to_world_scale`]`(sim_width, extent)`.
 ///
 /// ## Formula (matches `build_hex_grid`)
 ///
@@ -235,8 +292,9 @@ pub fn default_grid_origin(hex_size: f32) -> (f32, f32) {
 /// ```
 ///
 /// This is the offset-coord counterpart to [`axial_to_pixel`]; use it whenever
-/// you need world-space positions from DD2-produced `(col, row)` indices
-/// (rendering, hex-pick, per-instance buffer population).
+/// you need sim-space positions from DD2-produced `(col, row)` indices.
+/// For rendering and per-instance buffer population, apply the
+/// [`sim_to_world_scale`] factor after this call.
 #[inline]
 pub fn offset_to_pixel(col: u32, row: u32, hex_size: f32, origin: (f32, f32)) -> (f32, f32) {
     let hex_width = hex_size * SQRT_3;
@@ -247,7 +305,13 @@ pub fn offset_to_pixel(col: u32, row: u32, hex_size: f32, origin: (f32, f32)) ->
     (px, py)
 }
 
-/// Convert a pixel position to the DD2-offset `(col, row)` of the nearest hex.
+/// Convert a **sim-space** pixel position to the DD2-offset `(col, row)` of
+/// the nearest hex.
+///
+/// The `(px, py)` argument must be in the same **sim-space units** (one unit =
+/// one sim cell) as the values produced by [`offset_to_pixel`]. If you have a
+/// world-space point from the terrain renderer, divide by
+/// [`sim_to_world_scale`]`(sim_width, extent)` first.
 ///
 /// Returns `None` when the nearest hex falls outside `[0, cols) × [0, rows)`;
 /// there is no silent out-of-range clamping.
@@ -567,6 +631,38 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── sim_to_world_scale ────────────────────────────────────────────────────
+
+    /// For `sim_width=128` and `world_extent=5.0`, `sim_to_world_scale` must
+    /// return exactly `5.0 / 128 = 0.0390625` (within floating-point tolerance).
+    ///
+    /// This locks the c8 bridge formula: `world = sim * (extent / (sim_width - 1))`,
+    /// matching terrain.rs's per-cell step exactly (vertices at sim 0 and sim W-1
+    /// map to world 0 and world extent, so per-step = extent/(W-1)).
+    #[test]
+    fn sim_to_world_scale_matches_terrain_extent_ratio() {
+        let scale = sim_to_world_scale(128, 5.0);
+        let expected = 5.0_f32 / 127.0_f32;
+        assert!(
+            (scale - expected).abs() < 1e-6,
+            "sim_to_world_scale(128, 5.0) = {scale}, expected {expected} \
+             (terrain uses 1/(W-1) cell step; scale formula must match)"
+        );
+    }
+
+    /// Degenerate sim_width ≤ 1 must not panic on divide-by-zero.
+    #[test]
+    fn sim_to_world_scale_clamps_degenerate_domain() {
+        // Values here are not physically meaningful — we just confirm no panic
+        // and that the clamp kicks in via the `.max(2) - 1` guard.
+        let s0 = sim_to_world_scale(0, 4.0);
+        let s1 = sim_to_world_scale(1, 4.0);
+        assert!(s0.is_finite());
+        assert!(s1.is_finite());
+        // Both clamp to the same divisor = 1.
+        assert!((s0 - s1).abs() < 1e-6);
     }
 
     /// Pixels far outside the grid bounds must return `None`.

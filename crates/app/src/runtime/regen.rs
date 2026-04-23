@@ -4,6 +4,24 @@ use sim::{StageId, invalidate_from};
 use super::Runtime;
 
 impl Runtime {
+    /// Rebuild the hex-surface instance buffer from `world.derived.hex_grid`
+    /// and `world.derived.hex_attrs`.
+    ///
+    /// Called after any stage run that changes those fields — full pipeline
+    /// runs (`regenerate_from_world_panel`), sea-level fast paths
+    /// (`apply_sea_level_fast_path`), and slider re-runs in `frame.rs`.
+    ///
+    /// Positions/sizes are converted from sim space to world space via
+    /// [`hex::geometry::sim_to_world_scale`] so hexes overlay the terrain
+    /// mesh correctly. If either `hex_grid` or `hex_attrs` is `None`
+    /// (partial pipeline run), an empty instance buffer is uploaded —
+    /// the draw call becomes a no-op.
+    pub(super) fn rebuild_hex_surface_instances(&mut self) {
+        let instances = super::build_hex_instances(&self.world, self.world_xz_extent);
+        self.hex_surface
+            .upload_instances(&self.gpu.device, &self.gpu.queue, &instances);
+    }
+
     /// Full world rebuild triggered by the `Regenerate` button.
     ///
     /// Reads the current `world_panel` state (preset name, seed, three slider
@@ -59,6 +77,9 @@ impl Runtime {
         self.world_panel.max_relief = self.preset.max_relief;
         self.world_panel.sea_level = self.preset.sea_level;
 
+        // 8. Rebuild hex-surface instance buffer from the new derived caches.
+        self.rebuild_hex_surface_instances();
+
         Ok(())
     }
 
@@ -84,6 +105,10 @@ impl Runtime {
 
         // 5. Move camera target Y to the new water line.
         self.camera.target.y = new_sea_level;
+
+        // 6. Rebuild hex-surface instances — sea level change re-runs Coastal +
+        //    downstream, which updates hex_attrs.elevation.
+        self.rebuild_hex_surface_instances();
 
         Ok(())
     }
@@ -119,5 +144,9 @@ impl Runtime {
             glam::Vec3::new(new_extent * 0.5, self.preset.sea_level, new_extent * 0.5);
         let scale = new_extent / old_extent.max(f32::EPSILON);
         self.camera.distance *= scale;
+
+        // Rebuild hex instances at the new world extent — the sim_to_world_scale
+        // factor changes with extent even though hex_attrs are unchanged.
+        self.rebuild_hex_surface_instances();
     }
 }
