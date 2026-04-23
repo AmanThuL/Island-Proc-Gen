@@ -38,7 +38,9 @@ pub use erosion::{
     erosion_no_excessive_sea_crossing, erosion_no_explosion, sediment_bounded,
 };
 
-pub use hex::{hex_attrs_present, hex_river_crossing_edges_in_range};
+pub use hex::{
+    hex_attrs_present, hex_river_crossing_edges_in_range, river_width_matches_crossing_presence,
+};
 
 pub use hydro::{
     accumulation_monotone, basin_partition_dag, basin_partition_post_erosion_well_formed,
@@ -118,6 +120,17 @@ pub enum ValidationError {
 
     #[error("hex attrs: shape mismatch — cols={cols} rows={rows} but attrs.len()={got}")]
     HexAttrsShapeMismatch { cols: u32, rows: u32, got: usize },
+
+    /// DD3 (Sprint 3.5.B c3): `river_width[hex_id].is_some()` does not match
+    /// `river_crossing[hex_id].is_some()`.
+    #[error(
+        "river_width_matches_crossing_presence: hex_id {hex_id} has_crossing={has_crossing} but has_width={has_width}"
+    )]
+    HexRiverWidthCrossingMismatch {
+        hex_id: usize,
+        has_crossing: bool,
+        has_width: bool,
+    },
 
     #[error("validation: missing precondition field '{field}' (stage must have run first)")]
     MissingPrecondition { field: &'static str },

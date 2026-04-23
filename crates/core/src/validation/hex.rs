@@ -69,6 +69,37 @@ pub fn hex_river_crossing_edges_in_range(world: &WorldState) -> Result<(), Valid
     Ok(())
 }
 
+/// DD3 (Sprint 3.5.B c3): `river_width[i].is_some() == river_crossing[i].is_some()`
+/// for every hex.
+///
+/// Returns `Ok(())` when `hex_debug` is `None` (skip-if-missing). Also skips
+/// when `river_width` is empty (pre-c3 pipelines that populated `river_crossing`
+/// before this field existed).
+pub fn river_width_matches_crossing_presence(world: &WorldState) -> Result<(), ValidationError> {
+    let Some(dbg) = world.derived.hex_debug.as_ref() else {
+        return Ok(());
+    };
+    // Skip if river_width was not populated (pre-c3 compatibility).
+    if dbg.river_width.is_empty() {
+        return Ok(());
+    }
+    for (hex_id, (crossing_opt, width_opt)) in dbg
+        .river_crossing
+        .iter()
+        .zip(dbg.river_width.iter())
+        .enumerate()
+    {
+        if crossing_opt.is_some() != width_opt.is_some() {
+            return Err(ValidationError::HexRiverWidthCrossingMismatch {
+                hex_id,
+                has_crossing: crossing_opt.is_some(),
+                has_width: width_opt.is_some(),
+            });
+        }
+    }
+    Ok(())
+}
+
 // ─── tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -79,7 +110,7 @@ mod tests {
     use crate::test_support::test_preset;
     use crate::world::{
         BakedSnapshot, CoastMask, HexAttributeField, HexAttributes, HexDebugAttributes,
-        HexRiverCrossing, Resolution, WorldState,
+        HexRiverCrossing, Resolution, RiverWidth, WorldState,
     };
 
     /// Build a minimal CoastMask from raw Vec<u8> data.
@@ -180,10 +211,12 @@ mod tests {
     /// `river_crossing` vector. 4×4 hex grid / 4×4 sim domain.
     fn world_with_river_crossings(crossings: Vec<Option<HexRiverCrossing>>) -> WorldState {
         let mut world = minimal_world_for_1b(4, 4);
+        let n = crossings.len();
         world.derived.hex_debug = Some(HexDebugAttributes {
-            slope_variance: vec![0.0; crossings.len()],
-            accessibility_cost: vec![1.0; crossings.len()],
+            slope_variance: vec![0.0; n],
+            accessibility_cost: vec![1.0; n],
             river_crossing: crossings,
+            river_width: vec![None; n],
         });
         world
     }
@@ -241,5 +274,72 @@ mod tests {
         // hex_debug is None — validator must be a no-op.
         assert!(world.derived.hex_debug.is_none());
         assert!(hex_river_crossing_edges_in_range(&world).is_ok());
+    }
+
+    // ── river_width_matches_crossing_presence tests (DD3, Sprint 3.5.B c3) ──────
+
+    /// Build a world where `river_crossing[i]` and `river_width[i]` are both
+    /// provided or both absent for every hex — must pass.
+    #[test]
+    fn river_width_matches_crossing_presence_happy_path() {
+        let crossings = vec![
+            None,
+            Some(HexRiverCrossing {
+                entry_edge: 0,
+                exit_edge: 3,
+            }),
+            None,
+        ];
+        let n = crossings.len();
+        let mut world = minimal_world_for_1b(4, 4);
+        world.derived.hex_debug = Some(HexDebugAttributes {
+            slope_variance: vec![0.0; n],
+            accessibility_cost: vec![1.0; n],
+            river_crossing: crossings,
+            river_width: vec![None, Some(RiverWidth::Small), None],
+        });
+        assert!(river_width_matches_crossing_presence(&world).is_ok());
+    }
+
+    /// When `river_crossing[i]` is `Some` but `river_width[i]` is `None`,
+    /// the validator must return an error.
+    #[test]
+    fn river_width_matches_crossing_presence_detects_crossing_without_width() {
+        let crossings = vec![
+            None,
+            Some(HexRiverCrossing {
+                entry_edge: 1,
+                exit_edge: 4,
+            }),
+        ];
+        let n = crossings.len();
+        let mut world = minimal_world_for_1b(4, 4);
+        world.derived.hex_debug = Some(HexDebugAttributes {
+            slope_variance: vec![0.0; n],
+            accessibility_cost: vec![1.0; n],
+            river_crossing: crossings,
+            // hex_id 1 has crossing but no width — mismatch.
+            river_width: vec![None, None],
+        });
+        let err = river_width_matches_crossing_presence(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::HexRiverWidthCrossingMismatch {
+                    hex_id: 1,
+                    has_crossing: true,
+                    has_width: false,
+                }
+            ),
+            "expected HexRiverWidthCrossingMismatch at hex_id 1, got {err:?}"
+        );
+    }
+
+    /// When `hex_debug` is `None`, the validator must return `Ok(())`.
+    #[test]
+    fn river_width_matches_crossing_presence_skip_if_missing() {
+        let world = minimal_world_for_1b(4, 4);
+        assert!(world.derived.hex_debug.is_none());
+        assert!(river_width_matches_crossing_presence(&world).is_ok());
     }
 }

@@ -20,7 +20,7 @@ use island_core::field::MaskField2D;
 use island_core::pipeline::SimulationStage;
 use island_core::world::{
     BiomeType, CoastType, HexAttributeField, HexAttributes, HexDebugAttributes, HexRiverCrossing,
-    WorldState,
+    RiverWidth, WorldState,
 };
 
 /// Default hex grid resolution per DD8: `64 × 64` flat-top.
@@ -33,6 +33,14 @@ pub(crate) const DEFAULT_HEX_ROWS: u32 = 64;
 pub const W_SLOPE: f32 = 3.0;
 pub const W_RIVER: f32 = 2.0;
 pub const W_CLIFF: f32 = 5.0;
+
+/// DD3 width-bucket thresholds (global v1). Tuned against hero-seed
+/// empirical flow_accumulation distributions; see sprint doc §2 DD3.
+/// A hex with `max(flow_accumulation) < RIVER_WIDTH_SMALL_MAX` is Small;
+/// values ∈ [RIVER_WIDTH_SMALL_MAX, RIVER_WIDTH_MEDIUM_MAX) are Medium;
+/// values ≥ RIVER_WIDTH_MEDIUM_MAX are Main.
+const RIVER_WIDTH_SMALL_MAX: f32 = 50.0;
+const RIVER_WIDTH_MEDIUM_MAX: f32 = 500.0;
 
 /// DD8: populate `world.derived.{hex_grid, hex_attrs}`.
 pub struct HexProjectionStage;
@@ -134,6 +142,8 @@ impl SimulationStage for HexProjectionStage {
         // Stored as (ix, iy, accumulation_value); None until the first river cell is seen.
         let mut river_entry: Vec<Option<(u32, u32, f32)>> = vec![None; hex_count];
         let mut river_exit: Vec<Option<(u32, u32, f32)>> = vec![None; hex_count];
+        // DD3 width bucketing: max accumulation over all river cells in each hex.
+        let mut max_accum: Vec<f32> = vec![0.0; hex_count];
 
         for iy in 0..sim_h {
             for ix in 0..sim_w {
@@ -158,6 +168,11 @@ impl SimulationStage for HexProjectionStage {
                                 river_exit[hex_id] = Some((ix, iy, a))
                             }
                             _ => {}
+                        }
+                        // DD3 width bucketing: track the maximum accumulation
+                        // over all river cells in this hex.
+                        if a > max_accum[hex_id] {
+                            max_accum[hex_id] = a;
                         }
                     }
                 }
@@ -189,6 +204,7 @@ impl SimulationStage for HexProjectionStage {
         let mut slope_variance = Vec::with_capacity(hex_count);
         let mut accessibility_cost = Vec::with_capacity(hex_count);
         let mut river_crossing: Vec<Option<HexRiverCrossing>> = Vec::with_capacity(hex_count);
+        let mut river_width: Vec<Option<RiverWidth>> = Vec::with_capacity(hex_count);
 
         for hex_id in 0..hex_count {
             let count = land_count[hex_id] as f64;
@@ -244,12 +260,28 @@ impl SimulationStage for HexProjectionStage {
                 _ => None,
             };
             river_crossing.push(crossing);
+
+            // DD3 width bucketing: parallel to river_crossing — Some iff crossing is Some.
+            let width = if crossing.is_some() {
+                let max_a = max_accum[hex_id];
+                Some(if max_a < RIVER_WIDTH_SMALL_MAX {
+                    RiverWidth::Small
+                } else if max_a < RIVER_WIDTH_MEDIUM_MAX {
+                    RiverWidth::Medium
+                } else {
+                    RiverWidth::Main
+                })
+            } else {
+                None
+            };
+            river_width.push(width);
         }
 
         let hex_debug = HexDebugAttributes {
             slope_variance,
             accessibility_cost,
             river_crossing,
+            river_width,
         };
 
         let hex_attrs = HexAttributeField {
@@ -831,6 +863,69 @@ mod tests {
             any_set,
             "hex_river_crossing_mask must have at least one set pixel when a crossing exists"
         );
+    }
+
+    // ── DD3 river width bucketing tests (Sprint 3.5.B c3) ────────────────────
+
+    /// Three hexes each receive a single river cell with max_accum values of
+    /// 10.0 (< SMALL_MAX=50), 100.0 (in [50, 500)), and 1000.0 (≥ 500).
+    /// The three hexes must report Small, Medium, and Main respectively.
+    #[test]
+    fn hex_river_width_small_medium_main_bucketing() {
+        let (w, h) = (128_u32, 128_u32);
+        let mut world = ready_world(w, h);
+
+        // We need 3 river cells assigned to 3 different hexes.
+        // Pick cells whose hexes are far enough apart under DD2 tessellation.
+        // (10,10), (64,10), and (10,64) are well-separated and map to distinct hexes.
+        let cells = [(10_u32, 10_u32), (64_u32, 10_u32), (10_u32, 64_u32)];
+        let accums = [10.0_f32, 100.0_f32, 1000.0_f32];
+        let expected = [RiverWidth::Small, RiverWidth::Medium, RiverWidth::Main];
+
+        let mut river = island_core::field::MaskField2D::new(w, h);
+        let mut acc = island_core::field::ScalarField2D::<f32>::new(w, h);
+        for ((cx, cy), a) in cells.iter().zip(accums.iter()) {
+            river.set(*cx, *cy, 1);
+            acc.set(*cx, *cy, *a);
+        }
+        world.derived.river_mask = Some(river);
+        world.derived.accumulation = Some(acc);
+
+        HexProjectionStage.run(&mut world).expect("stage");
+
+        let grid = world.derived.hex_grid.as_ref().expect("hex_grid");
+        let hd = world.derived.hex_debug.as_ref().expect("hex_debug");
+
+        for (((cx, cy), a), exp) in cells.iter().zip(accums.iter()).zip(expected.iter()) {
+            let hex_id = grid.hex_id_of_cell.get(*cx, *cy) as usize;
+            let width = hd.river_width[hex_id].unwrap_or_else(|| {
+                panic!("hex_id={hex_id} (cell {cx},{cy}, accum={a}) must have Some(river_width)")
+            });
+            assert_eq!(
+                width, *exp,
+                "hex_id={hex_id} (cell {cx},{cy}, accum={a}): expected {exp:?}, got {width:?}"
+            );
+        }
+    }
+
+    /// A hex with no river cells must report `river_width == None`.
+    #[test]
+    fn hex_river_width_none_when_no_crossing() {
+        let (w, h) = (128_u32, 128_u32);
+        let mut world = ready_world(w, h);
+        // river_mask all-zero from ready_world; provide accumulation so the
+        // optional path is exercised.
+        world.derived.accumulation = Some(island_core::field::ScalarField2D::<f32>::new(w, h));
+
+        HexProjectionStage.run(&mut world).expect("stage");
+
+        let hd = world.derived.hex_debug.as_ref().expect("hex_debug");
+        for (i, width_opt) in hd.river_width.iter().enumerate() {
+            assert!(
+                width_opt.is_none(),
+                "hex {i}: expected None river_width when no river cells present"
+            );
+        }
     }
 
     // ── Task 2.5.D: accessibility cost tests ──────────────────────────────────

@@ -316,6 +316,28 @@ pub struct HexRiverCrossing {
     pub exit_edge: u8,
 }
 
+/// Width bucket for a hex's dominant river, per DD3.
+///
+/// Computed per hex as the bucketised `max(flow_accumulation)` over all
+/// sim cells inside the hex. `None` when the hex has no river crossing
+/// (no river cells or pre-accumulation pipeline run).
+///
+/// Bucket boundaries are global thresholds tuned empirically against the
+/// Sprint 3.5 hero seeds (`docs/design/sprints/sprint_3_5_hex_surface_readability.md`
+/// §2 DD3). v1 ships a single global pair; per-archetype refinement is
+/// deferred to Sprint 3.5.F polish if hero-shot visuals demand it.
+///
+/// `#[repr(u8)]` with explicit discriminants so `HexInstance.width_bucket_bits`
+/// (populated in 3.5.B c4's `HexRiverRenderer`) can use the u8 cast for
+/// per-instance buffer packing.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RiverWidth {
+    Small = 0,
+    Medium = 1,
+    Main = 2,
+}
+
 /// Per-hex debug attributes computed by `HexProjectionStage` alongside the
 /// main `HexAttributes` aggregation. All `Vec` fields have length
 /// `cols * rows` and are row-major, matching `HexAttributeField`.
@@ -346,6 +368,15 @@ pub struct HexDebugAttributes {
     /// 3 = W, 4 = SW, 5 = SE — counter-clockwise from east, matching
     /// [`hex::geometry::HexEdge`]. See [`HexRiverCrossing`].
     pub river_crossing: Vec<Option<HexRiverCrossing>>,
+
+    /// Per-hex river width bucket (DD3). `Some(bucket)` when the hex has a
+    /// river crossing; `None` otherwise. Parallel to `river_crossing` in
+    /// length and indexing.
+    ///
+    /// Read by 3.5.B c4's `HexRiverRenderer` to pick polyline thickness;
+    /// NOT consumed by any DD8 hash (adding this field does NOT drift
+    /// `hex_debug_river_crossing_hash`).
+    pub river_width: Vec<Option<RiverWidth>>,
 }
 
 /// Sprint 2 DD3/DD8: snapshot of pre-erosion height / land statistics,
