@@ -57,6 +57,7 @@
                 )),
                 climate: None,
             )),
+            view_mode: None,
         ),
         (
             id: "post_volcanic_single_seed42",
@@ -89,6 +90,7 @@
                 resolution: (1280, 800),
             )),
             preset_override: None,
+            view_mode: None,
         ),
         (
             id: "pre_volcanic_twin_seed42",
@@ -144,6 +146,7 @@
                 )),
                 climate: None,
             )),
+            view_mode: None,
         ),
         (
             id: "post_volcanic_twin_seed42",
@@ -176,6 +179,7 @@
                 resolution: (1280, 800),
             )),
             preset_override: None,
+            view_mode: None,
         ),
         (
             id: "pre_caldera_seed42",
@@ -231,6 +235,7 @@
                 )),
                 climate: None,
             )),
+            view_mode: None,
         ),
         (
             id: "post_caldera_seed42",
@@ -263,6 +268,7 @@
                 resolution: (1280, 800),
             )),
             preset_override: None,
+            view_mode: None,
         ),
     ],
 )
