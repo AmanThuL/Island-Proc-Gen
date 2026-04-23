@@ -37,7 +37,7 @@
 //! grep on close-out; compile-time enum discipline is the enforcement
 //! mechanism).
 
-use crate::AxialCoord;
+use crate::{AxialCoord, OffsetCoord};
 
 /// `sqrt(3)` as a 32-bit float. `SQRT_3` is still
 /// unstable (`more_float_constants`, rust-lang#146939), so carry our own.
@@ -186,6 +186,109 @@ pub fn hex_polygon_vertices(hex_center: (f32, f32), hex_size: f32) -> [(f32, f32
         );
     }
     verts
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Offset-coord ↔ pixel conversion (DD2 odd-r-offset convention)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The canonical origin for the DD2 sim-aligned hex grid.
+///
+/// Returns `(0.5 * hex_width, 0.5 * row_spacing)`, which is the world-space
+/// centre of hex `(col=0, row=0)` as placed by `build_hex_grid`. Pass this
+/// as the `origin` argument to [`offset_to_pixel`] and [`pixel_to_offset`]
+/// to work in the same coordinate frame as the aggregation kernel.
+///
+/// ## Derivation
+///
+/// `build_hex_grid` places hex `(col, row)` at:
+/// ```text
+/// x = (col + 0.5) * hex_width + (row & 1) * 0.5 * hex_width
+/// y = (row + 0.5) * row_spacing
+/// ```
+/// At `(col=0, row=0)` this gives `x = 0.5 * hex_width`, `y = 0.5 * row_spacing`.
+#[inline]
+pub fn default_grid_origin(hex_size: f32) -> (f32, f32) {
+    let hex_width = hex_size * SQRT_3;
+    let row_spacing = hex_size * 1.5;
+    (0.5 * hex_width, 0.5 * row_spacing)
+}
+
+/// Convert an offset coord `(col, row)` to the pixel centre of its hex under
+/// the DD2 odd-r-offset convention used by `build_hex_grid`.
+///
+/// Odd rows (`row & 1 == 1`) are shifted horizontally by `+0.5 * hex_width`
+/// relative to even rows, matching `build_hex_grid`'s Voronoi construction.
+///
+/// Unlike [`axial_to_pixel`] (which puts axial origin `(0, 0)` at pixel
+/// `(0, 0)`), this function places hex `(col=0, row=0)` at `origin`.  For
+/// the DD2 sim-aligned grid, pass `default_grid_origin(hex_size)`.
+///
+/// ## Formula (matches `build_hex_grid`)
+///
+/// ```text
+/// hex_width  = hex_size * SQRT_3
+/// row_spacing = hex_size * 1.5
+/// row_x_offset = (row & 1) as f32 * 0.5 * hex_width
+/// pixel_x = origin.0 + col as f32 * hex_width + row_x_offset
+/// pixel_y = origin.1 + row as f32 * row_spacing
+/// ```
+///
+/// This is the offset-coord counterpart to [`axial_to_pixel`]; use it whenever
+/// you need world-space positions from DD2-produced `(col, row)` indices
+/// (rendering, hex-pick, per-instance buffer population).
+#[inline]
+pub fn offset_to_pixel(col: u32, row: u32, hex_size: f32, origin: (f32, f32)) -> (f32, f32) {
+    let hex_width = hex_size * SQRT_3;
+    let row_spacing = hex_size * 1.5;
+    let row_x_offset = (row & 1) as f32 * 0.5 * hex_width;
+    let px = origin.0 + col as f32 * hex_width + row_x_offset;
+    let py = origin.1 + row as f32 * row_spacing;
+    (px, py)
+}
+
+/// Convert a pixel position to the DD2-offset `(col, row)` of the nearest hex.
+///
+/// Returns `None` when the nearest hex falls outside `[0, cols) × [0, rows)`;
+/// there is no silent out-of-range clamping.
+///
+/// Internally uses [`pixel_to_axial`] after subtracting `origin`, then
+/// converts axial `(q, r)` → odd-r-offset with the standard formula:
+/// `col = q + (r - (r & 1)) / 2`, `row = r`.  This is the exact inverse of
+/// the offset → axial direction used by [`offset_to_pixel`], so the two
+/// functions round-trip cleanly at hex centres.
+///
+/// # Boundary behaviour
+///
+/// `pixel_to_axial` uses cube-rounding, so any pixel inside a hex's Voronoi
+/// polygon maps to that hex's offset coord.  Points exactly on a shared
+/// boundary may land on either neighbour — this matches `build_hex_grid`'s
+/// own tie-break (deterministic but not specified which side).
+pub fn pixel_to_offset(
+    px: f32,
+    py: f32,
+    hex_size: f32,
+    origin: (f32, f32),
+    cols: u32,
+    rows: u32,
+) -> Option<OffsetCoord> {
+    // Shift into the axial frame where axial (0,0) = DD2 (col=0, row=0).
+    let ax = pixel_to_axial(px - origin.0, py - origin.1, hex_size);
+
+    // Convert axial (q, r) → odd-r offset.
+    // Formula: col = q + (r - (r & 1)) / 2,  row = r.
+    // For non-negative r: (r - (r & 1)) / 2 == r / 2 (integer).
+    // Negative r means out-of-bounds, caught by the range check below.
+    let r = ax.r;
+    let q = ax.q;
+    // Avoid panic on negative values — convert to i64 for the arithmetic.
+    let col_i = q as i64 + (r as i64 - ((r & 1) as i64)) / 2;
+    let row_i = r as i64;
+
+    if col_i < 0 || row_i < 0 || col_i >= cols as i64 || row_i >= rows as i64 {
+        return None;
+    }
+    Some(OffsetCoord::new(col_i as u32, row_i as u32))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -385,5 +488,118 @@ mod tests {
                 "vertex {k} y"
             );
         }
+    }
+
+    // ── Offset-coord ↔ pixel tests ────────────────────────────────────────────
+
+    /// Core parity lock: `offset_to_pixel(col, row, ...)` must exactly match
+    /// the DD2 kernel's hex-centre formula used in `build_hex_grid`.
+    ///
+    /// For every cell in a 4×4 grid, compute the expected centre from the DD2
+    /// formula directly and compare against `offset_to_pixel` output.
+    #[test]
+    fn offset_to_pixel_matches_build_hex_grid_centres() {
+        let hex_size = 1.0_f32;
+        let hex_width = hex_size * SQRT_3;
+        let row_spacing = hex_size * 1.5;
+        let origin = default_grid_origin(hex_size);
+
+        for row in 0_u32..4 {
+            for col in 0_u32..4 {
+                // Reference formula directly from `build_hex_grid` comments:
+                // x = (col + 0.5) * hex_width + (row & 1) * 0.5 * hex_width
+                // y = (row + 0.5) * row_spacing
+                let expected_x =
+                    (col as f32 + 0.5) * hex_width + (row & 1) as f32 * 0.5 * hex_width;
+                let expected_y = (row as f32 + 0.5) * row_spacing;
+
+                let (px, py) = offset_to_pixel(col, row, hex_size, origin);
+                assert!(
+                    approx_eq(px, expected_x, 1e-5),
+                    "col={col} row={row}: offset_to_pixel x={px} != build_hex_grid formula x={expected_x}"
+                );
+                assert!(
+                    approx_eq(py, expected_y, 1e-5),
+                    "col={col} row={row}: offset_to_pixel y={py} != build_hex_grid formula y={expected_y}"
+                );
+            }
+        }
+    }
+
+    /// Odd-row hexes must be shifted east by exactly half a hex_width compared
+    /// to their same-column even-row neighbour.
+    #[test]
+    fn offset_to_pixel_odd_row_shifted_right_by_half_hex_width() {
+        let hex_size = 2.0_f32;
+        let hex_width = hex_size * SQRT_3;
+        let origin = default_grid_origin(hex_size);
+
+        // Compare (col=0, row=0) and (col=0, row=1).
+        let (x_even, _) = offset_to_pixel(0, 0, hex_size, origin);
+        let (x_odd, _) = offset_to_pixel(0, 1, hex_size, origin);
+        let expected_shift = 0.5 * hex_width;
+        assert!(
+            approx_eq(x_odd - x_even, expected_shift, 1e-5),
+            "odd-row x_shift = {} expected 0.5 * hex_width = {}",
+            x_odd - x_even,
+            expected_shift
+        );
+    }
+
+    /// Round-trip: `pixel_to_offset(offset_to_pixel(col, row, ...), ...)` must
+    /// recover the original `(col, row)` for all cells in a 4×4 grid.
+    #[test]
+    fn pixel_to_offset_round_trips_through_offset_to_pixel() {
+        use crate::OffsetCoord;
+        let hex_size = 1.5_f32;
+        let origin = default_grid_origin(hex_size);
+        let cols = 4_u32;
+        let rows = 4_u32;
+
+        for row in 0..rows {
+            for col in 0..cols {
+                let (px, py) = offset_to_pixel(col, row, hex_size, origin);
+                let result = pixel_to_offset(px, py, hex_size, origin, cols, rows);
+                assert_eq!(
+                    result,
+                    Some(OffsetCoord::new(col, row)),
+                    "round-trip failed for (col={col}, row={row}): got {result:?}"
+                );
+            }
+        }
+    }
+
+    /// Pixels far outside the grid bounds must return `None`.
+    #[test]
+    fn pixel_to_offset_out_of_range_returns_none() {
+        let hex_size = 1.0_f32;
+        let origin = default_grid_origin(hex_size);
+        let cols = 4_u32;
+        let rows = 4_u32;
+
+        // Far to the right (well outside col < 4).
+        assert_eq!(
+            pixel_to_offset(1000.0, 1.0, hex_size, origin, cols, rows),
+            None,
+            "large x should be out of range"
+        );
+        // Far below (well outside row < 4).
+        assert_eq!(
+            pixel_to_offset(1.0, 1000.0, hex_size, origin, cols, rows),
+            None,
+            "large y should be out of range"
+        );
+        // Negative x (left of col 0).
+        assert_eq!(
+            pixel_to_offset(-100.0, 1.0, hex_size, origin, cols, rows),
+            None,
+            "negative x should be out of range"
+        );
+        // Negative y (above row 0).
+        assert_eq!(
+            pixel_to_offset(1.0, -100.0, hex_size, origin, cols, rows),
+            None,
+            "negative y should be out of range"
+        );
     }
 }

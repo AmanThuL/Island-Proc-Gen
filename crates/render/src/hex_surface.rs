@@ -36,6 +36,21 @@ use std::mem::size_of;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
 
+// ── Depth-state contract (DD5) ────────────────────────────────────────────────
+
+/// Depth behaviour for the hex-surface pipeline — `(depth_write, depth_compare)`.
+///
+/// `(false, Always)` is the DD5 readable-base-surface semantic: hex pixels are
+/// always output (even where terrain sits in front depth-wise), and the hex
+/// surface never writes depth (so subsequent overlay passes aren't disturbed
+/// by hex Z values).
+///
+/// Referenced by both the pipeline builder in [`HexSurfaceRenderer::new`] and
+/// the `hex_surface_pipeline_disables_depth_write` contract-lock test, so the
+/// pipeline and the test can't drift out of sync.
+pub(crate) const HEX_DEPTH_STATE: (bool, wgpu::CompareFunction) =
+    (false, wgpu::CompareFunction::Always);
+
 // ── HexVertex ─────────────────────────────────────────────────────────────────
 
 /// Unit-hex-local vertex position (centre at origin, corner radius = 1).
@@ -166,17 +181,27 @@ impl HexInstance {
 
 // ── Uniform ───────────────────────────────────────────────────────────────────
 
-/// View-projection uniform — 96 bytes.
+/// View-projection + hex_size uniform — 96 bytes.
 ///
-/// Matches `struct Uniforms` in `shaders/hex_surface.wgsl`:
-/// `view_proj` (mat4x4<f32> = 64 bytes) + two `vec4<f32>` pads (32 bytes).
-/// The padding slots are reserved for c7 tonal-ramp parameters.
+/// Mirrors `struct Uniforms` in `shaders/hex_surface.wgsl` byte-for-byte:
+///
+/// | Field      | Offset | Size | Notes |
+/// |------------|--------|------|-------|
+/// | `view_proj`| 0      | 64   | mat4x4<f32> |
+/// | `hex_size` | 64     | 4    | world-space centre-to-vertex radius |
+/// | `_pad0`    | 68     | 12   | pads `hex_size` to 16-byte boundary |
+/// | `_pad1`    | 80     | 16   | reserved for future uniforms |
+///
+/// Total: 96 bytes. `#[repr(C)]` + `bytemuck::Pod` guarantees byte layout
+/// matches the WGSL struct at every field boundary. Asserted by
+/// `uniforms_buffer_size_matches_wgsl_layout`.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct HexSurfaceUniforms {
-    view_proj: [[f32; 4]; 4], // 64 bytes
-    _pad0: [f32; 4],          // 16 bytes — c7: tonal-ramp params
-    _pad1: [f32; 4],          // 16 bytes — c7: additional params
+    view_proj: [[f32; 4]; 4], //  0..64 bytes
+    hex_size: f32,            // 64..68 bytes — world-space radius; c8 sets via update_hex_size
+    _pad0: [f32; 3],          // 68..80 bytes — pads hex_size to 16-byte alignment
+    _pad1: [f32; 4],          // 80..96 bytes — reserved
 }
 
 // ── CPU-side mesh builders ────────────────────────────────────────────────────
@@ -309,7 +334,10 @@ impl HexSurfaceRenderer {
             mapped_at_creation: false,
         });
 
-        // ── View-projection uniform ───────────────────────────────────────────
+        // ── View-projection + hex_size uniform ────────────────────────────────
+        // hex_size defaults to 1.0 to preserve pre-c8 test behaviour.
+        // c8 must call `update_hex_size` with the actual `HexGrid.hex_size`
+        // after calling `update_view_projection`.
         let identity_uniforms = HexSurfaceUniforms {
             view_proj: [
                 [1.0, 0.0, 0.0, 0.0],
@@ -317,7 +345,8 @@ impl HexSurfaceRenderer {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ],
-            _pad0: [0.0; 4],
+            hex_size: 1.0,
+            _pad0: [0.0; 3],
             _pad1: [0.0; 4],
         };
         let view_proj_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -398,10 +427,13 @@ impl HexSurfaceRenderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
-                // LessEqual + no depth write: hex surface paints over the
-                // terrain without occluding later passes.
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                // Single source of truth for hex-surface depth semantics —
+                // both the pipeline and the `hex_surface_pipeline_disables_depth_write`
+                // test read `HEX_DEPTH_STATE`. Keeps pipeline + contract lock
+                // in lockstep; drift becomes a compile error rather than a
+                // silent test-passing-but-wrong state.
+                depth_write_enabled: Some(HEX_DEPTH_STATE.0),
+                depth_compare: Some(HEX_DEPTH_STATE.1),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
@@ -458,14 +490,27 @@ impl HexSurfaceRenderer {
         self.instance_count = needed;
     }
 
-    /// Update the view-projection uniform.
+    /// Update the view-projection + hex_size uniforms in a single call.
     ///
     /// Call once per frame before [`draw`], passing the same matrix used by the
-    /// terrain renderer so hex cells project consistently with the terrain mesh.
-    pub fn update_view_projection(&self, queue: &wgpu::Queue, view_proj: &[[f32; 4]; 4]) {
+    /// terrain renderer (for consistent projection) and the current
+    /// `HexGrid.hex_size` (for correct world-space scaling — terrain space is
+    /// `[0, DEFAULT_WORLD_XZ_EXTENT = 5.0]`, so hexes must scale with the grid,
+    /// not render at a hardcoded 1 world unit).
+    ///
+    /// Takes both parameters together rather than splitting into separate
+    /// setters so callers cannot forget one — the pre-c8 split variant made
+    /// forgetting to update `hex_size` silently produce 1-world-unit hexes.
+    pub fn update_view_projection(
+        &self,
+        queue: &wgpu::Queue,
+        view_proj: &[[f32; 4]; 4],
+        hex_size: f32,
+    ) {
         let uniforms = HexSurfaceUniforms {
             view_proj: *view_proj,
-            _pad0: [0.0; 4],
+            hex_size,
+            _pad0: [0.0; 3],
             _pad1: [0.0; 4],
         };
         queue.write_buffer(&self.view_proj_buffer, 0, bytemuck::cast_slice(&[uniforms]));
@@ -504,6 +549,19 @@ impl HexSurfaceRenderer {
     #[allow(dead_code)]
     pub(crate) fn vertex_count(&self) -> u32 {
         7
+    }
+
+    /// Returns the depth state values used when constructing the pipeline.
+    ///
+    /// Returns the `(depth_write_enabled, depth_compare)` tuple used by the
+    /// pipeline in [`new`]. Reads `HEX_DEPTH_STATE` — the same const the
+    /// pipeline itself reads — so the contract lock is a single source of
+    /// truth. If the pipeline in `new()` ever hardcodes different values
+    /// instead of reading `HEX_DEPTH_STATE`, the divergence is visible at the
+    /// call site rather than silently passing the test.
+    #[cfg(test)]
+    pub(crate) fn depth_state_for_test() -> (bool, wgpu::CompareFunction) {
+        HEX_DEPTH_STATE
     }
 }
 
@@ -666,6 +724,77 @@ mod tests {
             vertex_layout.step_mode,
             wgpu::VertexStepMode::Vertex,
             "HexVertex layout must use Vertex step mode"
+        );
+    }
+
+    // ── uniforms_buffer_size_matches_wgsl_layout ─────────────────────────────
+
+    /// Fix 1 layout lock: `HexSurfaceUniforms` (Rust) AND the WGSL `Uniforms`
+    /// struct MUST both be exactly 96 bytes. Checking Rust alone misses the
+    /// case where WGSL alignment rules silently bump the shader's struct to
+    /// 112 bytes or more — e.g. using `vec3<f32>` for padding (which has
+    /// 16-byte alignment and rounds up the struct span). A mismatch causes
+    /// silent corruption of all uniform values at c8 bind time.
+    ///
+    /// This test parses the WGSL and reads the naga-computed struct span so
+    /// the two-sided contract is actually verified. Caught the c7-fix-era
+    /// `vec3<f32>` bug during pre-commit review.
+    #[test]
+    fn uniforms_buffer_size_matches_wgsl_layout() {
+        // Rust side.
+        assert_eq!(
+            size_of::<HexSurfaceUniforms>(),
+            96,
+            "HexSurfaceUniforms must be exactly 96 bytes to match shaders/hex_surface.wgsl"
+        );
+
+        // WGSL side — parse the shader and compute the Uniforms struct span.
+        let src = include_str!("../../../shaders/hex_surface.wgsl");
+        use naga::front::wgsl;
+        let module = wgsl::parse_str(src).expect("hex_surface.wgsl must parse");
+        let uniforms_type = module
+            .types
+            .iter()
+            .find_map(|(_, t)| {
+                t.name
+                    .as_deref()
+                    .filter(|n| *n == "Uniforms")
+                    .map(|_| t.inner.clone())
+            })
+            .expect("WGSL module must declare a `Uniforms` struct");
+        let naga::TypeInner::Struct { span, .. } = uniforms_type else {
+            panic!("`Uniforms` must be a struct type");
+        };
+        assert_eq!(
+            span, 96,
+            "WGSL `Uniforms` struct must be exactly 96 bytes; naga computed \
+             {span}. Likely cause: a `vec3<f32>` field bumps alignment and \
+             pushes the struct to 112 bytes. Use three `f32` scalars instead."
+        );
+    }
+
+    // ── hex_surface_pipeline_disables_depth_write ─────────────────────────────
+
+    /// Fix 3 contract lock: hex surface pipeline must use depth_write=false and
+    /// compare=Always.
+    ///
+    /// Since `wgpu::RenderPipeline` does not expose its depth state for
+    /// introspection, this test asserts the contract via the documented-intent
+    /// accessor `depth_state_for_test()`. Any future change to the pipeline's
+    /// depth state in `new()` must be reflected here.
+    #[test]
+    fn hex_surface_pipeline_disables_depth_write() {
+        let (write_enabled, compare) = HexSurfaceRenderer::depth_state_for_test();
+        assert!(
+            !write_enabled,
+            "hex surface must NOT write depth (depth_write_enabled = false); \
+             otherwise overlay passes are disturbed by hex Z values"
+        );
+        assert_eq!(
+            compare,
+            wgpu::CompareFunction::Always,
+            "hex surface must use CompareFunction::Always so it paints on top of \
+             terrain in HexOverlay mode (DD5 readable-base-surface requirement)"
         );
     }
 

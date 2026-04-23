@@ -17,13 +17,23 @@
 // ── Uniforms ──────────────────────────────────────────────────────────────────
 
 struct Uniforms {
-    view_proj: mat4x4<f32>,
-    // Reserved padding — used by later sub-commits if additional per-grid
-    // uniforms (e.g. hex_size for non-unit local scaling) become needed.
-    // DD5 tonal ramp is a pair of `const`s rather than uniforms so the
-    // ramp is pick-once-and-commit at build time.
-    _pad0: vec4<f32>,
-    _pad1: vec4<f32>,
+    view_proj: mat4x4<f32>,   //  0..64 bytes
+    // hex_size carries the world-space centre-to-vertex radius of the hex grid.
+    // c8 sets this from `HexGrid.hex_size` via `update_view_projection`. All
+    // vertex positions are computed as `center_xy + local_xy * hex_size`, so
+    // forgetting to set this produces 1.0-world-unit hexes regardless of the
+    // actual grid scale.
+    hex_size: f32,            // 64..68 bytes
+    // Padding to 96 bytes. Three f32 scalars (not a vec3<f32>) because WGSL
+    // imposes 16-byte alignment on vec3 types, which would force the struct
+    // to 112 bytes and diverge from the Rust repr(C) layout. Three f32
+    // scalars pack naturally at 4-byte alignment. The 96-byte lock is
+    // verified by `uniforms_buffer_size_matches_wgsl_layout` (parses this
+    // file via naga and asserts struct span == 96).
+    _pad0a: f32,              // 68..72 bytes
+    _pad0b: f32,              // 72..76 bytes
+    _pad0c: f32,              // 76..80 bytes
+    _pad1: vec4<f32>,         // 80..96 bytes — reserved for future uniforms
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -99,9 +109,10 @@ fn tonal_factor(elevation: f32) -> f32 {
 
 @vertex
 fn vs_main(v: VertexInput, i: InstanceInput) -> VSOut {
-    // hex_size is baked as 1.0 in the unit mesh; the caller scales the grid
-    // by populating `center_xy` from `axial_to_pixel(coord, hex_size)`.
-    let hex_size = 1.0;
+    // hex_size is the world-space centre-to-vertex radius sourced from the
+    // Uniforms struct. c8 sets this via `HexSurfaceRenderer::update_hex_size`.
+    // `new()` initialises it to 1.0 to preserve pre-c8 test behaviour.
+    let hex_size = u.hex_size;
 
     // World-space position: instance centre (XZ) + scaled local vertex offset.
     // Y stays at 0.0 — DD5 explicitly does NOT extrude hexes in Z; the tonal
