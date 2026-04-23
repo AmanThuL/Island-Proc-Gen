@@ -7,6 +7,9 @@ pub mod seed;
 pub mod validation;
 pub mod world;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 pub use field::{FieldDecodeError, FieldStats, MaskField2D, ScalarField2D, VectorField2D};
 pub use neighborhood::{
     COAST_DETECT_NEIGHBORHOOD, Neighborhood, RIVER_CC_NEIGHBORHOOD, RIVER_COAST_CONTACT,

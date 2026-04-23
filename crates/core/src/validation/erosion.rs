@@ -315,24 +315,9 @@ mod tests {
     use super::*;
     use crate::field::{MaskField2D, ScalarField2D};
     use crate::preset::IslandAge;
-    use crate::preset::IslandArchetypePreset;
     use crate::seed::Seed;
+    use crate::test_support::test_preset;
     use crate::world::{CoastMask, ErosionBaseline, Resolution, WorldState};
-
-    fn test_preset() -> IslandArchetypePreset {
-        IslandArchetypePreset {
-            name: "validation_test".into(),
-            island_radius: 0.5,
-            max_relief: 0.5,
-            volcanic_center_count: 1,
-            island_age: IslandAge::Young,
-            prevailing_wind_dir: 0.0,
-            marine_moisture_strength: 0.5,
-            sea_level: 0.3,
-            erosion: Default::default(),
-            climate: Default::default(),
-        }
-    }
 
     /// Build a minimal CoastMask from raw Vec<u8> data.
     fn make_coast_mask(
