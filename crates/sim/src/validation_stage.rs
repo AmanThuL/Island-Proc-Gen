@@ -40,8 +40,8 @@ use island_core::validation::{
     basin_partition_post_erosion_well_formed, biome_weights_normalized, coast_type_v2_well_formed,
     coast_type_well_formed, coastline_consistency, deposition_zone_fraction_realistic,
     erosion_no_excessive_sea_crossing, erosion_no_explosion, hex_attrs_present,
-    precipitation_mass_balance, precipitation_nonneg, river_termination, sediment_bounded,
-    temperature_physical_range,
+    hex_river_crossing_edges_in_range, precipitation_mass_balance, precipitation_nonneg,
+    river_termination, sediment_bounded, temperature_physical_range,
 };
 use island_core::world::WorldState;
 
@@ -70,6 +70,11 @@ impl SimulationStage for ValidationStage {
         skip_if_missing(biome_weights_normalized(world))?;
         skip_if_missing(temperature_physical_range(world))?;
         skip_if_missing(hex_attrs_present(world))?;
+
+        // Sprint 3.5.B (DD3): 6-edge river crossing range check.
+        // Self-skips (Ok) when hex_debug is None; runs after hex_attrs_present
+        // so the hex_debug is always present when hex_attrs is.
+        hex_river_crossing_edges_in_range(world)?;
 
         // Sprint 2 / 2.5: self-skipping invariants — return Ok(()) when their
         // precondition fields are None, so no `skip_if_missing` wrapper needed.

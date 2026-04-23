@@ -281,13 +281,35 @@ impl BiomeWeights {
     }
 }
 
-/// Per-hex river crossing debug info. Records which two of the 4 box edges
+/// Per-hex river crossing debug info. Records which two of the 6 hex edges
 /// the dominant river enters and exits through.
 ///
-/// Box edge convention: 0 = top (-y), 1 = right (+x), 2 = bottom (+y),
-/// 3 = left (-x). Kept inside `HexDebugAttributes` (not `HexAttributes`) so
-/// a future real-hex rework can expand to 6 edges without touching the public
-/// aggregation type.
+/// **DD3 6-edge encoding (Sprint 3.5.B c1).** Edge discriminants match
+/// [`hex::geometry::HexEdge`] exactly — counter-clockwise from east:
+///
+/// ```text
+///     2 (NW)  1 (NE)
+///        \   /
+/// 3 (W) --|    |-- 0 (E)
+///        /   \
+///     4 (SW)  5 (SE)
+/// ```
+///
+/// | `u8` | Edge |
+/// |------|------|
+/// | 0 | E (east, vertical right side) |
+/// | 1 | NE (upper-right diagonal) |
+/// | 2 | NW (upper-left diagonal) |
+/// | 3 | W (west, vertical left side) |
+/// | 4 | SW (lower-left diagonal) |
+/// | 5 | SE (lower-right diagonal) |
+///
+/// The struct shape (`entry_edge: u8, exit_edge: u8`) is stable between
+/// Sprint 2.5's 4-box-edge encoding and Sprint 3.5.B's 6-hex-edge encoding
+/// — only the value range expands from `0..=3` to `0..=5`.
+///
+/// Lives inside `HexDebugAttributes` (not `HexAttributes`) so the stable
+/// `HexAttributes` 8-field contract is not disturbed.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HexRiverCrossing {
     pub entry_edge: u8,
@@ -316,12 +338,13 @@ pub struct HexDebugAttributes {
     /// get cost `1.0`.
     pub accessibility_cost: Vec<f32>,
 
-    /// Per-hex river crossing: which box edges the dominant river thread
+    /// Per-hex river crossing: which hex edges the dominant river thread
     /// enters and exits. `None` for hexes with no river sim cells or where
     /// the accumulation field was absent when the stage ran.
     ///
-    /// Box edge encoding: 0 = top (−y), 1 = right (+x), 2 = bottom (+y),
-    /// 3 = left (−x). See [`HexRiverCrossing`].
+    /// **DD3 6-edge encoding (Sprint 3.5.B c1):** 0 = E, 1 = NE, 2 = NW,
+    /// 3 = W, 4 = SW, 5 = SE — counter-clockwise from east, matching
+    /// [`hex::geometry::HexEdge`]. See [`HexRiverCrossing`].
     pub river_crossing: Vec<Option<HexRiverCrossing>>,
 }
 

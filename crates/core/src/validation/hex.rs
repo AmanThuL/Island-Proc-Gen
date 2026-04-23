@@ -45,6 +45,30 @@ pub fn hex_attrs_present(world: &WorldState) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// DD3 (Sprint 3.5.B c1): every `HexRiverCrossing` in
+/// `world.derived.hex_debug.river_crossing` must have both `entry_edge` and
+/// `exit_edge` in the range `0..=5` (the 6-edge hex encoding per DD1).
+///
+/// Returns `Ok(())` when `hex_debug` is `None` (skip-if-missing pattern —
+/// the same as `hex_attrs_present` when its precondition is absent).
+pub fn hex_river_crossing_edges_in_range(world: &WorldState) -> Result<(), ValidationError> {
+    let Some(dbg) = world.derived.hex_debug.as_ref() else {
+        return Ok(());
+    };
+    for (hex_id, crossing_opt) in dbg.river_crossing.iter().enumerate() {
+        if let Some(rc) = crossing_opt {
+            if rc.entry_edge > 5 || rc.exit_edge > 5 {
+                return Err(ValidationError::HexRiverCrossingEdgeOutOfRange {
+                    hex_id,
+                    entry_edge: rc.entry_edge,
+                    exit_edge: rc.exit_edge,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 // ─── tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -54,7 +78,8 @@ mod tests {
     use crate::seed::Seed;
     use crate::test_support::test_preset;
     use crate::world::{
-        BakedSnapshot, CoastMask, HexAttributeField, HexAttributes, Resolution, WorldState,
+        BakedSnapshot, CoastMask, HexAttributeField, HexAttributes, HexDebugAttributes,
+        HexRiverCrossing, Resolution, WorldState,
     };
 
     /// Build a minimal CoastMask from raw Vec<u8> data.
@@ -147,5 +172,74 @@ mod tests {
             err,
             ValidationError::HexBiomeWeightsLengthMismatch { col: 1, row: 1, .. }
         ));
+    }
+
+    // ── hex_river_crossing_edges_in_range tests (DD3, Sprint 3.5.B c1) ────────
+
+    /// Fixture: a minimal WorldState with `hex_debug` populated with a given
+    /// `river_crossing` vector. 4×4 hex grid / 4×4 sim domain.
+    fn world_with_river_crossings(crossings: Vec<Option<HexRiverCrossing>>) -> WorldState {
+        let mut world = minimal_world_for_1b(4, 4);
+        world.derived.hex_debug = Some(HexDebugAttributes {
+            slope_variance: vec![0.0; crossings.len()],
+            accessibility_cost: vec![1.0; crossings.len()],
+            river_crossing: crossings,
+        });
+        world
+    }
+
+    /// `entry_edge = 6` is out of the 6-edge range and must be rejected.
+    #[test]
+    fn hex_river_crossing_edges_in_range_rejects_out_of_range_edge() {
+        let crossings = vec![
+            None,
+            Some(HexRiverCrossing {
+                entry_edge: 6, // invalid — only 0..=5 are valid hex edges
+                exit_edge: 3,
+            }),
+            None,
+        ];
+        let world = world_with_river_crossings(crossings);
+        let err = hex_river_crossing_edges_in_range(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::HexRiverCrossingEdgeOutOfRange {
+                    hex_id: 1,
+                    entry_edge: 6,
+                    exit_edge: 3,
+                }
+            ),
+            "expected HexRiverCrossingEdgeOutOfRange at hex_id 1, got {err:?}"
+        );
+    }
+
+    /// All 6 valid hex edge values (0..=5 per DD1) must pass.
+    #[test]
+    fn hex_river_crossing_edges_in_range_accepts_all_6_valid_edges() {
+        // Build one crossing per valid edge pair (entry = exit = e as u8).
+        let crossings: Vec<Option<HexRiverCrossing>> = (0_u8..=5)
+            .map(|e| {
+                Some(HexRiverCrossing {
+                    entry_edge: e,
+                    exit_edge: (e + 1) % 6, // next edge, also valid
+                })
+            })
+            .collect();
+        let world = world_with_river_crossings(crossings);
+        assert!(
+            hex_river_crossing_edges_in_range(&world).is_ok(),
+            "all 6 valid hex edges (0..=5) must pass the range validator"
+        );
+    }
+
+    /// When `hex_debug` is `None`, the validator must return `Ok(())` — skip
+    /// if missing, matching the pattern used by `hex_attrs_present`.
+    #[test]
+    fn hex_river_crossing_edges_in_range_skip_if_missing() {
+        let world = minimal_world_for_1b(4, 4);
+        // hex_debug is None — validator must be a no-op.
+        assert!(world.derived.hex_debug.is_none());
+        assert!(hex_river_crossing_edges_in_range(&world).is_ok());
     }
 }

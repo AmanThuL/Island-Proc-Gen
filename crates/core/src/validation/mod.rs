@@ -38,7 +38,7 @@ pub use erosion::{
     erosion_no_excessive_sea_crossing, erosion_no_explosion, sediment_bounded,
 };
 
-pub use hex::hex_attrs_present;
+pub use hex::{hex_attrs_present, hex_river_crossing_edges_in_range};
 
 pub use hydro::{
     accumulation_monotone, basin_partition_dag, basin_partition_post_erosion_well_formed,
@@ -99,6 +99,21 @@ pub enum ValidationError {
         row: u32,
         got: usize,
         expected: usize,
+    },
+
+    /// A `HexRiverCrossing` has an `entry_edge` or `exit_edge` value outside
+    /// the DD3 6-edge range `0..=5`.
+    ///
+    /// Added in Sprint 3.5.B c1. The valid range was `0..=3` (4 box edges)
+    /// in Sprint 2.5; it expands to `0..=5` (6 hex edges, CCW from east)
+    /// after DD3 promotion.
+    #[error(
+        "hex_river_crossing_edges_in_range: hex_id {hex_id} has entry_edge={entry_edge} exit_edge={exit_edge} (expected both 0..=5)"
+    )]
+    HexRiverCrossingEdgeOutOfRange {
+        hex_id: usize,
+        entry_edge: u8,
+        exit_edge: u8,
     },
 
     #[error("hex attrs: shape mismatch — cols={cols} rows={rows} but attrs.len()={got}")]

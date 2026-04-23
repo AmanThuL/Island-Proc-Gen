@@ -13,6 +13,9 @@
 
 use anyhow::anyhow;
 use hex::build_hex_grid;
+use hex::geometry::{
+    HexEdge, default_grid_origin, edge_midpoint as hex_edge_midpoint, offset_to_pixel,
+};
 use island_core::field::MaskField2D;
 use island_core::pipeline::SimulationStage;
 use island_core::world::{
@@ -231,8 +234,8 @@ impl SimulationStage for HexProjectionStage {
                 (Some((ex, ey, _)), Some((xx, xy, _))) => {
                     let col = hex_id as u32 % grid.cols;
                     let row = hex_id as u32 / grid.cols;
-                    let entry_edge = nearest_box_edge(&grid, col, row, ex, ey, sim_w, sim_h);
-                    let exit_edge = nearest_box_edge(&grid, col, row, xx, xy, sim_w, sim_h);
+                    let entry_edge = nearest_hex_edge_in_sim_space(&grid, col, row, ex, ey);
+                    let exit_edge = nearest_hex_edge_in_sim_space(&grid, col, row, xx, xy);
                     Some(HexRiverCrossing {
                         entry_edge,
                         exit_edge,
@@ -275,8 +278,14 @@ impl SimulationStage for HexProjectionStage {
             }
         }
 
-        // Rasterise one Bresenham line per river-crossing hex, from the midpoint
-        // of entry_edge to the midpoint of exit_edge in sim-cell coordinates.
+        // Rasterise one Bresenham line per river-crossing hex, from the sim-space
+        // midpoint of entry_edge to the sim-space midpoint of exit_edge.
+        //
+        // DD3 specifies a 3-control-point spline (entry midpoint → hex centre →
+        // exit midpoint). For the CPU rasterised debug mask a single-segment
+        // Bresenham entry→exit is a reasonable approximation; the full spline
+        // is renderer-side work deferred to later sprints.
+        let origin = default_grid_origin(grid.hex_size);
         let mut crossing_mask = MaskField2D::new(sim_w, sim_h);
         for hex_id in 0..hex_count {
             let Some(crossing) = hex_debug.river_crossing[hex_id] else {
@@ -284,18 +293,25 @@ impl SimulationStage for HexProjectionStage {
             };
             let col = hex_id as u32 % grid.cols;
             let row = hex_id as u32 / grid.cols;
-            // Compute the sim-cell span for this hex's bounding box.
-            // x: [x0, x1), y: [y0, y1). Use the same formula as hex_id_of_cell
-            // construction (integer subdivision).
-            let x0 = (col as u64 * sim_w as u64 / grid.cols as u64) as u32;
-            let x1 = ((col + 1) as u64 * sim_w as u64 / grid.cols as u64) as u32;
-            let y0 = (row as u64 * sim_h as u64 / grid.rows as u64) as u32;
-            let y1 = ((row + 1) as u64 * sim_h as u64 / grid.rows as u64) as u32;
-            // Midpoints of each box edge (clamped to valid sim coords).
-            let mid_x = (x0 + x1.saturating_sub(1)) / 2;
-            let mid_y = (y0 + y1.saturating_sub(1)) / 2;
-            let (p0x, p0y) = edge_midpoint(crossing.entry_edge, x0, x1, y0, y1, mid_x, mid_y);
-            let (p1x, p1y) = edge_midpoint(crossing.exit_edge, x0, x1, y0, y1, mid_x, mid_y);
+            // Hex centre in sim-space continuous coordinates.
+            let centre = offset_to_pixel(col, row, grid.hex_size, origin);
+            // Edge midpoints in sim-space continuous coordinates.
+            let entry_edge = HexEdge::from_u8(crossing.entry_edge)
+                .expect("entry_edge is always written by nearest_hex_edge_in_sim_space (0..=5)");
+            let exit_edge = HexEdge::from_u8(crossing.exit_edge)
+                .expect("exit_edge is always written by nearest_hex_edge_in_sim_space (0..=5)");
+            let (m0x, m0y) = hex_edge_midpoint(centre, entry_edge, grid.hex_size);
+            let (m1x, m1y) = hex_edge_midpoint(centre, exit_edge, grid.hex_size);
+            // Round sim-space f32 coordinates to u32 pixel indices, clamping
+            // to the valid sim domain. Negative values clamp to 0; values
+            // above `sim_w - 1` clamp to `sim_w - 1`. For NaN inputs,
+            // `round()` and `clamp()` both propagate NaN, but Rust's
+            // saturating-cast semantics (MSRV ≥ 1.45) map `NaN as u32` to 0
+            // — so the final pixel is always a valid in-bounds index.
+            let p0x = m0x.round().clamp(0.0, (sim_w - 1) as f32) as u32;
+            let p0y = m0y.round().clamp(0.0, (sim_h - 1) as f32) as u32;
+            let p1x = m1x.round().clamp(0.0, (sim_w - 1) as f32) as u32;
+            let p1y = m1y.round().clamp(0.0, (sim_h - 1) as f32) as u32;
             // Rasterise with Bresenham's line algorithm.
             bresenham_line(&mut crossing_mask, p0x, p0y, p1x, p1y, sim_w, sim_h);
         }
@@ -311,73 +327,42 @@ impl SimulationStage for HexProjectionStage {
     }
 }
 
-/// Compute which of the 4 box edges a sim cell `(cx, cy)` is closest to,
-/// given the hex bounding box `[x0, x1) × [y0, y1)` in sim-cell coordinates.
+/// DD3 6-edge: return the [`HexEdge`] discriminant (`0..=5`) whose midpoint is
+/// closest to the sim cell `(cx, cy)` within the hex at `(col, row)`.
 ///
-/// Edge encoding: 0 = top (−y / min y), 1 = right (+x / max x),
-/// 2 = bottom (+y / max y), 3 = left (−x / min x).
-///
-/// Ties between opposing pairs (top/bottom or left/right) break toward the
-/// edge that `cx`/`cy` is physically closer to, which is deterministic for
-/// non-square boxes.
-fn nearest_box_edge(
+/// Uses the DD2 sim-space hex geometry: [`offset_to_pixel`] for the hex
+/// centre and [`hex_edge_midpoint`] for each of the 6 [`HexEdge::ALL`]
+/// directions. Distance is Euclidean in sim cell units. Ties break toward
+/// the lower [`HexEdge`] discriminant (deterministic, matches the DD1
+/// CCW-from-east ordering).
+fn nearest_hex_edge_in_sim_space(
     grid: &island_core::world::HexGrid,
     col: u32,
     row: u32,
     cx: u32,
     cy: u32,
-    sim_w: u32,
-    sim_h: u32,
 ) -> u8 {
-    // Recompute the hex's sim-cell bounding box.
-    let x0 = (col as u64 * sim_w as u64 / grid.cols as u64) as u32;
-    let x1 = ((col + 1) as u64 * sim_w as u64 / grid.cols as u64) as u32;
-    let y0 = (row as u64 * sim_h as u64 / grid.rows as u64) as u32;
-    let y1 = ((row + 1) as u64 * sim_h as u64 / grid.rows as u64) as u32;
-
-    // Distance of the sim cell from each of the 4 edges.
-    // Use saturating arithmetic: cx/cy should always be inside [x0,x1)×[y0,y1),
-    // but defensive clamping prevents underflow on edge cases.
-    let d_top = cy.saturating_sub(y0);
-    let d_bottom = y1.saturating_sub(1).saturating_sub(cy);
-    let d_left = cx.saturating_sub(x0);
-    let d_right = x1.saturating_sub(1).saturating_sub(cx);
-
-    // Return the index of the minimum distance.
-    let dists = [d_top, d_right, d_bottom, d_left]; // matches edge encoding
-    let mut best_edge = 0u8;
-    let mut best_dist = dists[0];
-    for (edge, &dist) in dists.iter().enumerate().skip(1) {
-        if dist < best_dist {
-            best_dist = dist;
-            best_edge = edge as u8;
+    let origin = default_grid_origin(grid.hex_size);
+    let centre = offset_to_pixel(col, row, grid.hex_size, origin);
+    // Sim cell centre in sim space: `(cx + 0.5, cy + 0.5)`, matching the
+    // DD2 aggregation kernel's world-position formula.
+    let wx = cx as f32 + 0.5;
+    let wy = cy as f32 + 0.5;
+    let mut best = HexEdge::E;
+    let mut best_d2 = f32::MAX;
+    for &edge in HexEdge::ALL.iter() {
+        let (mx, my) = hex_edge_midpoint(centre, edge, grid.hex_size);
+        let dx = wx - mx;
+        let dy = wy - my;
+        let d2 = dx * dx + dy * dy;
+        // Strict `<` preserves tie-break toward lower discriminant (HexEdge::E
+        // wins on exact ties because it is first in the ALL iteration order).
+        if d2 < best_d2 {
+            best_d2 = d2;
+            best = edge;
         }
     }
-    best_edge
-}
-
-/// Return the sim-cell coordinate of the midpoint of a box edge.
-///
-/// Edge encoding: 0 = top, 1 = right, 2 = bottom, 3 = left.
-/// `mid_x = (x0 + x1 - 1) / 2`, `mid_y = (y0 + y1 - 1) / 2` (caller pre-computes).
-fn edge_midpoint(
-    edge: u8,
-    x0: u32,
-    x1: u32,
-    y0: u32,
-    y1: u32,
-    mid_x: u32,
-    mid_y: u32,
-) -> (u32, u32) {
-    let x_last = x1.saturating_sub(1);
-    let y_last = y1.saturating_sub(1);
-    match edge {
-        0 => (mid_x, y0),     // top
-        1 => (x_last, mid_y), // right
-        2 => (mid_x, y_last), // bottom
-        3 => (x0, mid_y),     // left
-        _ => (mid_x, mid_y),  // fallback (shouldn't happen)
-    }
+    best as u8
 }
 
 /// Rasterise a line from `(x0, y0)` to `(x1, y1)` into `mask` using
@@ -800,15 +785,17 @@ mod tests {
         let hex_id = exit_hex as usize;
         let crossing = hd.river_crossing[hex_id]
             .expect("hex containing both river cells must have a crossing");
-        // Just verify they are valid box-edge values (0..=3).
+        // DD3: verify they are valid 6-edge hex values (0..=5 per DD1/DD3).
+        // Sprint 2.5 encoded box edges 0..=3; Sprint 3.5.B c1 promotes to
+        // 6-edge hex encoding. The upper bound is now 5.
         assert!(
-            crossing.entry_edge <= 3,
-            "entry_edge must be 0..=3, got {}",
+            crossing.entry_edge <= 5,
+            "entry_edge must be 0..=5 (hex edges per DD1/DD3), got {}",
             crossing.entry_edge
         );
         assert!(
-            crossing.exit_edge <= 3,
-            "exit_edge must be 0..=3, got {}",
+            crossing.exit_edge <= 5,
+            "exit_edge must be 0..=5 (hex edges per DD1/DD3), got {}",
             crossing.exit_edge
         );
     }
