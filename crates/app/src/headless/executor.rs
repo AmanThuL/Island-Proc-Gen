@@ -603,6 +603,7 @@ mod tests {
                     },
                     beauty: None,
                     preset_override: None,
+                    view_mode: None,
                 },
                 CaptureShot {
                     id: "with_beauty".into(),
@@ -619,6 +620,7 @@ mod tests {
                         resolution: (320, 200),
                     }),
                     preset_override: None,
+                    view_mode: None,
                 },
             ],
         }
@@ -685,6 +687,7 @@ mod tests {
                 },
                 beauty: None,
                 preset_override: None,
+                view_mode: None,
             }],
         };
         let req_path = write_request(dir.path(), &req);

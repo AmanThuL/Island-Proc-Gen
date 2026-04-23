@@ -13,7 +13,7 @@
 //!    `crates/data/`, so this path works unconditionally in `cargo test`.
 
 use island_core::validation::DEPOSITION_FLAG_THRESHOLD;
-use island_core::world::{BiomeType, WorldState};
+use island_core::world::{BiomeType, HexAttributeField, HexDebugAttributes, WorldState};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -127,6 +127,30 @@ pub struct SummaryMetrics {
     /// absent (sentinel for "nothing to hash").
     #[serde(default)]
     pub sediment_blake3: [u8; 32],
+
+    // ── Sprint 3.5 DD8 hex-surface witnesses ────────────────────────────────
+    /// blake3 of a deterministic byte layout of `derived.hex_attrs`
+    /// (DD2 witness). Pre-DD2 layout hashes the existing 8-field
+    /// `HexAttributes` aggregation written by `HexProjectionStage`;
+    /// DD2's aggregation kernel swap at 3.5.A c4 causes this hash to move.
+    ///
+    /// Format: `String` (64-hex). `#[serde(default)]` so pre-3.5 snapshots
+    /// deserialize into an empty string (which will not match live-compute
+    /// values — this is intentional, signalling "snapshot pre-dates DD8").
+    #[serde(default)]
+    pub hex_attrs_hash: String,
+    /// blake3 of `derived.hex_debug.river_crossing` (DD3 witness).
+    /// Pre-DD3 hashes the 4-edge encoding; DD3's 6-edge promotion at
+    /// 3.5.B c1 causes this hash to move.
+    #[serde(default)]
+    pub hex_debug_river_crossing_hash: String,
+    /// blake3 of the serialised `derived.hex_coast_class` (DD4 witness).
+    /// Pre-DD4 (including at schema-lift time) the field is `None`, so
+    /// this hash is a stable sentinel (`blake3("hex_coast_class:none:v1")`).
+    /// DD4's classifier at 3.5.C c1 populates the field, causing this hash
+    /// to move from sentinel → real.
+    #[serde(default)]
+    pub hex_coast_class_hash: String,
 }
 
 impl SummaryMetrics {
@@ -467,6 +491,12 @@ impl SummaryMetrics {
         // breaking any serialised summary.
         let promoted_lake_count: u32 = 0;
 
+        // ── Sprint 3.5 DD8 hex-surface witnesses ─────────────────────────────
+        let hex_attrs_hash = hash_hex_attrs(hex_attrs);
+        let hex_debug_river_crossing_hash =
+            hash_hex_river_crossing_opt(world.derived.hex_debug.as_ref());
+        let hex_coast_class_hash = hash_hex_coast_class_sentinel();
+
         SummaryMetrics {
             land_cell_count,
             coast_cell_count,
@@ -500,6 +530,9 @@ impl SummaryMetrics {
             mean_fog_water_input,
             promoted_lake_count,
             sediment_blake3,
+            hex_attrs_hash,
+            hex_debug_river_crossing_hash,
+            hex_coast_class_hash,
         }
     }
 }
@@ -522,6 +555,78 @@ fn blake3_field_u32(data: &[u32]) -> [u8; 32] {
         hasher.update(&v.to_le_bytes());
     }
     *hasher.finalize().as_bytes()
+}
+
+/// Sprint 3.5 DD8: hash the full contents of a [`HexAttributeField`].
+///
+/// Byte layout (all LE):
+/// `cols(u32) | rows(u32) | for each cell (row-major):
+///   { elevation(f32) | slope(f32) | rainfall(f32) | temperature(f32) |
+///     moisture(f32) | biome_weights.len(u32) | biome_weights[i](f32)... |
+///     dominant_biome(u8) | has_river(u8) }`
+fn hash_hex_attrs(attrs: &HexAttributeField) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(&attrs.cols.to_le_bytes());
+    hasher.update(&attrs.rows.to_le_bytes());
+    for cell in &attrs.attrs {
+        hasher.update(&cell.elevation.to_le_bytes());
+        hasher.update(&cell.slope.to_le_bytes());
+        hasher.update(&cell.rainfall.to_le_bytes());
+        hasher.update(&cell.temperature.to_le_bytes());
+        hasher.update(&cell.moisture.to_le_bytes());
+        let bw_len = cell.biome_weights.len() as u32;
+        hasher.update(&bw_len.to_le_bytes());
+        for w in &cell.biome_weights {
+            hasher.update(&w.to_le_bytes());
+        }
+        hasher.update(&[cell.dominant_biome as u8]);
+        hasher.update(&[cell.has_river as u8]);
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
+/// Sprint 3.5 DD8: hash the `river_crossing` field of [`HexDebugAttributes`].
+///
+/// Byte layout (all LE):
+/// `cell_count(u32) | for each Option<HexRiverCrossing>:
+///   { 0xFF 0xFF } for None OR { entry_edge(u8) exit_edge(u8) } for Some`
+///
+/// When `dbg` is `None` (hex_debug not yet computed), hashes the UTF-8 bytes
+/// of the sentinel string `"hex_debug_river_crossing:none:v1"`.
+fn hash_hex_river_crossing_opt(dbg: Option<&HexDebugAttributes>) -> String {
+    match dbg {
+        None => {
+            let hash = blake3::hash(b"hex_debug_river_crossing:none:v1");
+            hash.to_hex().to_string()
+        }
+        Some(d) => {
+            let mut hasher = blake3::Hasher::new();
+            let cell_count = d.river_crossing.len() as u32;
+            hasher.update(&cell_count.to_le_bytes());
+            for crossing in &d.river_crossing {
+                match crossing {
+                    None => {
+                        hasher.update(&[0xFF, 0xFF]);
+                    }
+                    Some(rc) => {
+                        hasher.update(&[rc.entry_edge, rc.exit_edge]);
+                    }
+                }
+            }
+            hasher.finalize().to_hex().to_string()
+        }
+    }
+}
+
+/// Sprint 3.5 DD8: stable sentinel hash for `hex_coast_class` before DD4
+/// populates `derived.hex_coast_class` (3.5.C c1).
+///
+/// Returns the blake3 hex string of `"hex_coast_class:none:v1"`. Replaced
+/// by a real hash in 3.5.C once `derived.hex_coast_class` is populated.
+fn hash_hex_coast_class_sentinel() -> String {
+    blake3::hash(b"hex_coast_class:none:v1")
+        .to_hex()
+        .to_string()
 }
 
 // ─── error ────────────────────────────────────────────────────────────────────
@@ -698,6 +803,12 @@ mod tests {
         assert_eq!(metrics.mean_fog_water_input, 0.0);
         assert_eq!(metrics.promoted_lake_count, 0);
         assert_eq!(metrics.sediment_blake3, [0_u8; 32]);
+
+        // Sprint 3.5 DD8 fields default to empty string — the deliberate
+        // signal that a pre-3.5 snapshot pre-dates DD8.
+        assert_eq!(metrics.hex_attrs_hash, "");
+        assert_eq!(metrics.hex_debug_river_crossing_hash, "");
+        assert_eq!(metrics.hex_coast_class_hash, "");
     }
 
     #[test]

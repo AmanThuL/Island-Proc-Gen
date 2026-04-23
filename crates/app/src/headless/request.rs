@@ -107,8 +107,9 @@ impl PresetOverride {
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct CaptureRequest {
     /// Schema version. Sprint 1C shipped v1; Sprint 2 bumped to v2 to add
-    /// `CaptureShot.preset_override` (see DD5). v1 request files still parse
-    /// under v2 because `preset_override` is `#[serde(default)]`.
+    /// `CaptureShot.preset_override` (DD5); Sprint 3.5 bumps to v3 to add
+    /// `CaptureShot.view_mode` (DD8). v1 and v2 request files still parse
+    /// under a v3 binary because each extension is `#[serde(default)]`.
     pub schema_version: u32,
 
     /// Stable identifier for this run.
@@ -164,6 +165,13 @@ pub struct CaptureShot {
     /// files produce bit-exact identical results under v2 binaries.
     #[serde(default)]
     pub preset_override: Option<PresetOverride>,
+
+    /// Sprint 3.5 DD8: view mode this shot renders in. `None` = `Continuous`
+    /// (legacy default), keeping v1 and v2 request files bit-compatible.
+    /// Only `schema_version: 3` requests meaningfully use `Some(HexOverlay)`
+    /// / `Some(HexOnly)`; older schemas still parse.
+    #[serde(default)]
+    pub view_mode: Option<crate::runtime::ViewMode>,
 }
 
 /// Specification for the deterministic CPU truth path.
@@ -224,6 +232,7 @@ mod tests {
                         resolution: (1280, 800),
                     }),
                     preset_override: None,
+                    view_mode: None,
                 },
                 CaptureShot {
                     id: "shot_truth_only".to_owned(),
@@ -236,6 +245,7 @@ mod tests {
                     },
                     beauty: None,
                     preset_override: None,
+                    view_mode: None,
                 },
             ],
         }
@@ -335,6 +345,7 @@ mod tests {
                     resolution: (1280, 800),
                 }),
                 preset_override: None,
+                view_mode: None,
             }],
         }
     }
@@ -415,6 +426,7 @@ mod tests {
             },
             beauty: None,
             preset_override: Some(override_spec),
+            view_mode: None,
         };
         let ron_str = ron::ser::to_string_pretty(&shot, ron::ser::PrettyConfig::default())
             .expect("serialization must succeed");
@@ -579,5 +591,89 @@ mod tests {
         assert_eq!(override_spec.prevailing_wind_dir, None);
         assert_eq!(override_spec.marine_moisture_strength, None);
         assert_eq!(override_spec.sea_level, None);
+    }
+
+    // ── Sprint 3.5 DD8: schema backward-compat gate ─────────────────────────
+
+    #[test]
+    fn schema_v1_and_v2_still_parse_under_v3_binary() {
+        // v1 fixture — no preset_override, no view_mode.
+        let v1_ron = r#"(
+            schema_version: 1,
+            run_id: Some("v1_fixture"),
+            shots: [(
+                id: "s",
+                seed: 42,
+                preset: "volcanic_single",
+                sim_resolution: 128,
+                truth: (overlays: [], include_metrics: true),
+            )],
+        )"#;
+        let v1: CaptureRequest =
+            ron::de::from_str(v1_ron).expect("v1 fixture must parse under v3 binary");
+        assert_eq!(v1.schema_version, 1);
+        assert_eq!(v1.shots.len(), 1);
+        assert!(v1.shots[0].preset_override.is_none());
+        assert!(v1.shots[0].view_mode.is_none());
+
+        // v2 fixture — has preset_override, no view_mode.
+        let v2_ron = r#"(
+            schema_version: 2,
+            run_id: Some("v2_fixture"),
+            shots: [(
+                id: "s",
+                seed: 42,
+                preset: "volcanic_single",
+                sim_resolution: 128,
+                truth: (overlays: [], include_metrics: true),
+                preset_override: Some((
+                    erosion: Some((
+                        n_batch: 0,
+                    )),
+                )),
+            )],
+        )"#;
+        let v2: CaptureRequest =
+            ron::de::from_str(v2_ron).expect("v2 fixture must parse under v3 binary");
+        assert_eq!(v2.schema_version, 2);
+        assert!(v2.shots[0].preset_override.is_some());
+        assert!(v2.shots[0].view_mode.is_none());
+
+        // v3 fixture — has explicit view_mode.
+        let v3_ron = r#"(
+            schema_version: 3,
+            run_id: Some("v3_fixture"),
+            shots: [(
+                id: "s",
+                seed: 42,
+                preset: "volcanic_single",
+                sim_resolution: 128,
+                truth: (overlays: [], include_metrics: true),
+                view_mode: Some(HexOnly),
+            )],
+        )"#;
+        let v3: CaptureRequest =
+            ron::de::from_str(v3_ron).expect("v3 fixture must parse under v3 binary");
+        assert_eq!(v3.schema_version, 3);
+        assert_eq!(
+            v3.shots[0].view_mode,
+            Some(crate::runtime::ViewMode::HexOnly)
+        );
+
+        // Downgrade invariant: stripping view_mode from v3 still parses (additive).
+        let v3_stripped = r#"(
+            schema_version: 3,
+            run_id: Some("v3_stripped"),
+            shots: [(
+                id: "s",
+                seed: 42,
+                preset: "volcanic_single",
+                sim_resolution: 128,
+                truth: (overlays: [], include_metrics: true),
+            )],
+        )"#;
+        let v3s: CaptureRequest = ron::de::from_str(v3_stripped)
+            .expect("v3 without view_mode still parses (additive extension)");
+        assert!(v3s.shots[0].view_mode.is_none());
     }
 }

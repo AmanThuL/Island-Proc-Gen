@@ -9,7 +9,10 @@
 /// regardless of intermediate hops.
 ///
 /// Invariant: `saved_visibility` is `Some` iff `view_mode != Continuous`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Sprint 3.5 DD8: now serde-serializable so headless `CaptureShot.view_mode`
+/// can specify which render mode a shot executes in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ViewMode {
     /// User controls overlay visibility freely. Default state.
     Continuous,

@@ -146,6 +146,23 @@ fn compare_or_update(filename: &str, observed: &SummaryMetrics) {
     }
     assert_eq!(observed.hex_count, expected.hex_count, "hex_count");
 
+    // ── Sprint 3.5 DD8 hash witnesses ─────────────────────────────────────────
+    // Compared as strings; committed pre-3.5 snapshots default to empty string
+    // which will not match the live-compute values — this is the intended red
+    // signal that a snapshot regen is needed (fixed by the 3.5.A c2 regen).
+    assert_eq!(
+        observed.hex_attrs_hash, expected.hex_attrs_hash,
+        "hex_attrs_hash"
+    );
+    assert_eq!(
+        observed.hex_debug_river_crossing_hash, expected.hex_debug_river_crossing_hash,
+        "hex_debug_river_crossing_hash"
+    );
+    assert_eq!(
+        observed.hex_coast_class_hash, expected.hex_coast_class_hash,
+        "hex_coast_class_hash"
+    );
+
     // Field hashes: bit-exact on same host.
     assert_eq!(
         observed.height_blake3, expected.height_blake3,

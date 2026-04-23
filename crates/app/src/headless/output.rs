@@ -553,6 +553,7 @@ mod tests {
             },
             beauty: None,
             preset_override: None,
+            view_mode: None,
         }
     }
 
@@ -572,6 +573,7 @@ mod tests {
                 resolution: (1280, 800),
             }),
             preset_override: None,
+            view_mode: None,
         }
     }
 
