@@ -97,9 +97,13 @@ Baselines under `crates/data/golden/headless/`:
 7. **Overlays are descriptors, not closures.** `OverlayRegistry` stores
    `Vec<OverlayDescriptor>`. No render-closure patterns (would lock
    Sprint 4's CPU-side PNG export path).
-8. **String field keys only in `crates/render/src/overlay.rs`.** `sim`,
-   `core::save` (error payloads aside), `core::validation` access state
-   via struct field paths like `world.authoritative.height`.
+8. **String field keys only in `crates/render/src/overlay/resolve.rs`.**
+   `sim`, `core::save` (error payloads aside), `core::validation` access
+   state via struct field paths like `world.authoritative.height`.
+   (Sprint 3.4 directorised `overlay.rs` → `overlay/{mod,catalog,range,resolve}.rs`;
+   raw field-key strings remain confined to a single file — `resolve.rs`.
+   `catalog.rs` constructs `OverlaySource` values only via
+   `resolve::source_for(SourceKey::…)`.)
 
 ---
 
@@ -243,8 +247,8 @@ app ──▶ render ──▶ gpu ──┐
   discriminant 4 opaque). Atomic rename per sprint (no alias shims per
   CLAUDE.md rename rule). Don't hardcode counts in UI — `OverlayPanel`
   iterates `registry.entries_mut()`. String keys (`"sediment"`,
-  `"deposition_flux"`, `"fog_water_input"`) stay in `overlay.rs` per
-  invariant #8.
+  `"deposition_flux"`, `"fog_water_input"`) stay in
+  `crates/render/src/overlay/resolve.rs` per invariant #8.
 - **`coast_type` overlay uses `ValueRange::Fixed(0.0, 5.0)`** (post-3.6
   LavaDelta addition; was `(0.0, 4.0)`). Range must match
   `discriminant count + 1` so Unknown=0xFF clamps transparent.
