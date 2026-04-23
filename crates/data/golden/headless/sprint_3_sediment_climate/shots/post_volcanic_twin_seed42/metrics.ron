@@ -32,6 +32,6 @@
     promoted_lake_count: 0,
     sediment_blake3: (148, 86, 240, 76, 195, 253, 39, 118, 247, 200, 36, 81, 57, 155, 178, 244, 71, 11, 246, 128, 241, 251, 81, 226, 55, 39, 146, 77, 249, 52, 111, 170),
     hex_attrs_hash: "90dc33cc344107e768237b7484752aa463f96d38dbfc8dd7640a44d9ab41a920",
-    hex_debug_river_crossing_hash: "0148eac2528033e9fe20aeed018d6a0541d84ff57831f4b8e7b64011752c676b",
+    hex_debug_river_crossing_hash: "a7d8b9720e15de71eda76b2c5aee81f6772c382933239c972319107cf0182a69",
     hex_coast_class_hash: "61a77464b55cf44ab9615df1bb1dbf9cd86172315b2580fb7c4c63c1e927ca78",
 )
