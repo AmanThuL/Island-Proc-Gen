@@ -33,5 +33,5 @@
     sediment_blake3: (210, 187, 3, 187, 217, 185, 73, 6, 180, 144, 206, 92, 149, 48, 130, 223, 150, 26, 133, 54, 244, 210, 147, 8, 83, 170, 80, 46, 221, 97, 24, 209),
     hex_attrs_hash: "a9ade4eb67726468b313b85efdf0a8a7fc457583e9c32c76f76d51fa0aa35013",
     hex_debug_river_crossing_hash: "a5c34c3f2ac6592837ccddcc0f1d883f9f01ab2ddd05b4588c4c7b4c8964667a",
-    hex_coast_class_hash: "61a77464b55cf44ab9615df1bb1dbf9cd86172315b2580fb7c4c63c1e927ca78",
+    hex_coast_class_hash: "c1e3f75aa79291d27cdbae5f4dc824acbbb83452dee8bf56b92d75e5b44bcadd",
 )
