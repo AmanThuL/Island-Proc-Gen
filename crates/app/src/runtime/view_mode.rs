@@ -1,3 +1,66 @@
+//! View-mode dispatch + the Sprint 3.5 DD5 **Dominant Surface Contract**.
+//!
+//! # DD5 Dominant Surface Contract (locked at 3.5.D close-out)
+//!
+//! With **every overlay off**, each hex on-screen must communicate the
+//! four base-read signals via the **surface alone** (no overlay-layer
+//! crutches). This is the sprint thesis — the whole reason 3.5 exists:
+//!
+//! | Signal        | Source                                           | Ships in |
+//! |---------------|--------------------------------------------------|----------|
+//! | Base fill     | Dominant biome colour (existing 8-biome palette) | 3.5.A c6 |
+//! | Elevation cue | Tonal ramp on base fill (NOT stepped extrusion)  | 3.5.A c7 |
+//! | Coast cue     | Hex-edge decoration per [`HexCoastClass`]        | 3.5.C c3 |
+//! | River cue     | Polyline per [`HexRiverCrossing`]                | 3.5.B c4 |
+//!
+//! [`HexCoastClass`]: island_core::world::HexCoastClass
+//! [`HexRiverCrossing`]: island_core::world::HexRiverCrossing
+//!
+//! # Overlay-vs-base-read policy
+//!
+//! All 20 existing overlay descriptors are now **opt-in against the base
+//! read**. The hex surface is the readable default; overlays stack on top
+//! for analytical inspection but are not required for the hex to
+//! communicate useful information.
+//!
+//! - `hex_aggregated` stays in the catalogue as a debug overlay but is
+//!   **no longer the default "hex view"**. The DD5 base-read semantics
+//!   make it redundant in HexOnly mode.
+//! - [`ViewMode::HexOnly`] displays the true-hex base surface from
+//!   `HexSurfaceRenderer` + `HexRiverRenderer` with NO user overlays.
+//! - [`ViewMode::HexOverlay`] stacks user overlays on top of the
+//!   true-hex base — the DD5 base read is still visible underneath.
+//! - [`ViewMode::Continuous`] is unchanged from Sprint 2.5: continuous
+//!   terrain + user-selected overlays; no hex surface.
+//!
+//! # Pick-once-and-commit constants backing DD5
+//!
+//! - Tonal ramp: `TONAL_MIN = 0.55`, `TONAL_MAX = 1.0`
+//!   (`shaders/hex_surface.wgsl`; locked by
+//!   `tonal_ramp_constants_match_sprint_3_5_dd5_lock`)
+//! - Edge band: `EDGE_BAND_START = 0.82`
+//!   (`shaders/hex_surface.wgsl`; locked by `edge_band_start_constant_locked`)
+//! - Class tints: `COAST_CLASS_TINTS[0..5]` maps to `palette::HEX_EDGE_*`
+//!   (`crates/render/src/hex_surface.rs`; locked by
+//!   `coast_class_tints_match_palette_constants`)
+//! - `HexCoastClass` discriminants `{Inland=0, OpenOcean=1, Beach=2,
+//!   RockyHeadland=3, Estuary=4, Cliff=5, LavaDelta=6}` (`core::world`;
+//!   locked by `hex_coast_class_discriminants_stable`)
+//!
+//! # What DD5 deliberately rejects
+//!
+//! - **Stepped extrusion for elevation** — would exaggerate per-hex Z
+//!   deltas at Fuji-like world aspects (`DEFAULT_WORLD_XZ_EXTENT = 5.0`,
+//!   aspect ≈ 0.17) into visual cliffs at every hex boundary, and would
+//!   compete with DD4 coast cliff edges for the "vertical signal" budget.
+//! - **Multi-class river colouring** — v1 uses a single `palette::RIVER`
+//!   tint with width bucketing (`RiverWidth::{Small, Medium, Main}`).
+//!   Per-class river colour (e.g. clearwater vs sediment-laden) is a
+//!   post-v1 concern.
+//! - **Per-edge coast glyphs** (estuary river-mouth glyph, rocky
+//!   broken-dash, lava stippling) — v1 uses per-hex uniform tint at the
+//!   edge band; per-edge decoration is deferred to 3.5.F polish.
+
 /// Controls which overlays are shown each frame.
 ///
 /// Leaving `Continuous` (in either direction) snapshots the user's current
@@ -12,6 +75,11 @@
 ///
 /// Sprint 3.5 DD8: now serde-serializable so headless `CaptureShot.view_mode`
 /// can specify which render mode a shot executes in.
+///
+/// Sprint 3.5.D DD5 (module-level doc above): `HexOnly` + `HexOverlay`
+/// both include the `HexSurfaceRenderer` + `HexRiverRenderer` base-read
+/// stack — the DD5 contract is satisfied by the true-hex surface itself,
+/// not by the `hex_aggregated` debug overlay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ViewMode {
     /// User controls overlay visibility freely. Default state.
