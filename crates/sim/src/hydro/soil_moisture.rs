@@ -38,6 +38,24 @@
 //! contract (the basin-id / flow_dir fields were built in 1A
 //! specifically so 1B stages can walk water information along the
 //! hydro graph, not just read scalar accumulation).
+//!
+//! ## Sprint 3.5.D DD6: `coastal_margin` SM floor
+//!
+//! After the LFPM v3 precipitation + fog coupling pass, a spatial-
+//! proximity floor is applied to land cells within Von4-distance ≤ 3
+//! of the nearest sea cell:
+//!
+//! ```text
+//! for every land cell p where Von4-dist-to-sea(p) ≤ COASTAL_MARGIN_MAX_DIST:
+//!     soil_moisture[p] = max(soil_moisture[p], COASTAL_MARGIN_SM_FLOOR)
+//! ```
+//!
+//! Rationale: CoastalScrub's `f_coast * f_dry` gates require the cell
+//! to be near the coast; LFPM v3 post-3.1.C delivers `θ = 0.05–0.20`
+//! near coasts, which is drier than typical coastal soil. A 0.25 floor
+//! on Von4 ≤ 3 land cells lifts θ into the CoastalScrub bell's active
+//! range without touching the bell structure or any other climate path.
+//! Sea cells are explicitly excluded from the floor application.
 
 use anyhow::anyhow;
 use island_core::field::ScalarField2D;
@@ -68,6 +86,19 @@ pub const FOG_WATER_GAIN: f32 = 0.30;
 /// store. Less than 1.0 because fog drip has significant surface runoff on
 /// steep volcanic terrain.
 pub const FOG_TO_SM_COUPLING: f32 = 0.60;
+
+/// Sprint 3.5.D DD6: Von4 distance threshold (in cells) from the nearest
+/// sea cell below which the coastal-margin SM floor is applied.
+/// Value-locked by `coastal_margin_sm_floor_applied` (added in c3).
+pub const COASTAL_MARGIN_MAX_DIST: u32 = 3;
+
+/// Sprint 3.5.D DD6: minimum soil-moisture floor imposed on land cells
+/// within `COASTAL_MARGIN_MAX_DIST` cells of the sea (Von4 distance).
+/// `0.25` is chosen so CoastalScrub's `f_dry = smoothstep(0.10, 0.50,
+/// 1.0 - θ)` still evaluates to `smoothstep(0.10, 0.50, 0.75) = 1.0`
+/// (the floor is not so high as to suppress the "dryish coast" signal).
+/// Value-locked by `coastal_margin_sm_floor_applied` (added in c3).
+pub const COASTAL_MARGIN_SM_FLOOR: f32 = 0.25;
 
 /// DD5: populate `world.baked.soil_moisture` and `world.derived.fog_water_input`.
 pub struct SoilMoistureStage;
@@ -233,6 +264,67 @@ impl SimulationStage for SoilMoistureStage {
                         (smoothed.get(ix, iy) + fog_water * FOG_TO_SM_COUPLING).clamp(0.0, 1.0);
                     smoothed.set(ix, iy, new_sm);
                 }
+            }
+        }
+
+        // Sprint 3.5.D DD6: coastal-margin SM floor.
+        //
+        // Multi-source Von4 BFS from all sea cells. For every land cell
+        // whose Von4 distance to the nearest sea cell is ≤
+        // COASTAL_MARGIN_MAX_DIST, apply `max(θ, COASTAL_MARGIN_SM_FLOOR)`.
+        //
+        // The BFS uses a layer-by-layer frontier so it early-terminates
+        // once the current layer depth exceeds COASTAL_MARGIN_MAX_DIST,
+        // bounding work to O(coast_len × COASTAL_MARGIN_MAX_DIST) rather
+        // than O(domain).
+        //
+        // Sea cells are skipped (the floor only applies to land cells).
+        {
+            // Seed frontier with all sea cells (dist = 0).
+            let mut frontier: Vec<(u32, u32)> = Vec::new();
+            for iy in 0..h {
+                for ix in 0..w {
+                    if coast.is_land.get(ix, iy) != 1 {
+                        frontier.push((ix, iy));
+                    }
+                }
+            }
+
+            // Track visited cells to avoid re-queuing.
+            let total = (w * h) as usize;
+            let mut visited: Vec<bool> = vec![false; total];
+            for &(ix, iy) in &frontier {
+                visited[(iy * w + ix) as usize] = true;
+            }
+
+            // BFS up to depth COASTAL_MARGIN_MAX_DIST, collecting land cells.
+            let mut next: Vec<(u32, u32)> = Vec::new();
+            let von4: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+            for _dist in 1..=COASTAL_MARGIN_MAX_DIST {
+                for &(x, y) in &frontier {
+                    for (dx, dy) in von4 {
+                        let nx = x as i32 + dx;
+                        let ny = y as i32 + dy;
+                        if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                            continue;
+                        }
+                        let (nxu, nyu) = (nx as u32, ny as u32);
+                        let idx = (nyu * w + nxu) as usize;
+                        if visited[idx] {
+                            continue;
+                        }
+                        visited[idx] = true;
+                        next.push((nxu, nyu));
+                        // Apply floor only to land cells (sea neighbours
+                        // are already in the visited set from the seed pass).
+                        if coast.is_land.get(nxu, nyu) == 1 {
+                            let old = smoothed.get(nxu, nyu);
+                            smoothed.set(nxu, nyu, old.max(COASTAL_MARGIN_SM_FLOOR));
+                        }
+                    }
+                }
+                frontier.clear();
+                std::mem::swap(&mut frontier, &mut next);
             }
         }
 

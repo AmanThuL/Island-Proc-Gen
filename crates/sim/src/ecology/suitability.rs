@@ -11,6 +11,16 @@
 //! The parameter values below are picked to give plausible tropical-
 //! volcanic-island biome distributions at v1 scale; Task 1B.9 will
 //! expose a subset to the params panel for interactive tuning.
+//!
+//! ## Sprint 3.5.D DD6: CloudForest `f_t` envelope widening
+//!
+//! The CloudForest temperature bell was previously peaked at 15 °C with
+//! `σ = 4.0`. Archetype mean temperatures are 19–24 °C, so the old bell
+//! never rose above ~0.37 in the active temperature range, suppressing
+//! CloudForest biome weight across all archetypes. Sprint 3.5.D raises
+//! `CLOUD_FOREST_T_PEAK` to 18.0 and widens `CLOUD_FOREST_T_SIGMA` to
+//! 6.0, pushing the bell into the archetype temperature range without
+//! altering the bell formula structure or any other suitability gate.
 
 use crate::climate::common::smoothstep;
 
@@ -74,8 +84,26 @@ pub(crate) const CLOUD_FOREST_SIGMA_FOG: f32 = 0.15;
 /// direct term is a secondary enhancer for high-fog cells.
 pub(crate) const CLOUD_FOREST_FOG_PEAK_WEIGHT: f32 = 0.40;
 
+/// Sprint 3.5.D DD6: CloudForest temperature bell peak.
+///
+/// Raised from 15.0 °C to 18.0 °C so the bell overlaps with archetype
+/// mean temperatures (19–24 °C). The old peak at 15 °C produced a
+/// maximum `f_t ≈ 0.37` at 19 °C, suppressing CloudForest across all
+/// archetypes. At 18 °C the bell peaks inside the archetype range.
+/// Value-locked by `cloud_forest_f_t_envelope_matches_sprint_3_5_lock`.
+pub(crate) const CLOUD_FOREST_T_PEAK: f32 = 18.0;
+
+/// Sprint 3.5.D DD6: CloudForest temperature bell width (sigma).
+///
+/// Widened from 4.0 °C to 6.0 °C alongside the peak shift so the bell
+/// has meaningful coverage across the 19–24 °C archetype range without
+/// a sharp cliff at the peak. The bell formula (`exp(-((T-T_PEAK)/T_SIGMA)^2)`)
+/// is unchanged; only the two constants shift.
+/// Value-locked by `cloud_forest_f_t_envelope_matches_sprint_3_5_lock`.
+pub(crate) const CLOUD_FOREST_T_SIGMA: f32 = 6.0;
+
 pub fn cloud_forest(env: EnvSample) -> f32 {
-    let f_t = bell(env.temperature_c, 15.0, 4.0);
+    let f_t = bell(env.temperature_c, CLOUD_FOREST_T_PEAK, CLOUD_FOREST_T_SIGMA);
     let f_theta = smoothstep(0.30, 0.75, env.soil_moisture);
     // z-bell is intentionally tighter than montane_wet_forest (0.15 vs 0.17)
     // to keep the two biomes from overlapping in elevation space.
