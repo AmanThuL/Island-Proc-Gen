@@ -48,6 +48,43 @@ pub const SKY_HORIZON: [f32; 4] = hex_rgba(0xB8C8D4);
 /// Top-of-screen zenith colour for the procedural sky gradient.
 pub const SKY_ZENITH: [f32; 4] = hex_rgba(0x1C2C44);
 
+// ─── Sprint 3.5 DD4 hex-edge tint constants (non-canonical) ─────────────────
+//
+// Used exclusively by `HexSurfaceRenderer`'s `coast_class_tints` uniform array
+// (5 entries: Beach, RockyHeadland, Estuary, Cliff, LavaDelta). These are NOT
+// pixel-locked to `palette_reference.jpg`; they are picked-once-and-commit per
+// DD4's "evidence-gathering" directive. The alpha channel controls tint blend
+// intensity in the fragment shader (higher α = stronger edge tint).
+//
+// Index mapping inside the shader's `coast_class_tints[class - 2u]`:
+//   0 = Beach  (HexCoastClass::Beach      = discriminant 2)
+//   1 = Rocky  (HexCoastClass::RockyHeadland = discriminant 3)
+//   2 = Estuary(HexCoastClass::Estuary    = discriminant 4)
+//   3 = Cliff  (HexCoastClass::Cliff      = discriminant 5)
+//   4 = Lava   (HexCoastClass::LavaDelta  = discriminant 6)
+
+/// Sprint 3.5 DD4 Beach hex-edge tint — warm sandy tone, gentle blend.
+/// Sourced from `LOWLAND` RGB (the nearest sandy-green canonical constant);
+/// alpha 0.55 keeps it gentle over varied biome fills.
+pub const HEX_EDGE_BEACH: [f32; 4] = [LOWLAND[0], LOWLAND[1], LOWLAND[2], 0.55];
+
+/// Sprint 3.5 DD4 RockyHeadland hex-edge tint — cool grey tone.
+/// Sourced from `HIGHLAND` RGB; alpha 0.60 for moderate darkening.
+pub const HEX_EDGE_ROCKY_HEADLAND: [f32; 4] = [HIGHLAND[0], HIGHLAND[1], HIGHLAND[2], 0.60];
+
+/// Sprint 3.5 DD4 Estuary hex-edge tint — blue-water tone.
+/// Sourced from `RIVER` RGB; alpha 0.60 for a clear river-mouth read.
+pub const HEX_EDGE_ESTUARY: [f32; 4] = [RIVER[0], RIVER[1], RIVER[2], 0.60];
+
+/// Sprint 3.5 DD4 Cliff hex-edge tint — strong dark blue (maximum visual weight).
+/// Sourced from `DEEP_WATER` RGB; alpha 0.80 for strong darkening at cliff edges.
+pub const HEX_EDGE_CLIFF: [f32; 4] = [DEEP_WATER[0], DEEP_WATER[1], DEEP_WATER[2], 0.80];
+
+/// Sprint 3.5 DD4 LavaDelta hex-edge tint — warm volcanic red-black.
+/// No canonical palette constant fits; this is a fresh pick. Alpha 0.80
+/// for strong warm-red signal at lava-delta edges.
+pub const HEX_EDGE_LAVA_DELTA: [f32; 4] = [0.60, 0.10, 0.05, 0.80];
+
 // ─── PaletteId ───────────────────────────────────────────────────────────────
 
 // ─── Sprint 2 / Sprint 3 CoastType palette ───────────────────────────────────

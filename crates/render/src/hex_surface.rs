@@ -36,6 +36,26 @@ use std::mem::size_of;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt as _;
 
+use crate::palette;
+
+// ── DD4 edge-tint uniform layout ─────────────────────────────────────────────
+
+/// Five edge-tint colours for the five coast classes that receive visual
+/// treatment (Beach, RockyHeadland, Estuary, Cliff, LavaDelta). Inland (0)
+/// and OpenOcean (1) are excluded; the shader skips tinting for class < 2.
+///
+/// Each entry is `[r, g, b, alpha]` in linear [0, 1]. `alpha` controls the
+/// blend intensity in the edge band (`mix(fill_rgb, tint_rgb, t * tint.a)`).
+///
+/// Indexed `[class - 2]` for `class ∈ 2..=6`.
+const COAST_CLASS_TINTS: [[f32; 4]; 5] = [
+    palette::HEX_EDGE_BEACH,          // index 0 → HexCoastClass::Beach (2)
+    palette::HEX_EDGE_ROCKY_HEADLAND, // index 1 → HexCoastClass::RockyHeadland (3)
+    palette::HEX_EDGE_ESTUARY,        // index 2 → HexCoastClass::Estuary (4)
+    palette::HEX_EDGE_CLIFF,          // index 3 → HexCoastClass::Cliff (5)
+    palette::HEX_EDGE_LAVA_DELTA,     // index 4 → HexCoastClass::LavaDelta (6)
+];
+
 // ── Depth-state contract (DD5) ────────────────────────────────────────────────
 
 /// Depth behaviour for the hex-surface pipeline — `(depth_write, depth_compare)`.
@@ -181,27 +201,36 @@ impl HexInstance {
 
 // ── Uniform ───────────────────────────────────────────────────────────────────
 
-/// View-projection + hex_size uniform — 96 bytes.
+/// View-projection + hex_size + DD4 coast-class edge-tint uniform — 176 bytes.
 ///
 /// Mirrors `struct Uniforms` in `shaders/hex_surface.wgsl` byte-for-byte:
 ///
-/// | Field      | Offset | Size | Notes |
-/// |------------|--------|------|-------|
-/// | `view_proj`| 0      | 64   | mat4x4<f32> |
-/// | `hex_size` | 64     | 4    | world-space centre-to-vertex radius |
-/// | `_pad0`    | 68     | 12   | pads `hex_size` to 16-byte boundary |
-/// | `_pad1`    | 80     | 16   | reserved for future uniforms |
+/// | Field               | Offset | Size | Notes |
+/// |---------------------|--------|------|-------|
+/// | `view_proj`         | 0      | 64   | mat4x4<f32> |
+/// | `hex_size`          | 64     | 4    | world-space centre-to-vertex radius |
+/// | `_pad0`             | 68     | 12   | pads `hex_size` to 16-byte boundary |
+/// | `coast_class_tints` | 80     | 80   | 5 × vec4<f32> — DD4 edge tint colours |
+/// | `_pad1`             | 160    | 16   | pads to 176-byte struct |
 ///
-/// Total: 96 bytes. `#[repr(C)]` + `bytemuck::Pod` guarantees byte layout
+/// Total: 176 bytes. `#[repr(C)]` + `bytemuck::Pod` guarantees byte layout
 /// matches the WGSL struct at every field boundary. Asserted by
 /// `uniforms_buffer_size_matches_wgsl_layout`.
+///
+/// `coast_class_tints` is indexed `[class - 2]` for `class ∈ 2..=6`
+/// (Beach, RockyHeadland, Estuary, Cliff, LavaDelta). Inland (0) and
+/// OpenOcean (1) skip the edge-tint path entirely in the shader.
+/// Each entry is `[r, g, b, alpha]`; `alpha` controls blend intensity.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct HexSurfaceUniforms {
-    view_proj: [[f32; 4]; 4], //  0..64 bytes
-    hex_size: f32,            // 64..68 bytes — world-space radius; c8 sets via update_hex_size
-    _pad0: [f32; 3],          // 68..80 bytes — pads hex_size to 16-byte alignment
-    _pad1: [f32; 4],          // 80..96 bytes — reserved
+    view_proj: [[f32; 4]; 4], //   0..64  bytes — mat4x4<f32>
+    hex_size: f32,            //  64..68  bytes — world-space hex radius
+    _pad0: [f32; 3],          //  68..80  bytes — pads hex_size to 16-byte boundary
+    /// DD4 edge-tint colours, indexed `[class - 2]` for `class ∈ 2..=6`.
+    /// `[r, g, b, alpha]` — alpha controls blend intensity in the edge band.
+    coast_class_tints: [[f32; 4]; 5], //  80..160 bytes — 5 × vec4<f32>
+    _pad1: [f32; 4],          // 160..176 bytes — pads to 16-byte boundary
 }
 
 // ── CPU-side mesh builders ────────────────────────────────────────────────────
@@ -334,10 +363,15 @@ impl HexSurfaceRenderer {
             mapped_at_creation: false,
         });
 
-        // ── View-projection + hex_size uniform ────────────────────────────────
+        // ── View-projection + hex_size + DD4 edge-tint uniform ───────────────
         // hex_size defaults to 1.0 to preserve pre-c8 test behaviour.
         // c8 must call `update_hex_size` with the actual `HexGrid.hex_size`
         // after calling `update_view_projection`.
+        //
+        // `coast_class_tints` is initialised once here from the compile-time
+        // `COAST_CLASS_TINTS` constant (sourced from `palette::HEX_EDGE_*`).
+        // It does not change per-frame — the tints are fixed at construction
+        // and the per-frame `update_view_projection` preserves them.
         let identity_uniforms = HexSurfaceUniforms {
             view_proj: [
                 [1.0, 0.0, 0.0, 0.0],
@@ -347,6 +381,7 @@ impl HexSurfaceRenderer {
             ],
             hex_size: 1.0,
             _pad0: [0.0; 3],
+            coast_class_tints: COAST_CLASS_TINTS,
             _pad1: [0.0; 4],
         };
         let view_proj_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -356,11 +391,14 @@ impl HexSurfaceRenderer {
         });
 
         // ── Bind group layout (single uniform at binding 0) ───────────────────
+        // VERTEX | FRAGMENT visibility: the fragment shader reads
+        // `coast_class_tints` for edge-band tinting (DD4). Vertex shader reads
+        // `view_proj` + `hex_size` as before.
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("hex_surface_bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -507,10 +545,15 @@ impl HexSurfaceRenderer {
         view_proj: &[[f32; 4]; 4],
         hex_size: f32,
     ) {
+        // Tints are fixed at construction (COAST_CLASS_TINTS). Re-supply them
+        // here so a single full write keeps all uniform fields coherent. This
+        // is cheaper than a partial write and avoids stale tint state if the
+        // buffer is ever re-created.
         let uniforms = HexSurfaceUniforms {
             view_proj: *view_proj,
             hex_size,
             _pad0: [0.0; 3],
+            coast_class_tints: COAST_CLASS_TINTS,
             _pad1: [0.0; 4],
         };
         queue.write_buffer(&self.view_proj_buffer, 0, bytemuck::cast_slice(&[uniforms]));
@@ -729,12 +772,10 @@ mod tests {
 
     // ── uniforms_buffer_size_matches_wgsl_layout ─────────────────────────────
 
-    /// Fix 1 layout lock: `HexSurfaceUniforms` (Rust) AND the WGSL `Uniforms`
-    /// struct MUST both be exactly 96 bytes. Checking Rust alone misses the
-    /// case where WGSL alignment rules silently bump the shader's struct to
-    /// 112 bytes or more — e.g. using `vec3<f32>` for padding (which has
-    /// 16-byte alignment and rounds up the struct span). A mismatch causes
-    /// silent corruption of all uniform values at c8 bind time.
+    /// Sprint 3.5.C c3 layout lock: `HexSurfaceUniforms` (Rust) AND the WGSL
+    /// `Uniforms` struct MUST both be exactly 176 bytes. Extended from the
+    /// pre-c3 96-byte lock to accommodate the five `coast_class_tints`
+    /// vec4<f32> entries (80 bytes) plus 16-byte tail padding.
     ///
     /// This test parses the WGSL and reads the naga-computed struct span so
     /// the two-sided contract is actually verified. Caught the c7-fix-era
@@ -744,8 +785,9 @@ mod tests {
         // Rust side.
         assert_eq!(
             size_of::<HexSurfaceUniforms>(),
-            96,
-            "HexSurfaceUniforms must be exactly 96 bytes to match shaders/hex_surface.wgsl"
+            176,
+            "HexSurfaceUniforms must be exactly 176 bytes to match shaders/hex_surface.wgsl \
+             (64 view_proj + 4 hex_size + 12 pad0 + 80 coast_class_tints + 16 pad1)"
         );
 
         // WGSL side — parse the shader and compute the Uniforms struct span.
@@ -766,10 +808,10 @@ mod tests {
             panic!("`Uniforms` must be a struct type");
         };
         assert_eq!(
-            span, 96,
-            "WGSL `Uniforms` struct must be exactly 96 bytes; naga computed \
-             {span}. Likely cause: a `vec3<f32>` field bumps alignment and \
-             pushes the struct to 112 bytes. Use three `f32` scalars instead."
+            span, 176,
+            "WGSL `Uniforms` struct must be exactly 176 bytes; naga computed \
+             {span}. Breakdown: 64 view_proj + 4 hex_size + 12 _pad0 (three f32) \
+             + 80 coast_class_tints (5 × vec4) + 16 _pad1 (vec4)."
         );
     }
 
@@ -852,6 +894,66 @@ mod tests {
         assert!(
             src.contains("const TONAL_MAX: f32 = 1.0;"),
             "hex_surface.wgsl TONAL_MAX drifted from DD5 lock (1.0)"
+        );
+    }
+
+    // ── coast_class_tint_array_covers_all_five_classes ────────────────────────
+
+    /// `COAST_CLASS_TINTS` must have exactly 5 entries (Beach..=LavaDelta) and
+    /// each entry's alpha must be in the range (0.0, 1.0] so tinting is visible
+    /// but never fully opaque (which would erase the biome fill entirely).
+    ///
+    /// This is a CPU-only layout + value lock test — no GPU adapter required.
+    #[test]
+    fn coast_class_tint_array_covers_all_five_classes() {
+        assert_eq!(
+            COAST_CLASS_TINTS.len(),
+            5,
+            "COAST_CLASS_TINTS must have 5 entries (Beach, RockyHeadland, Estuary, Cliff, LavaDelta)"
+        );
+        for (i, tint) in COAST_CLASS_TINTS.iter().enumerate() {
+            let [r, g, b, a] = *tint;
+            assert!(
+                (0.0..=1.0).contains(&r) && (0.0..=1.0).contains(&g) && (0.0..=1.0).contains(&b),
+                "COAST_CLASS_TINTS[{i}] RGB out of [0, 1]: {tint:?}"
+            );
+            assert!(
+                a > 0.0 && a <= 1.0,
+                "COAST_CLASS_TINTS[{i}] alpha must be in (0, 1]: {a}"
+            );
+        }
+    }
+
+    // ── coast_class_tints_distinct_per_class ─────────────────────────────────
+
+    /// Each of the 5 coast-class tints must be visually distinguishable — no
+    /// two entries should be identical. This guards against accidental copy-paste
+    /// where all tints end up the same colour.
+    #[test]
+    fn coast_class_tints_distinct_per_class() {
+        for i in 0..COAST_CLASS_TINTS.len() {
+            for j in (i + 1)..COAST_CLASS_TINTS.len() {
+                assert_ne!(
+                    COAST_CLASS_TINTS[i], COAST_CLASS_TINTS[j],
+                    "COAST_CLASS_TINTS[{i}] == COAST_CLASS_TINTS[{j}]; each coast class \
+                     must have a distinct tint"
+                );
+            }
+        }
+    }
+
+    // ── edge_band_start_constant_locked ──────────────────────────────────────
+
+    /// DD4 Sprint 3.5.C c3 pick-once-and-commit lock: the WGSL
+    /// `EDGE_BAND_START` constant must remain `0.82`. Any change to the visual
+    /// threshold requires this test to be updated along with a documented
+    /// rationale in the sprint doc.
+    #[test]
+    fn edge_band_start_constant_locked() {
+        let src = include_str!("../../../shaders/hex_surface.wgsl");
+        assert!(
+            src.contains("const EDGE_BAND_START: f32 = 0.82;"),
+            "hex_surface.wgsl EDGE_BAND_START drifted from DD4 Sprint 3.5.C c3 lock (0.82)"
         );
     }
 

@@ -31,7 +31,7 @@ use island_core::{
     pipeline::SimulationPipeline,
     preset::IslandArchetypePreset,
     seed::Seed,
-    world::{Resolution, WorldState},
+    world::{HexCoastClass, Resolution, WorldState},
 };
 use render::HexInstance;
 use render::{
@@ -428,6 +428,11 @@ fn load_preset() -> IslandArchetypePreset {
 /// is `None` (pipeline not yet run, or partial run), returns an empty `Vec`
 /// — a 0-instance upload makes `HexSurfaceRenderer::draw` a no-op.
 ///
+/// `world.derived.hex_coast_class` is read when available to populate
+/// `coast_class_bits` for DD4 edge-band tinting.  If `None` (pre-3.5.C
+/// pipeline), `coast_class_bits` defaults to
+/// `HexCoastClass::Inland as u32 = 0`, which skips tinting in the shader.
+///
 /// Positions are converted from sim space to world space via
 /// [`sim_to_world_scale`] so hexes overlay the terrain mesh correctly.
 /// The biome → fill colour uses the same `PaletteId::Categorical` +
@@ -442,6 +447,9 @@ pub(crate) fn build_hex_instances(world: &WorldState, world_extent: f32) -> Vec<
         _ => return Vec::new(),
     };
 
+    // DD4 coast-class data — None on pre-3.5.C pipeline runs.
+    let coast_classes = world.derived.hex_coast_class.as_ref();
+
     let sim_width = world.resolution.sim_width;
     let scale = sim_to_world_scale(sim_width, world_extent);
     let origin = default_grid_origin(hex_grid.hex_size);
@@ -452,6 +460,7 @@ pub(crate) fn build_hex_instances(world: &WorldState, world_extent: f32) -> Vec<
     for row in 0..hex_grid.rows {
         for col in 0..hex_grid.cols {
             let attr = hex_attrs.get(col, row);
+            let hex_id = (row * hex_grid.cols + col) as usize;
 
             // Sim-space centre → world-space centre.
             let (sim_cx, sim_cy) = offset_to_pixel(col, row, hex_grid.hex_size, origin);
@@ -469,8 +478,13 @@ pub(crate) fn build_hex_instances(world: &WorldState, world_extent: f32) -> Vec<
             // river_mask_bits: low byte = 1 if any river crosses this hex.
             let river_mask_bits = u32::from(attr.has_river);
 
-            // coast_class_bits: 0 = Inland sentinel; 3.5.C DD4 will populate this.
-            let coast_class_bits = 0u32;
+            // coast_class_bits: low byte = HexCoastClass discriminant (0..=6).
+            // Defaults to Inland (0) when hex_coast_class is not yet populated.
+            // Inland and OpenOcean (0, 1) skip the edge-tint path in the shader.
+            let coast_class_bits = coast_classes
+                .and_then(|v| v.get(hex_id))
+                .map(|c| *c as u32)
+                .unwrap_or(HexCoastClass::Inland as u32);
 
             instances.push(HexInstance {
                 center_xy: [world_cx, world_cy],
@@ -816,5 +830,63 @@ mod tests {
             hash_before, hash_after,
             "world aspect change must not alter authoritative.height hash"
         );
+    }
+
+    // ── build_hex_instances_populates_coast_class_bits ────────────────────────
+
+    /// Sprint 3.5.C DD4: `build_hex_instances` must read `derived.hex_coast_class`
+    /// and store each cell's HexCoastClass discriminant in the low byte of
+    /// `coast_class_bits`. Verified by constructing a full pipeline world and
+    /// checking that at least one instance has a non-Inland (>0) coast class
+    /// after the pipeline runs (which populates `hex_coast_class` via the
+    /// HexCoastClass classifier stage).
+    ///
+    /// A secondary check verifies the fallback: when `hex_coast_class` is
+    /// cleared, all instances default to Inland (0).
+    #[test]
+    fn build_hex_instances_populates_coast_class_bits() {
+        use island_core::{
+            seed::Seed,
+            world::{Resolution, WorldState},
+        };
+        use sim::default_pipeline;
+
+        let preset =
+            data::presets::load_preset("volcanic_single").expect("volcanic_single must load");
+        let resolution = Resolution::new(128, 128);
+        let mut world = WorldState::new(Seed(42), preset, resolution);
+        default_pipeline().run(&mut world).expect("pipeline.run");
+
+        let world_extent = render::DEFAULT_WORLD_XZ_EXTENT;
+
+        // ── With hex_coast_class populated: at least one coastal class > 0 ──
+        {
+            let instances = super::build_hex_instances(&world, world_extent);
+            assert!(
+                !instances.is_empty(),
+                "pipeline must produce non-empty hex instances"
+            );
+            let any_coastal = instances
+                .iter()
+                .any(|inst| (inst.coast_class_bits & 0xFF) > 0);
+            assert!(
+                any_coastal,
+                "at least one hex must have coast_class_bits > 0 (non-Inland) \
+                 after a full pipeline run with hex_coast_class populated"
+            );
+        }
+
+        // ── With hex_coast_class cleared: all instances must default to 0 ───
+        {
+            world.derived.hex_coast_class = None;
+            let instances = super::build_hex_instances(&world, world_extent);
+            let all_inland = instances
+                .iter()
+                .all(|inst| (inst.coast_class_bits & 0xFF) == 0);
+            assert!(
+                all_inland,
+                "when hex_coast_class is None all instances must default to Inland (0)"
+            );
+        }
     }
 }
