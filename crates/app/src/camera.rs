@@ -121,6 +121,13 @@ pub struct InputState {
     pub right_pressed: bool,
     pub shift_held: bool,
     pub last_cursor: Option<(f64, f64)>,
+    /// Physical-pixel cursor position recorded when the left button was last
+    /// pressed. Used by the click-vs-drag discriminator in `events.rs`: if
+    /// the cursor moved less than [`CLICK_DRAG_THRESHOLD_PHYS_PX`] between
+    /// press and release, the release is treated as a pick click.
+    ///
+    /// [`CLICK_DRAG_THRESHOLD_PHYS_PX`]: super::runtime::events::CLICK_DRAG_THRESHOLD_PHYS_PX
+    pub left_press_cursor: Option<(f64, f64)>,
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

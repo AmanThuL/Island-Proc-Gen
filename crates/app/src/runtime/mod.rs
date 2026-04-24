@@ -137,6 +137,13 @@ pub struct Runtime {
     // None on the very first frame (before the dock has laid out).
     pub(super) viewport_rect: Option<egui::Rect>,
 
+    /// The hex cell last picked by a left-click inside the viewport.
+    /// Set by the click-handler in `events.rs`; consumed by the inspect
+    /// panel (Sprint 3.5.E c3). `None` on first launch and after any
+    /// click that misses the grid or fires before the pipeline populates
+    /// `derived.hex_grid`.
+    pub(super) picked_hex: Option<hex::OffsetCoord>,
+
     // Sprint 2.6.C: World panel state (preset picker, seed, geometry sliders).
     pub(super) world_panel: WorldPanel,
 
@@ -319,6 +326,7 @@ impl Runtime {
             dock,
             dock_layout_path,
             viewport_rect: None,
+            picked_hex: None,
             world_panel,
             world_xz_extent,
         })
