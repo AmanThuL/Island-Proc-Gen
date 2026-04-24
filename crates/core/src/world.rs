@@ -423,6 +423,82 @@ pub enum CoastType {
     Unknown = 0xFF,
 }
 
+impl CoastType {
+    /// Parse a raw discriminant byte. Returns `None` for out-of-range values
+    /// (i.e. anything that is not `0..=4` or `0xFF`).
+    ///
+    /// Mirrors the `HexEdge::from_u8` pattern from `hex::geometry`.
+    #[inline]
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Cliff),
+            1 => Some(Self::Beach),
+            2 => Some(Self::Estuary),
+            3 => Some(Self::RockyHeadland),
+            4 => Some(Self::LavaDelta),
+            0xFF => Some(Self::Unknown),
+            _ => None,
+        }
+    }
+}
+
+/// Sprint 3.5 DD4: per-hex coast classification derived from the fetch-weighted
+/// majority vote of the underlying sim-cell [`CoastType`] values.
+///
+/// 7 classes total. `Inland` = hex contains no sea cells; `OpenOcean` = no
+/// land cells; the 5 coast classes mirror Sprint 3's [`CoastType`] but at hex
+/// granularity via the `sim::hex_coast_class` classifier.
+///
+/// `#[repr(u8)]` discriminants are load-bearing — they map 1:1 to the
+/// `coast_class_bits` field on `HexInstance` (c4 of this sprint / later
+/// edge-decoration renderer) AND are hashed by DD8's `hex_coast_class_hash`.
+/// Adding a variant requires a snapshot regen.
+///
+/// **Placement rationale** (per plan §2 DD4): this enum lives in
+/// `core::world` rather than `sim::hex_coast_class` because
+/// [`DerivedCaches`] owns `Option<Vec<HexCoastClass>>` and `core`
+/// cannot depend on `sim` (crate DAG invariant — core is the sink).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HexCoastClass {
+    Inland = 0,
+    OpenOcean = 1,
+    Beach = 2,
+    RockyHeadland = 3,
+    Estuary = 4,
+    Cliff = 5,
+    LavaDelta = 6,
+}
+
+impl HexCoastClass {
+    pub const ALL: [HexCoastClass; 7] = [
+        Self::Inland,
+        Self::OpenOcean,
+        Self::Beach,
+        Self::RockyHeadland,
+        Self::Estuary,
+        Self::Cliff,
+        Self::LavaDelta,
+    ];
+
+    /// Parse a raw discriminant byte. Returns `None` for out-of-range values.
+    ///
+    /// Mirrors the `HexEdge::from_u8` pattern from `hex::geometry`.
+    #[inline]
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0 => Some(Self::Inland),
+            1 => Some(Self::OpenOcean),
+            2 => Some(Self::Beach),
+            3 => Some(Self::RockyHeadland),
+            4 => Some(Self::Estuary),
+            5 => Some(Self::Cliff),
+            6 => Some(Self::LavaDelta),
+            _ => None,
+        }
+    }
+}
+
 /// Land / sea / coast classification produced by `CoastMaskStage`.
 ///
 /// `land_cell_count` is cached so downstream stages avoid re-popcounting
@@ -598,6 +674,27 @@ pub struct DerivedCaches {
     /// skipped) — purely runtime state. Invalidated under the Topography
     /// arm of `clear_stage_outputs`.
     pub volcanic_centers: Option<Vec<[f32; 2]>>,
+
+    /// Sprint 3.5 DD4: per-cell fetch-integral (sum of windward open-water
+    /// exposure from 16 raycast directions). Land cells hold the raycast
+    /// result; sea cells hold `0.0`. Computed and persisted by
+    /// [`CoastTypeStage`] — read by the `sim::hex_coast_class` classifier
+    /// to produce `hex_coast_class`. Intermediate derived field — not
+    /// hashed in `SummaryMetrics` directly; the downstream
+    /// `hex_coast_class_hash` witnesses the classifier's output.
+    ///
+    /// Invalidation: cleared under `StageId::CoastType` arm (co-located
+    /// with `coast_type`, NOT `Coastal`).
+    pub coast_fetch_integral: Option<crate::field::ScalarField2D<f32>>,
+
+    /// Sprint 3.5 DD4: per-hex coast classification. `Vec<HexCoastClass>`
+    /// with one entry per hex (indexed in row-major order matching
+    /// [`HexAttributeField`]). Populated by the `sim::hex_coast_class`
+    /// classifier during [`HexProjectionStage::run`].
+    ///
+    /// Invalidation: cleared under `StageId::HexProjection` arm (same
+    /// arm as `hex_attrs` / `hex_debug` / `hex_grid`).
+    pub hex_coast_class: Option<Vec<HexCoastClass>>,
 }
 
 // ─── WorldState ──────────────────────────────────────────────────────────────

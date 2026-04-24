@@ -13,7 +13,9 @@
 //!    `crates/data/`, so this path works unconditionally in `cargo test`.
 
 use island_core::validation::DEPOSITION_FLAG_THRESHOLD;
-use island_core::world::{BiomeType, HexAttributeField, HexDebugAttributes, WorldState};
+use island_core::world::{
+    BiomeType, HexAttributeField, HexCoastClass, HexDebugAttributes, WorldState,
+};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -495,7 +497,7 @@ impl SummaryMetrics {
         let hex_attrs_hash = hash_hex_attrs(hex_attrs);
         let hex_debug_river_crossing_hash =
             hash_hex_river_crossing_opt(world.derived.hex_debug.as_ref());
-        let hex_coast_class_hash = hash_hex_coast_class_sentinel();
+        let hex_coast_class_hash = hash_hex_coast_class_opt(world.derived.hex_coast_class.as_ref());
 
         SummaryMetrics {
             land_cell_count,
@@ -618,15 +620,31 @@ fn hash_hex_river_crossing_opt(dbg: Option<&HexDebugAttributes>) -> String {
     }
 }
 
-/// Sprint 3.5 DD8: stable sentinel hash for `hex_coast_class` before DD4
-/// populates `derived.hex_coast_class` (3.5.C c1).
+/// Sprint 3.5 DD4/DD8: hash the per-hex [`HexCoastClass`] discriminants.
 ///
-/// Returns the blake3 hex string of `"hex_coast_class:none:v1"`. Replaced
-/// by a real hash in 3.5.C once `derived.hex_coast_class` is populated.
-fn hash_hex_coast_class_sentinel() -> String {
-    blake3::hash(b"hex_coast_class:none:v1")
-        .to_hex()
-        .to_string()
+/// Byte layout: `cell_count(u32 LE) | for each HexCoastClass: u8 discriminant`.
+/// Returns a 64-hex blake3 string.
+///
+/// When `cls` is `None` (classifier hasn't run, e.g. pre-Sprint-3.5.C
+/// pipeline or prerequisite fields absent), returns the stable sentinel
+/// `blake3("hex_coast_class:none:v1")` so a partial pipeline run still
+/// produces a deterministic hash. This is the same string the old
+/// `hash_hex_coast_class_sentinel` produced, preserving backward
+/// compatibility for any pre-c1 baselines that held the sentinel value.
+fn hash_hex_coast_class_opt(cls: Option<&Vec<HexCoastClass>>) -> String {
+    match cls {
+        None => blake3::hash(b"hex_coast_class:none:v1")
+            .to_hex()
+            .to_string(),
+        Some(v) => {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&(v.len() as u32).to_le_bytes());
+            for c in v.iter() {
+                hasher.update(&[*c as u8]);
+            }
+            hasher.finalize().to_hex().to_string()
+        }
+    }
 }
 
 // ─── error ────────────────────────────────────────────────────────────────────

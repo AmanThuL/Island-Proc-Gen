@@ -376,6 +376,11 @@ fn run_v2(world: &mut WorldState) -> anyhow::Result<()> {
     let mut out = ScalarField2D::<u8>::new(width, height);
     out.data.fill(CoastType::Unknown as u8);
 
+    // Sprint 3.5 DD4: persist the fetch-integral scalar so that
+    // `sim::hex_coast_class` can weight the per-hex majority vote without
+    // re-running the raycasts. Sea cells stay at `0.0` (default fill).
+    let mut fetch_integral = ScalarField2D::<f32>::new(width, height);
+
     for i in 0..n_cells {
         if is_coast_data[i] != 1 {
             continue;
@@ -405,6 +410,10 @@ fn run_v2(world: &mut WorldState) -> anyhow::Result<()> {
             (0.0, [0u32; FETCH_DIRS as usize])
         };
 
+        // Sprint 3.5 DD4: store the fetch-integral value for land cells.
+        // River-mouth cells fall through to exposure_v2 = 0.0 (not fetched).
+        fetch_integral.data[i] = exposure_v2;
+
         let coast_type = if is_river_mouth {
             CoastType::Estuary
         } else if age_bias > 0.0 && s > S_LAVA_LOW && s < S_LAVA_HIGH && dist_vol < R_LAVA {
@@ -423,6 +432,8 @@ fn run_v2(world: &mut WorldState) -> anyhow::Result<()> {
     }
 
     world.derived.coast_type = Some(out);
+    // Sprint 3.5 DD4: persist fetch integral for the hex coast classifier.
+    world.derived.coast_fetch_integral = Some(fetch_integral);
     Ok(())
 }
 

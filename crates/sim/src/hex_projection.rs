@@ -355,6 +355,13 @@ impl SimulationStage for HexProjectionStage {
         world.derived.hex_slope_variance_per_cell = Some(hex_slope_var);
         world.derived.hex_accessibility_per_cell = Some(hex_access);
         world.derived.hex_river_crossing_mask = Some(crossing_mask);
+
+        // Sprint 3.5 DD4: classify hex coast classes. Must run AFTER
+        // `hex_grid` + `coast_type` + `coast_mask` are written.
+        // Returns `None` when any prerequisite is absent (e.g. pre-Sprint-3
+        // pipelines without a CoastTypeStage run).
+        world.derived.hex_coast_class = crate::hex_coast_class::classify_hex_coast_classes(world);
+
         Ok(())
     }
 }

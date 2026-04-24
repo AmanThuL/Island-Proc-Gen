@@ -232,8 +232,13 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
         }
 
         // CoastTypeStage: writes derived.coast_type.
+        // Sprint 3.5 DD4: also clears derived.coast_fetch_integral — the
+        // persisted fetch-integral scalar populated by the V2 classifier.
+        // Cleared here (NOT in the Coastal arm) to mirror coast_type's own
+        // arm; both are produced by CoastTypeStage and invalidated together.
         StageId::CoastType => {
             world.derived.coast_type = None;
+            world.derived.coast_fetch_integral = None;
         }
 
         // TemperatureStage: writes baked.temperature.
@@ -283,7 +288,8 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
         // HexProjectionStage: writes derived.hex_grid + derived.hex_attrs
         // + derived.hex_dominant_per_cell + derived.hex_debug
         // + derived.hex_slope_variance_per_cell + derived.hex_accessibility_per_cell
-        // + derived.hex_river_crossing_mask.
+        // + derived.hex_river_crossing_mask
+        // + derived.hex_coast_class (Sprint 3.5 DD4).
         StageId::HexProjection => {
             world.derived.hex_grid = None;
             world.derived.hex_attrs = None;
@@ -292,6 +298,7 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
             world.derived.hex_slope_variance_per_cell = None;
             world.derived.hex_accessibility_per_cell = None;
             world.derived.hex_river_crossing_mask = None;
+            world.derived.hex_coast_class = None;
         }
     }
 }

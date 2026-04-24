@@ -12,6 +12,7 @@
 pub mod climate;
 pub mod ecology;
 pub mod geomorph;
+pub mod hex_coast_class;
 pub mod hex_projection;
 pub mod hydro;
 pub mod invalidation;
