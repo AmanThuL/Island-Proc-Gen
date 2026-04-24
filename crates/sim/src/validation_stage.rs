@@ -38,9 +38,9 @@ use island_core::preset::PrecipitationVariant;
 use island_core::validation::{
     ValidationError, accumulation_monotone, basin_partition_dag,
     basin_partition_post_erosion_well_formed, biome_weights_normalized, coast_type_v2_well_formed,
-    coast_type_well_formed, coastline_consistency, deposition_zone_fraction_realistic,
-    erosion_no_excessive_sea_crossing, erosion_no_explosion, hex_attrs_present,
-    hex_coast_class_requires_fetch_integral, hex_coast_class_well_formed,
+    coast_type_well_formed, coastal_margin_sm_floor_applied, coastline_consistency,
+    deposition_zone_fraction_realistic, erosion_no_excessive_sea_crossing, erosion_no_explosion,
+    hex_attrs_present, hex_coast_class_requires_fetch_integral, hex_coast_class_well_formed,
     hex_river_crossing_edges_in_range, precipitation_mass_balance, precipitation_nonneg,
     river_termination, river_width_matches_crossing_presence, sediment_bounded,
     temperature_physical_range,
@@ -118,6 +118,11 @@ impl SimulationStage for ValidationStage {
         ) {
             skip_if_missing(precipitation_mass_balance(world))?;
         }
+
+        // Sprint 3.5.D (DD6): the `coastal_margin` SM floor must be applied
+        // to every land cell with Von4-distance ≤ 3 to sea. Self-skips when
+        // `baked.soil_moisture` or `derived.coast_mask` are None.
+        coastal_margin_sm_floor_applied(world)?;
 
         Ok(())
     }

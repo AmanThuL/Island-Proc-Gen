@@ -238,6 +238,26 @@ mod tests {
     /// future tuning changes surface as a compile-time test diff.
     /// Candidate A values: sigma_fog=0.15, peak_weight=0.40.
     #[test]
+    fn cloud_forest_f_t_envelope_matches_sprint_3_5_lock() {
+        // Sprint 3.5.D DD6 lock (plan §4 invariant #7): the CloudForest
+        // f_t bell envelope was widened from (peak=15, sigma=4) to
+        // (peak=18, sigma=6) per plan §2 DD6 Change 2 — archetype mean
+        // temperatures are 19-24 °C; the pre-DD6 bell peaked outside the
+        // active range and gave f_t < 0.37 on every hero-seed shot.
+        // Drift here requires a deliberate baseline regen + plan update.
+        assert!(
+            (CLOUD_FOREST_T_PEAK - 18.0).abs() < f32::EPSILON,
+            "CLOUD_FOREST_T_PEAK must be 18.0 (Sprint 3.5.D DD6 lock), got {}",
+            CLOUD_FOREST_T_PEAK
+        );
+        assert!(
+            (CLOUD_FOREST_T_SIGMA - 6.0).abs() < f32::EPSILON,
+            "CLOUD_FOREST_T_SIGMA must be 6.0 (Sprint 3.5.D DD6 lock), got {}",
+            CLOUD_FOREST_T_SIGMA
+        );
+    }
+
+    #[test]
     fn cloud_forest_bell_tuning_matches_dd5() {
         // sigma_fog widened from 0.08 to 0.15 in Task 3.1.C candidate A
         // to spread the fog-dependence band across a broader inversion layer.

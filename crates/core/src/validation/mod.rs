@@ -31,7 +31,10 @@ pub mod hydro;
 
 pub use biome::biome_weights_normalized;
 
-pub use climate::{precipitation_mass_balance, precipitation_nonneg, temperature_physical_range};
+pub use climate::{
+    coastal_margin_sm_floor_applied, precipitation_mass_balance, precipitation_nonneg,
+    temperature_physical_range,
+};
 
 pub use erosion::{
     coast_type_v2_well_formed, coast_type_well_formed, deposition_zone_fraction_realistic,
@@ -264,6 +267,20 @@ pub enum ValidationError {
         "precipitation_mass_balance: mean precipitation {mean:.6} outside [{lo:.4}, {hi:.4}] on V3Lfpm"
     )]
     PrecipitationMassBalanceViolation { mean: f32, lo: f32, hi: f32 },
+
+    /// Sprint 3.5.D §4 invariant #6: a land cell within Von4-distance
+    /// `COASTAL_MARGIN_MAX_DIST = 3` to nearest sea cell has
+    /// `baked.soil_moisture < 0.25`, meaning DD6's `coastal_margin` SM floor
+    /// was not applied (or was silently reordered before LFPM + fog coupling).
+    #[error(
+        "coastal_margin_sm_floor_applied: land cell ({ix}, {iy}) at Von4-distance {dist} from sea has soil_moisture {soil_moisture:.4} < 0.25"
+    )]
+    CoastalMarginSmFloorMissed {
+        ix: u32,
+        iy: u32,
+        dist: u32,
+        soil_moisture: f32,
+    },
 
     /// A height value became non-finite (NaN or ±∞) during erosion.
     #[error("erosion: height at flat index {cell_index} is non-finite ({value})")]

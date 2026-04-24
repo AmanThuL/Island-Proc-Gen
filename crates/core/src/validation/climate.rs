@@ -142,6 +142,114 @@ pub fn precipitation_mass_balance(world: &WorldState) -> Result<(), ValidationEr
     Ok(())
 }
 
+/// Von4-distance at which the Sprint 3.5.D DD6 coastal-margin SM floor
+/// stops applying. Mirrors `COASTAL_MARGIN_MAX_DIST` in
+/// `crates/sim/src/hydro/soil_moisture.rs`. Kept as a private const here
+/// to avoid a `core → sim` dep edge (core is the sink).
+const COASTAL_MARGIN_MAX_DIST: u32 = 3;
+
+/// Floor value the DD6 change lifts every Von4 ≤ `COASTAL_MARGIN_MAX_DIST`
+/// land cell to. Mirrors `COASTAL_MARGIN_SM_FLOOR` in
+/// `crates/sim/src/hydro/soil_moisture.rs`. Absolute tolerance for the
+/// validator check is `COASTAL_MARGIN_SM_FLOOR - EPSILON` to absorb f32
+/// round-trip noise.
+const COASTAL_MARGIN_SM_FLOOR: f32 = 0.25;
+const COASTAL_MARGIN_FLOOR_EPSILON: f32 = 1e-6;
+
+/// Sprint 3.5.D §4 invariant #6: after `SoilMoistureStage::run`, every
+/// land cell whose Von4-distance to nearest sea cell is ≤ 3 must have
+/// `baked.soil_moisture >= 0.25 - EPSILON`. Protects DD6 Change 1 from
+/// silent regression (e.g. if a future edit inadvertently reorders the
+/// floor branch before LFPM + fog coupling, or drops the floor entirely).
+///
+/// Skip-if-missing: `baked.soil_moisture = None` OR `derived.coast_mask
+/// = None` → Ok, matching the other Sprint 3 climate / hydro validators.
+///
+/// Re-uses the same multi-source Von4 BFS pattern from
+/// `SoilMoistureStage::run`'s DD6 branch so the validator and the stage
+/// can't drift on distance semantics.
+///
+/// # Errors
+///
+/// * [`ValidationError::CoastalMarginSmFloorMissed`] — at least one land
+///   cell within Von4-distance ≤ 3 has soil_moisture below the floor.
+pub fn coastal_margin_sm_floor_applied(world: &WorldState) -> Result<(), ValidationError> {
+    let Some(soil_moisture) = world.baked.soil_moisture.as_ref() else {
+        return Ok(());
+    };
+    let Some(coast_mask) = world.derived.coast_mask.as_ref() else {
+        return Ok(());
+    };
+
+    let w = coast_mask.is_land.width;
+    let h = coast_mask.is_land.height;
+    if w == 0 || h == 0 {
+        return Ok(());
+    }
+
+    // Multi-source Von4 BFS from sea cells. distance[cell] = 0 on sea,
+    // then 1..=MAX for land cells within the coastal margin, and u32::MAX
+    // for land cells further inland (never reached by the bounded BFS).
+    let mut distance = vec![u32::MAX; (w * h) as usize];
+    let mut frontier: Vec<(u32, u32)> = Vec::new();
+    for iy in 0..h {
+        for ix in 0..w {
+            if coast_mask.is_land.get(ix, iy) == 0 {
+                distance[(iy * w + ix) as usize] = 0;
+                frontier.push((ix, iy));
+            }
+        }
+    }
+
+    const VON4: [(i32, i32); 4] = [(-1, 0), (1, 0), (0, -1), (0, 1)];
+    let mut next: Vec<(u32, u32)> = Vec::new();
+    for dist in 1..=COASTAL_MARGIN_MAX_DIST {
+        for &(cx, cy) in &frontier {
+            for (dx, dy) in VON4 {
+                let nx = cx as i32 + dx;
+                let ny = cy as i32 + dy;
+                if nx < 0 || ny < 0 || nx >= w as i32 || ny >= h as i32 {
+                    continue;
+                }
+                let (nxu, nyu) = (nx as u32, ny as u32);
+                let nidx = (nyu * w + nxu) as usize;
+                if distance[nidx] != u32::MAX {
+                    continue;
+                }
+                if coast_mask.is_land.get(nxu, nyu) != 1 {
+                    continue;
+                }
+                distance[nidx] = dist;
+                next.push((nxu, nyu));
+            }
+        }
+        frontier.clear();
+        std::mem::swap(&mut frontier, &mut next);
+    }
+
+    // Check every Von4 ≤ MAX_DIST land cell against the floor.
+    for iy in 0..h {
+        for ix in 0..w {
+            let idx = (iy * w + ix) as usize;
+            let d = distance[idx];
+            if d == 0 || d == u32::MAX {
+                continue; // sea OR inland (beyond floor range)
+            }
+            let sm = soil_moisture.get(ix, iy);
+            if sm < COASTAL_MARGIN_SM_FLOOR - COASTAL_MARGIN_FLOOR_EPSILON {
+                return Err(ValidationError::CoastalMarginSmFloorMissed {
+                    ix,
+                    iy,
+                    dist: d,
+                    soil_moisture: sm,
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // ─── tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -321,5 +429,103 @@ mod tests {
             ),
             "P=5 explosion must fire PrecipitationMassBalanceViolation, got: {err}"
         );
+    }
+
+    // ── coastal_margin_sm_floor_applied (Sprint 3.5.D DD6) ────────────────────
+
+    /// Build a 5×5 world with a single sea column on the left (x=0) and
+    /// land everywhere else. Von4-distances to sea: x=0 → 0, x=1 → 1,
+    /// x=2 → 2, x=3 → 3, x=4 → 4 (outside floor range).
+    fn make_coastal_world(w: u32, h: u32, soil_moisture: Vec<f32>) -> WorldState {
+        let n = (w * h) as usize;
+        let mut is_land = vec![1u8; n];
+        let mut is_sea = vec![0u8; n];
+        for iy in 0..h {
+            let idx = (iy * w) as usize;
+            is_land[idx] = 0; // x=0 column is sea
+            is_sea[idx] = 1;
+        }
+        let is_coast = vec![0u8; n];
+        let mut world = WorldState::new(Seed(0), test_preset(), Resolution::new(w, h));
+        world.derived.coast_mask = Some(make_coast_mask(w, h, is_land, is_sea, is_coast));
+        let mut sm_field = ScalarField2D::<f32>::new(w, h);
+        sm_field.data = soil_moisture;
+        world.baked.soil_moisture = Some(sm_field);
+        world
+    }
+
+    #[test]
+    fn coastal_margin_sm_floor_applied_accepts_valid_world() {
+        // 5×5: sea at x=0; land x=1..=3 at SM=0.30 (floor met); x=4 at SM=0.10 (inland, OK).
+        let w = 5_u32;
+        let h = 5_u32;
+        let n = (w * h) as usize;
+        let mut sm = vec![0.0_f32; n];
+        for iy in 0..h {
+            for ix in 0..w {
+                let idx = (iy * w + ix) as usize;
+                sm[idx] = match ix {
+                    0 => 0.0,      // sea — ignored
+                    1..=3 => 0.30, // Von4 ≤ 3 — must be ≥ 0.25
+                    _ => 0.10,     // inland — floor doesn't apply
+                };
+            }
+        }
+        let world = make_coastal_world(w, h, sm);
+        assert!(coastal_margin_sm_floor_applied(&world).is_ok());
+    }
+
+    #[test]
+    fn coastal_margin_sm_floor_applied_rejects_missing_floor() {
+        // Land cell at x=2 (Von4-dist=2 from sea) has SM=0.10 — violates floor.
+        let w = 5_u32;
+        let h = 5_u32;
+        let n = (w * h) as usize;
+        let mut sm = vec![0.30_f32; n];
+        // Zero out x=0 column (sea); break the floor on x=2 row 0.
+        for iy in 0..h {
+            sm[(iy * w) as usize] = 0.0;
+        }
+        sm[2] = 0.10; // (ix=2, iy=0): Von4-dist=2 from sea, SM below floor
+        let world = make_coastal_world(w, h, sm);
+        let err = coastal_margin_sm_floor_applied(&world).unwrap_err();
+        match err {
+            ValidationError::CoastalMarginSmFloorMissed {
+                ix,
+                iy,
+                dist,
+                soil_moisture,
+            } => {
+                assert_eq!(ix, 2);
+                assert_eq!(iy, 0);
+                assert_eq!(dist, 2);
+                assert!((soil_moisture - 0.10).abs() < 1e-6);
+            }
+            other => panic!("expected CoastalMarginSmFloorMissed, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn coastal_margin_sm_floor_applied_skip_if_missing() {
+        // baked.soil_moisture = None → Ok
+        let world = minimal_world_for_1b(4, 4);
+        assert!(coastal_margin_sm_floor_applied(&world).is_ok());
+    }
+
+    #[test]
+    fn coastal_margin_sm_floor_applied_ignores_interior_cells() {
+        // 6×3: sea at x=0; x=4 is Von4-dist=4 (beyond floor range) at SM=0.10.
+        // Validator must accept (floor doesn't apply).
+        let w = 6_u32;
+        let h = 3_u32;
+        let n = (w * h) as usize;
+        let mut sm = vec![0.30_f32; n];
+        for iy in 0..h {
+            sm[(iy * w) as usize] = 0.0; // sea column
+            sm[(iy * w + 4) as usize] = 0.10; // Von4-dist=4 — inland, floor skipped
+            sm[(iy * w + 5) as usize] = 0.10; // Von4-dist=5 — inland, floor skipped
+        }
+        let world = make_coastal_world(w, h, sm);
+        assert!(coastal_margin_sm_floor_applied(&world).is_ok());
     }
 }
