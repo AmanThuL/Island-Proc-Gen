@@ -207,6 +207,8 @@ impl Runtime {
         let dock_state = &mut self.dock.state;
         let viewport_rect = &mut self.viewport_rect;
         let world_panel = &mut self.world_panel;
+        let world = &self.world;
+        let picked_hex = self.picked_hex;
         {
             #[allow(deprecated)]
             egui::CentralPanel::default()
@@ -226,6 +228,8 @@ impl Runtime {
                         viewport_rect,
                         world_panel,
                         world_event: &mut world_event,
+                        world,
+                        picked_hex,
                     };
                     egui_dock::DockArea::new(dock_state).show_inside(ui, &mut viewer);
                 });

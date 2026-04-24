@@ -24,6 +24,8 @@ pub enum TabKind {
     Params,
     /// Runtime statistics (FPS, resolution, seed).
     Stats,
+    /// Read-only hex attribute inspector (Sprint 3.5.E DD7).
+    HexInspect,
 }
 
 impl TabKind {
@@ -36,6 +38,7 @@ impl TabKind {
             TabKind::Camera => "Camera",
             TabKind::Params => "Params",
             TabKind::Stats => "Stats",
+            TabKind::HexInspect => "Hex Inspect",
         }
     }
 
@@ -101,6 +104,7 @@ impl DockLayout {
                 TabKind::Camera,
                 TabKind::Params,
                 TabKind::Stats,
+                TabKind::HexInspect,
             ],
         );
 
@@ -182,15 +186,17 @@ mod tests {
             TabKind::Camera,
             TabKind::Params,
             TabKind::Stats,
+            TabKind::HexInspect,
         ] {
             assert!(kind.closeable(), "{kind:?} must be user-closeable");
         }
     }
 
     #[test]
-    fn default_layout_contains_all_six_tab_kinds() {
+    fn default_layout_contains_all_seven_tab_kinds() {
         let layout = DockLayout::default_layout();
         let tabs: Vec<TabKind> = layout.state.iter_all_tabs().map(|(_, t)| *t).collect();
+        // 7 tabs: Viewport + Overlays + World + Camera + Params + Stats + HexInspect
         for kind in [
             TabKind::Viewport,
             TabKind::Overlays,
@@ -198,6 +204,7 @@ mod tests {
             TabKind::Camera,
             TabKind::Params,
             TabKind::Stats,
+            TabKind::HexInspect,
         ] {
             assert!(tabs.contains(&kind), "{kind:?} must be in default layout");
         }
