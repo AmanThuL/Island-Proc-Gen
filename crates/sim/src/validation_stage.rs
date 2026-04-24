@@ -40,6 +40,7 @@ use island_core::validation::{
     basin_partition_post_erosion_well_formed, biome_weights_normalized, coast_type_v2_well_formed,
     coast_type_well_formed, coastline_consistency, deposition_zone_fraction_realistic,
     erosion_no_excessive_sea_crossing, erosion_no_explosion, hex_attrs_present,
+    hex_coast_class_requires_fetch_integral, hex_coast_class_well_formed,
     hex_river_crossing_edges_in_range, precipitation_mass_balance, precipitation_nonneg,
     river_termination, river_width_matches_crossing_presence, sediment_bounded,
     temperature_physical_range,
@@ -80,6 +81,15 @@ impl SimulationStage for ValidationStage {
         // Sprint 3.5.B c3 (DD3): river_width presence matches crossing presence.
         // Self-skips when hex_debug is None or river_width is empty.
         river_width_matches_crossing_presence(world)?;
+
+        // Sprint 3.5.C c4 (DD4): hex coast class range + LavaDelta consistency.
+        // Self-skips when hex_coast_class / coast_type / coast_mask / hex_grid = None.
+        hex_coast_class_well_formed(world)?;
+
+        // Sprint 3.5.C c4 (DD4): when hex_coast_class is populated and variant is
+        // V2FetchIntegral, coast_fetch_integral must also be present.
+        // Self-skips when hex_coast_class is None or empty, or when variant = V1Cheap.
+        hex_coast_class_requires_fetch_integral(world)?;
 
         // Sprint 2 / 2.5: self-skipping invariants — return Ok(()) when their
         // precondition fields are None, so no `skip_if_missing` wrapper needed.

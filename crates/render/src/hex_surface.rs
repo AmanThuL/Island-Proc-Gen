@@ -957,6 +957,42 @@ mod tests {
         );
     }
 
+    // ── coast_class_tints_match_palette_constants ─────────────────────────────
+
+    /// Palette ↔ COAST_CLASS_TINTS byte-equality lock (Opus c3 M1 deferral).
+    ///
+    /// `COAST_CLASS_TINTS` must reference the same RGBA values as the
+    /// corresponding `palette::HEX_EDGE_*` constants.  This test catches any
+    /// regression where one side is edited without updating the other.
+    #[test]
+    fn coast_class_tints_match_palette_constants() {
+        assert_eq!(
+            COAST_CLASS_TINTS[0],
+            palette::HEX_EDGE_BEACH,
+            "COAST_CLASS_TINTS[0] (Beach) must equal palette::HEX_EDGE_BEACH"
+        );
+        assert_eq!(
+            COAST_CLASS_TINTS[1],
+            palette::HEX_EDGE_ROCKY_HEADLAND,
+            "COAST_CLASS_TINTS[1] (RockyHeadland) must equal palette::HEX_EDGE_ROCKY_HEADLAND"
+        );
+        assert_eq!(
+            COAST_CLASS_TINTS[2],
+            palette::HEX_EDGE_ESTUARY,
+            "COAST_CLASS_TINTS[2] (Estuary) must equal palette::HEX_EDGE_ESTUARY"
+        );
+        assert_eq!(
+            COAST_CLASS_TINTS[3],
+            palette::HEX_EDGE_CLIFF,
+            "COAST_CLASS_TINTS[3] (Cliff) must equal palette::HEX_EDGE_CLIFF"
+        );
+        assert_eq!(
+            COAST_CLASS_TINTS[4],
+            palette::HEX_EDGE_LAVA_DELTA,
+            "COAST_CLASS_TINTS[4] (LavaDelta) must equal palette::HEX_EDGE_LAVA_DELTA"
+        );
+    }
+
     // ── hex_vertex_is_8_bytes ─────────────────────────────────────────────────
 
     /// `HexVertex` must be exactly 8 bytes (2 × f32).

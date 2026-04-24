@@ -764,6 +764,27 @@ mod tests {
         }
     }
 
+    /// Sprint 3.5.C c4 DD4 discriminant lock: `HexCoastClass` `#[repr(u8)]`
+    /// discriminants are load-bearing — they are packed into `HexInstance`
+    /// `coast_class_bits`, hashed by DD8's `hex_coast_class_hash`, and
+    /// consumed by the hex-surface WGSL shader. Any renumbering requires a
+    /// snapshot regen and a documented rationale.
+    ///
+    /// Enforcement mechanism: explicit `as u8` assertions for every variant +
+    /// `ALL.len()` to catch additions. Adding, removing, or renumbering a
+    /// variant → test fails.
+    #[test]
+    fn hex_coast_class_discriminants_stable() {
+        assert_eq!(HexCoastClass::Inland as u8, 0);
+        assert_eq!(HexCoastClass::OpenOcean as u8, 1);
+        assert_eq!(HexCoastClass::Beach as u8, 2);
+        assert_eq!(HexCoastClass::RockyHeadland as u8, 3);
+        assert_eq!(HexCoastClass::Estuary as u8, 4);
+        assert_eq!(HexCoastClass::Cliff as u8, 5);
+        assert_eq!(HexCoastClass::LavaDelta as u8, 6);
+        assert_eq!(HexCoastClass::ALL.len(), 7);
+    }
+
     /// Sprint 3.5 §4 item 1: `HexAttributes` must have exactly the 8 fields
     /// {elevation, slope, rainfall, temperature, moisture, biome_weights,
     /// dominant_biome, has_river}. This is the Sprint 5 S2 settlement /

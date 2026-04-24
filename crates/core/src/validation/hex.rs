@@ -5,7 +5,8 @@
 //! Sprint 5 S1's real-hex rework and the hex-grammar extensions planned for
 //! Sprint 3.5.D will add further invariants here.
 
-use crate::world::WorldState;
+use crate::preset::CoastTypeVariant;
+use crate::world::{HexCoastClass, WorldState};
 
 use super::ValidationError;
 
@@ -100,17 +101,130 @@ pub fn river_width_matches_crossing_presence(world: &WorldState) -> Result<(), V
     Ok(())
 }
 
+/// Sprint 3.5.C DD4 invariant #3: every `HexCoastClass` discriminant in
+/// `derived.hex_coast_class` must be in range `0..=6` (all known variants of
+/// [`HexCoastClass`]), and any hex classified as `LavaDelta` must have at
+/// least one underlying sim cell with `CoastType == LavaDelta` (discriminant 4).
+///
+/// Returns `Ok(())` (skip-if-missing) when any of `hex_coast_class`,
+/// `coast_type`, `coast_mask`, or `hex_grid` is `None`.
+///
+/// # Errors
+///
+/// * [`ValidationError::HexCoastClassDiscriminantOutOfRange`] — discriminant
+///   outside `0..=6`.
+/// * [`ValidationError::HexCoastClassLavaDeltaWithoutCellSupport`] — `LavaDelta`
+///   hex with no backing cell-level `CoastType::LavaDelta`.
+pub fn hex_coast_class_well_formed(world: &WorldState) -> Result<(), ValidationError> {
+    let Some(classes) = world.derived.hex_coast_class.as_ref() else {
+        return Ok(());
+    };
+    let Some(grid) = world.derived.hex_grid.as_ref() else {
+        return Ok(());
+    };
+    let Some(coast_type) = world.derived.coast_type.as_ref() else {
+        return Ok(());
+    };
+    let Some(coast_mask) = world.derived.coast_mask.as_ref() else {
+        return Ok(());
+    };
+
+    // Range check: every discriminant must map to a known HexCoastClass variant.
+    for (hex_id, cls) in classes.iter().enumerate() {
+        let disc = *cls as u8;
+        if HexCoastClass::from_u8(disc).is_none() {
+            return Err(ValidationError::HexCoastClassDiscriminantOutOfRange {
+                hex_id,
+                discriminant: disc,
+            });
+        }
+    }
+
+    // LavaDelta consistency: if a hex is classified LavaDelta, at least one land
+    // sim cell inside it must carry CoastType == LavaDelta (discriminant 4).
+    // Per Sprint 3 DD6, CoastType::LavaDelta discriminant = 4 (not HexCoastClass::LavaDelta
+    // which is 6 — these are two different enums at two different levels).
+    const COAST_TYPE_LAVADELTA_DISC: u8 = 4;
+
+    let sim_w = coast_mask.is_land.width;
+    let sim_h = coast_mask.is_land.height;
+    let hex_count = (grid.cols * grid.rows) as usize;
+
+    // Build a per-hex flag: does any sim cell mapped to this hex carry
+    // CoastType == LavaDelta?  We only check cells whose coast_type byte is
+    // COAST_TYPE_LAVADELTA_DISC; non-coast cells carry 0xFF (Unknown).
+    let mut has_lavadelta_cell = vec![false; hex_count];
+    for iy in 0..sim_h {
+        for ix in 0..sim_w {
+            let flat = coast_mask.is_land.index(ix, iy);
+            if coast_type.data[flat] == COAST_TYPE_LAVADELTA_DISC {
+                let hex_id = grid.hex_id_of_cell.get(ix, iy) as usize;
+                if hex_id < hex_count {
+                    has_lavadelta_cell[hex_id] = true;
+                }
+            }
+        }
+    }
+
+    for (hex_id, cls) in classes.iter().enumerate() {
+        if *cls == HexCoastClass::LavaDelta && !has_lavadelta_cell[hex_id] {
+            return Err(ValidationError::HexCoastClassLavaDeltaWithoutCellSupport { hex_id });
+        }
+    }
+
+    Ok(())
+}
+
+/// Sprint 3.5.C DD4 invariant #5: when `derived.hex_coast_class` is
+/// non-empty AND the active `coast_type_variant` is `V2FetchIntegral`,
+/// `derived.coast_fetch_integral` must be `Some`.
+///
+/// The V2 hex classifier weights its vote by each cell's fetch-integral
+/// value; if the field is absent the classification result is undefined.
+/// When the variant is `V1Cheap`, the fetch integral is legitimately `None`
+/// (the classifier uses uniform weighting), so the requirement is skipped.
+///
+/// Returns `Ok(())` (skip-if-missing) when `hex_coast_class` is `None`
+/// or empty.
+///
+/// # Errors
+///
+/// * [`ValidationError::HexCoastClassRequiresFetchIntegral`] — `hex_coast_class`
+///   is non-empty, variant is `V2FetchIntegral`, but `coast_fetch_integral`
+///   is `None`.
+pub fn hex_coast_class_requires_fetch_integral(world: &WorldState) -> Result<(), ValidationError> {
+    let Some(classes) = world.derived.hex_coast_class.as_ref() else {
+        return Ok(());
+    };
+    if classes.is_empty() {
+        return Ok(());
+    }
+
+    // V1Cheap does not produce a coast_fetch_integral — skip the requirement.
+    if world.preset.erosion.coast_type_variant == CoastTypeVariant::V1Cheap {
+        return Ok(());
+    }
+
+    // V2FetchIntegral: fetch field must be present.
+    if world.derived.coast_fetch_integral.is_none() {
+        return Err(ValidationError::HexCoastClassRequiresFetchIntegral);
+    }
+
+    Ok(())
+}
+
 // ─── tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::field::MaskField2D;
+    use crate::field::{MaskField2D, ScalarField2D};
+    use crate::preset::CoastTypeVariant;
     use crate::seed::Seed;
     use crate::test_support::test_preset;
     use crate::world::{
-        BakedSnapshot, CoastMask, HexAttributeField, HexAttributes, HexDebugAttributes,
-        HexRiverCrossing, Resolution, RiverWidth, WorldState,
+        BakedSnapshot, CoastMask, HexAttributeField, HexAttributes, HexDebugAttributes, HexGrid,
+        HexLayout, HexRiverCrossing, Resolution, RiverWidth, WorldState,
     };
 
     /// Build a minimal CoastMask from raw Vec<u8> data.
@@ -341,5 +455,188 @@ mod tests {
         let world = minimal_world_for_1b(4, 4);
         assert!(world.derived.hex_debug.is_none());
         assert!(river_width_matches_crossing_presence(&world).is_ok());
+    }
+
+    // ── hex_coast_class_well_formed tests (DD4, Sprint 3.5.C c4) ─────────────
+
+    /// Build a minimal HexGrid (2×2 hexes covering a 4×4 sim domain, each
+    /// 2×2 block of sim cells mapping to one hex).
+    fn make_hex_grid_2x2_on_4x4() -> HexGrid {
+        // hex_id layout: hex(0,0)=0 (cols 0..2, rows 0..2)
+        //                hex(1,0)=1 (cols 2..4, rows 0..2)
+        //                hex(0,1)=2 (cols 0..2, rows 2..4)
+        //                hex(1,1)=3 (cols 2..4, rows 2..4)
+        let mut mapping = ScalarField2D::<u32>::new(4, 4);
+        for y in 0u32..4 {
+            for x in 0u32..4 {
+                let hx = x / 2;
+                let hy = y / 2;
+                mapping.set(x, y, hy * 2 + hx);
+            }
+        }
+        HexGrid {
+            cols: 2,
+            rows: 2,
+            hex_size: 1.0,
+            layout: HexLayout::FlatTop,
+            hex_id_of_cell: mapping,
+        }
+    }
+
+    /// Build a 4×4 coast_type ScalarField2D.  All cells default to 0xFF
+    /// (Unknown / non-coast).  Caller sets specific cells to a CoastType disc.
+    fn make_coast_type_field_4x4(overrides: &[(u32, u32, u8)]) -> ScalarField2D<u8> {
+        let mut ct = ScalarField2D::<u8>::new(4, 4);
+        // Fill all with 0xFF (Unknown sentinel for non-coast cells).
+        for v in ct.data.iter_mut() {
+            *v = 0xFF;
+        }
+        for &(x, y, val) in overrides {
+            ct.set(x, y, val);
+        }
+        ct
+    }
+
+    /// A world where hex 0 is classified Beach with all cells having CoastType
+    /// Beach (discriminant 1) — must pass both range and LavaDelta checks.
+    #[test]
+    fn well_formed_accepts_valid_beach_classification() {
+        let mut world = minimal_world_for_1b(4, 4);
+        world.derived.hex_grid = Some(make_hex_grid_2x2_on_4x4());
+        // coast_type: cells (0,0) and (1,0) are Beach (disc=1), rest Unknown.
+        world.derived.coast_type = Some(make_coast_type_field_4x4(&[(0, 0, 1), (1, 0, 1)]));
+        // hex_coast_class: hex 0 = Beach (disc=2), hexes 1-3 = Inland (disc=0).
+        world.derived.hex_coast_class = Some(vec![
+            HexCoastClass::Beach,
+            HexCoastClass::Inland,
+            HexCoastClass::Inland,
+            HexCoastClass::Inland,
+        ]);
+        assert!(
+            hex_coast_class_well_formed(&world).is_ok(),
+            "Beach classification with matching cell-level coast_type must pass"
+        );
+    }
+
+    /// `HexCoastClass::LavaDelta` on hex 0 without any cell-level
+    /// `CoastType::LavaDelta` (disc 4) in hex 0's cells must fail.
+    #[test]
+    fn rejects_lavadelta_without_cell_support() {
+        let mut world = minimal_world_for_1b(4, 4);
+        world.derived.hex_grid = Some(make_hex_grid_2x2_on_4x4());
+        // coast_type: cells in hex 0 are Beach (disc=1), NOT LavaDelta (disc=4).
+        world.derived.coast_type = Some(make_coast_type_field_4x4(&[
+            (0, 0, 1), // Beach, not LavaDelta
+            (1, 0, 1),
+        ]));
+        // hex_coast_class: hex 0 = LavaDelta — but no cell has CoastType LavaDelta.
+        world.derived.hex_coast_class = Some(vec![
+            HexCoastClass::LavaDelta,
+            HexCoastClass::Inland,
+            HexCoastClass::Inland,
+            HexCoastClass::Inland,
+        ]);
+        let err = hex_coast_class_well_formed(&world).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                ValidationError::HexCoastClassLavaDeltaWithoutCellSupport { hex_id: 0 }
+            ),
+            "expected HexCoastClassLavaDeltaWithoutCellSupport at hex_id 0, got {err:?}"
+        );
+    }
+
+    /// `HexCoastClass::LavaDelta` on hex 0 IS valid when at least one cell
+    /// inside hex 0 has `CoastType == LavaDelta` (discriminant 4).
+    #[test]
+    fn accepts_lavadelta_with_cell_support() {
+        let mut world = minimal_world_for_1b(4, 4);
+        world.derived.hex_grid = Some(make_hex_grid_2x2_on_4x4());
+        // Cell (0,0) in hex 0 has CoastType::LavaDelta (disc=4).
+        world.derived.coast_type = Some(make_coast_type_field_4x4(&[
+            (0, 0, 4), // LavaDelta discriminant = 4 (CoastType level)
+        ]));
+        world.derived.hex_coast_class = Some(vec![
+            HexCoastClass::LavaDelta,
+            HexCoastClass::Inland,
+            HexCoastClass::Inland,
+            HexCoastClass::Inland,
+        ]);
+        assert!(
+            hex_coast_class_well_formed(&world).is_ok(),
+            "LavaDelta hex with a backing LavaDelta cell must pass"
+        );
+    }
+
+    /// `hex_coast_class = None` → `Ok(())`.
+    #[test]
+    fn hex_coast_class_well_formed_skip_if_missing() {
+        let world = minimal_world_for_1b(4, 4);
+        assert!(world.derived.hex_coast_class.is_none());
+        assert!(hex_coast_class_well_formed(&world).is_ok());
+    }
+
+    // Note: out-of-range discriminant test — HexCoastClass is a closed #[repr(u8)]
+    // enum; constructing a discriminant outside 0..=6 requires `unsafe` transmute.
+    // The runtime range check exists to catch ABI/memory-corruption issues not
+    // reachable in safe Rust.  The enum closure itself is the compile-time
+    // enforcement mechanism; no safe-Rust test can reach the error path.
+
+    // ── hex_coast_class_requires_fetch_integral tests (DD4, Sprint 3.5.C c4) ──
+
+    /// Both `hex_coast_class` and `coast_fetch_integral` are `Some` → `Ok`.
+    #[test]
+    fn accepts_when_fetch_integral_populated() {
+        let mut world = minimal_world_for_1b(4, 4);
+        world.derived.hex_coast_class = Some(vec![HexCoastClass::Beach]);
+        world.derived.coast_fetch_integral = Some(ScalarField2D::<f32>::new(4, 4));
+        // Default variant is V2FetchIntegral.
+        assert_eq!(
+            world.preset.erosion.coast_type_variant,
+            CoastTypeVariant::V2FetchIntegral
+        );
+        assert!(hex_coast_class_requires_fetch_integral(&world).is_ok());
+    }
+
+    /// `hex_coast_class` is non-empty, variant is `V2FetchIntegral`, but
+    /// `coast_fetch_integral` is `None` → `Err(HexCoastClassRequiresFetchIntegral)`.
+    #[test]
+    fn rejects_when_classes_populated_but_fetch_missing() {
+        let mut world = minimal_world_for_1b(4, 4);
+        world.derived.hex_coast_class = Some(vec![HexCoastClass::Beach]);
+        // coast_fetch_integral left as None (default).
+        assert!(world.derived.coast_fetch_integral.is_none());
+        assert_eq!(
+            world.preset.erosion.coast_type_variant,
+            CoastTypeVariant::V2FetchIntegral
+        );
+        let err = hex_coast_class_requires_fetch_integral(&world).unwrap_err();
+        assert!(
+            matches!(err, ValidationError::HexCoastClassRequiresFetchIntegral),
+            "expected HexCoastClassRequiresFetchIntegral, got {err:?}"
+        );
+    }
+
+    /// When the variant is `V1Cheap`, `coast_fetch_integral` is legitimately
+    /// absent and the validator must return `Ok(())`.
+    #[test]
+    fn accepts_when_v1_cheap_variant_active() {
+        let mut world = minimal_world_for_1b(4, 4);
+        world.preset.erosion.coast_type_variant = CoastTypeVariant::V1Cheap;
+        world.derived.hex_coast_class = Some(vec![HexCoastClass::Beach]);
+        // coast_fetch_integral is None — legitimate for V1Cheap.
+        assert!(world.derived.coast_fetch_integral.is_none());
+        assert!(
+            hex_coast_class_requires_fetch_integral(&world).is_ok(),
+            "V1Cheap variant must not require coast_fetch_integral"
+        );
+    }
+
+    /// `hex_coast_class = None` → `Ok(())` regardless of variant.
+    #[test]
+    fn hex_coast_class_requires_fetch_integral_skip_if_missing() {
+        let world = minimal_world_for_1b(4, 4);
+        assert!(world.derived.hex_coast_class.is_none());
+        assert!(hex_coast_class_requires_fetch_integral(&world).is_ok());
     }
 }

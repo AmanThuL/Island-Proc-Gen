@@ -39,7 +39,8 @@ pub use erosion::{
 };
 
 pub use hex::{
-    hex_attrs_present, hex_river_crossing_edges_in_range, river_width_matches_crossing_presence,
+    hex_attrs_present, hex_coast_class_requires_fetch_integral, hex_coast_class_well_formed,
+    hex_river_crossing_edges_in_range, river_width_matches_crossing_presence,
 };
 
 pub use hydro::{
@@ -131,6 +132,34 @@ pub enum ValidationError {
         has_crossing: bool,
         has_width: bool,
     },
+
+    // ── Sprint 3.5.C DD4 invariant errors ────────────────────────────────────
+    /// A `HexCoastClass` discriminant in `derived.hex_coast_class` is outside
+    /// the legal range `0..=6`. This catches ABI / memory-corruption issues
+    /// that cannot be constructed in safe Rust (the enum is closed), but may
+    /// occur in FFI or unsafe transmutes.
+    #[error(
+        "hex_coast_class_well_formed: hex_id {hex_id} has out-of-range discriminant {discriminant} (expected 0..=6)"
+    )]
+    HexCoastClassDiscriminantOutOfRange { hex_id: usize, discriminant: u8 },
+
+    /// A hex is classified as `LavaDelta` but none of its underlying sim cells
+    /// carry `CoastType::LavaDelta` (discriminant 4). The hex-level classifier
+    /// must not fabricate a LavaDelta classification without cell-level support.
+    #[error(
+        "hex_coast_class_well_formed: hex_id {hex_id} classified as LavaDelta but no underlying sim cell has CoastType == LavaDelta"
+    )]
+    HexCoastClassLavaDeltaWithoutCellSupport { hex_id: usize },
+
+    /// `derived.hex_coast_class` is populated (non-empty) but
+    /// `derived.coast_fetch_integral` is `None` while the V2FetchIntegral
+    /// classifier variant is active. The hex classifier reads the fetch
+    /// integral for exposure-weighted voting; without it the classification
+    /// is undefined.
+    #[error(
+        "hex_coast_class_requires_fetch_integral: hex_coast_class is populated but coast_fetch_integral is None (V2FetchIntegral classifier requires the fetch field)"
+    )]
+    HexCoastClassRequiresFetchIntegral,
 
     #[error("validation: missing precondition field '{field}' (stage must have run first)")]
     MissingPrecondition { field: &'static str },
