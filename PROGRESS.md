@@ -1,10 +1,13 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-23 (Sprint 3.4 closed on `dev` — `runtime.rs` /
-`validation.rs` / `overlay.rs` directorised in 5 atomic refactor commits
-`27cf464 → eb93a91` with zero behavioural change; `cargo test --workspace`
-strictly 528/8; 4 baselines `summary.ron` bit-identical modulo AD8 whitelist.
-**Sprint 3.5 Hex Surface Readability** is now active-next.)
+**Last Updated:** 2026-04-24 (Sprint 3.5 Hex Surface Readability closed on
+`dev` — 31 commits `6c0059f → a2992c5`; `cargo test --workspace` 528 → 618
+passing / 8 ignored (net +90 A–F); 4 existing baselines per-task regen +
+1 first-shipped `sprint_3_5_hex_surface/` at `schema_version: 3` (27 shots,
+3 view modes × 3 archetypes × 3 seeds). DD1 flat-top / DD2 axial-offset
+kernel / DD3 6-edge river / DD4 `HexCoastClass` / DD5 surface contract /
+DD6 bounded G7 retune / DD7 pick + `HexInspectPanel` / DD8 schema v3 all
+shipped. **Sprint 4 Compute Productization** is now active-next.)
 
 ---
 
@@ -32,35 +35,80 @@ is at [`docs/design/sprints/sprint_3_5_hex_surface_readability.md`](docs/design/
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 3.5 — Hex Surface Readability (*active-next*). First
-sprint where hex becomes a readable surface language rather than a debug
-slice. Scope per the roadmap vNext entry below: true hex rendering
-(`HexSurfaceRenderer` + 6-edge geometry replacing the debug 4-edge box),
-Hex River Grammar v1 (continuous polyline crossings), Hex Coast Grammar v1
-(5-class readable shoreline cues consuming Sprint 3's coast v2), Hex Dominant
-Surface Contract (biome / elev / coast / river = base read), Interaction
-Readability Pass (hex pick + info panel). Sprint 3.5.D is the home for the
-§10 G5 (Cliff coverage) + G7 (CloudForest / CoastalScrub foothold) residuals
-forwarded from Sprint 3.1's DONE_WITH_CONCERNS closure — see DEFERRED.
+**Primary:** Sprint 4 — Compute Productization (*active-next*). `crates/gpu/`
++ `ComputeBackend` refactor, GPU passes (hillslope / rainfall-proxy-v2 /
+hex-projection + stream-power / flow-accumulation), `island-gen` CLI
+productization, CPU/GPU parity harness, artifact-system maturity.
+Physical-unit calibration closes §10 G4. Sprint 3.5's forwarded G5 (Cliff
+coverage) and G7 CoastalScrub foothold land here too — the DD4 empirical
+escape was triggered at 3.5 close-out; slopes need the Sprint 4 unit-flux
+rework to sharpen before Cliff thresholds fire. Does NOT do first-pass
+beauty, semantic layer, or re-shape hex readability.
 
-Sprint 3.4's directorised module boundaries mean Sprint 3.5 diffs land on
-`runtime/view_mode.rs` + `runtime/events.rs` (hex-surface hooks),
-`validation/hex.rs` (new hex-surface invariants), and `overlay/{catalog,
-resolve}.rs` (new descriptors via `SourceKey` enum) rather than expanding
-already-fat single files.
+Sprint 3.5's closed contracts (frozen in CLAUDE.md Gotchas §Sprint 3.5):
+flat-top hex convention; DD2 axial-offset aggregation kernel; 6-edge
+`HexEdge` numbering `E=0/NE=1/NW=2/W=3/SW=4/SE=5`; `HexCoastClass`
+placement in `core::world` (crate-DAG constraint); DD6 `coastal_margin`
+SM floor `COASTAL_MARGIN_MAX_DIST=3` + floor 0.25; CloudForest
+`T_PEAK=18 / T_SIGMA=6`; DD7 off-grid-clicks-are-no-op + read-only
+`HexInspectPanel`; DD8 schema_version 3 + optional `view_mode` on
+`CaptureShot`; `render_stack_for(ViewMode)` parity tier-1 gate.
 
-Sprint 3.5's plan doc is not yet authored; the placeholder file exists and
-the sprint's §6 acceptance / §7 invariants will be written when 3.5 starts.
-Until then, the roadmap entry + this PROGRESS.md CURRENT FOCUS carry the
-forward-looking intent.
+Sprint 4's plan doc is not yet authored; the empty placeholder file at
+`docs/design/sprints/sprint_4_*.md` will be written when Sprint 4 starts.
+Until then, the roadmap §Sprint 4 entry carries the forward-looking intent.
 
-**Last shipped:** Sprint 3.4 Module Boundary Cleanup (2026-04-23, 5 commits).
-**Previous:** Sprint 3.1 Calibration Tail (2026-04-22, 7 commits). Both full
-tables below in RECENTLY SHIPPED.
+**Last shipped:** Sprint 3.5 Hex Surface Readability (2026-04-24, 31
+commits A→F). **Previous:** Sprint 3.4 Module Boundary Cleanup
+(2026-04-23, 5 commits). Both full tables below in RECENTLY SHIPPED.
 
 ---
 
 ## RECENTLY SHIPPED
+
+### Sprint 3.5 — Hex Surface Readability (2026-04-24, 31 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_3_5_hex_surface_readability.md`](docs/design/sprints/sprint_3_5_hex_surface_readability.md) (Obsidian symlink, gitignored)
+**Test delta:** 528 → 618 passing / 8 → 8 ignored (net +90 across A–F; includes +6 pixel_to_axial edge-case tests at 3.5.E c1, +2 screen_to_picked_hex at 3.5.E c2, +2 HexInspectPanel at 3.5.E c3, and validator + value-lock additions across A/B/C/D). Commits `6c0059f → a2992c5` (spanning 3.5.A schema lift through 3.5.F close-out).
+**Close-out status:** DD1–DD8 all shipped; DD6 bounded G7 retune reached CloudForest foothold (met); G5 Cliff coverage and G7 CoastalScrub foothold both forwarded to Sprint 4 per DD4 + Q4 empirical escape — slope sharpening and θ gating structure require Sprint 4's physical-unit calibration, not in-scope for a hex-readability sprint.
+
+Sprint 3.5 was the first sprint where hex became a readable **final**
+surface rather than a debug slice: true axial-offset aggregation, 6-edge
+river continuity, 5-class hex coast grammar, dominant-surface contract,
+and interactive pick + read-only inspect panel.
+
+| Task | What shipped | Key commits |
+|---|---|---|
+| 3.5.A (DD1/DD2/DD5/DD8) | DD8 `SummaryMetrics` extension (`hex_attrs_hash` + `hex_debug_river_crossing_hash` + `hex_coast_class_hash`) and `CaptureShot.view_mode`; `schema_version: 2 → 3`; 4 existing baselines schema-lift roll-in with real pre-3.5 hashes (no semantic truth change). True-hex axial-offset aggregation kernel in `build_hex_grid` with witnessed `hex_attrs_hash` delta. `HexSurfaceRenderer` with procedural unit-hex VB + per-instance buffer, tonal-ramp elevation cue per DD5. Runtime wiring + frame.rs/executor.rs `render_stack_for(ViewMode)` parity. DD8 `schema_v1_and_v2_still_parse_under_v3_binary` regression test + `HexAttributes` 8-field exhaustive-destructure compile-time lock. | `6c0059f` → `6d292ef` (11 commits including regen) |
+| 3.5.B (DD3) | `HexRiverCrossing` edges promoted from 4-box-edge (Sprint 2.5) to 6-hex-edge encoding (`E=0 … SE=5`). Per-hex `RiverWidth` bucket from `max(flow_accumulation)`. `HexRiverRenderer` with edge-to-edge polyline/spline. Witnessed by `hex_debug_river_crossing_hash` in 4 baselines' regen. | `1d0d7e9` → `7c508ac` (4 commits) |
+| 3.5.C (DD4) | `derived.coast_fetch_integral` persisted by `CoastTypeStage` (no duplicate raycast). `HexCoastClass` enum in `core::world` (7 variants: `Inland/OpenOcean/Beach/RockyHeadland/Estuary/Cliff/LavaDelta`) + `sim::hex_coast_class` classifier written by `HexProjectionStage`. Hex-edge decoration vocabulary per DD4 (render-side). Validators `hex_coast_class_well_formed` + `hex_coast_class_requires_fetch_integral`. | `f3a01f9` → `bc1a7c1` (4 commits) |
+| 3.5.D (DD5/DD6) | `coastal_margin` SM floor in `SoilMoistureStage` (Von4≤3 land → θ≥0.25; `COASTAL_MARGIN_MAX_DIST=3` named const). CloudForest `f_t` envelope widening (`T_PEAK 15→18`, `T_SIGMA 4→6`). DD5 dominant-surface contract locked + overlay-vs-base-read policy. Validators `coastal_margin_sm_floor_applied` + `cloud_forest_f_t_envelope_matches_sprint_3_5_lock`. | `c933c8b` → `35f5726` (4 commits) |
+| 3.5.E (DD7) | `pixel_to_axial` inverse math + 6 pick-critical edge-case tests (vertex / edge-midpoint / negative-axial / degenerate-grid / odd-row-right-edge / shipping-hex_size). Click-handler in `runtime/events.rs`: ray → sea plane → `pixel_to_offset` with click-vs-drag discrimination (`CLICK_DRAG_THRESHOLD_PHYS_PX=3.0` Manhattan). DD7 "off-grid clicks → no-op" enforced (reviewer-caught latent bug during commit). `HexInspectPanel` egui_dock tab: read-only two-column grid, 11 attrs per DD7 schema; pre-3.5 layouts fall back via existing `dock.rs` failed-parse path. | `9a4e7d9` → `776bca7` (3 commits) |
+| 3.5.F | 5th `--headless` baseline `sprint_3_5_hex_surface/` at `schema_version: 3`: 3 archetypes × 3 seeds × 3 view modes = 27 shots, all `overall_status: Passed`, truth-path bit-identical across view_modes for the same `(seed, preset)`. CLAUDE.md Gotchas §Sprint 3.5 subsection + PROGRESS.md close-out (this commit). | `a2992c5` → this commit |
+
+**§10 Acceptance verdicts at 3.5 close:**
+
+- **G5 CoastType v2 Cliff coverage** → **forwarded to Sprint 4** (DD4 Q4 empirical escape triggered). Sprint 3.1 probes had already ruled out threshold-tuning; hex-edge decoration grammar (3.5.C c3) is in place but cell-level Cliff discrimination needs Sprint 4's physical-unit K / H* calibration to sharpen slopes.
+- **G7 CloudForest foothold** → **met** (foothold > 0% on ≥ 1 archetype post-DD6 bounded retune; exact per-archetype numbers captured in 3.5.D c2's regen commit msg).
+- **G7 CoastalScrub foothold** → **forwarded to Sprint 4** (DD6 `coastal_margin` SM floor raised moisture but CoastalScrub's θ gate + temperature structure requires biome-suitability rework, explicitly out of DD6's bounded scope).
+
+**Verification evidence (captured in close-out commit msgs):**
+
+- `cargo test --workspace` = **618 passed / 0 failed / 8 ignored** (net +90 A–F).
+- `cargo clippy --workspace -- -D warnings` green throughout; `cargo fmt --all --check` green.
+- `cargo tree -p core` — no `wgpu` / `winit` / `egui*` / `png` / `image` / `tempfile` / `naga` — CLAUDE.md invariant #1 held.
+- 5 baselines:
+  - 4 existing (`sprint_1a_baseline`, `sprint_1b_acceptance`, `sprint_2_erosion`, `sprint_3_sediment_climate`) regenerated per-task across 3.5.A c2/c5, 3.5.B c2, 3.5.C c2, 3.5.D c2; truth-path diffs confined to the expected per-DD witness hashes at each regen commit.
+  - 1 first-shipped (`sprint_3_5_hex_surface/`) with 27 shots at `schema_version: 3`, self-`--headless-validate` exit 0.
+- `render_stack_for(ViewMode)` tier-1 parity test (GPU-free) green in every workspace test run. Tier-2 (`IPG_RUN_VISUAL_PARITY=1`) is opt-in and unran at close-out (pending an author-driven session with visual acceptance).
+- `HexAttributes` 8-field compile-time lock held (DD1 convention stable for Sprint 5 S2 consumer).
+
+**Handoff to Sprint 4:**
+
+- `derived.coast_fetch_integral` and `derived.hex_coast_class` are now part of the `WorldState.derived` shape; Sprint 4's GPU ports of coast-type + hex-projection must preserve their invalidation arms (`CoastType` for fetch integral, `HexProjection` for hex_coast_class).
+- `HexRiverCrossing` 6-edge encoding is the stable contract; any GPU-side river grammar must produce the same `E=0 … SE=5` numbering.
+- LFPM v3 precipitation + CloudForest `f_t` envelope are at their Sprint 3.5 values; Sprint 4's physical-unit calibration is expected to re-tune them alongside the K / H* sweep.
+- The 5th baseline's 27 shots are the regression reference for Sprint 4's GPU port: if Sprint 4 changes a stage's CPU output, the hash delta per view_mode must be explainable.
 
 ### Sprint 3.4 — Module Boundary Cleanup (2026-04-23, 5 commits on `dev`)
 
@@ -104,7 +152,12 @@ reviewed manually, applied in main, and committed. Future parallel subagent
 dispatch should include explicit absolute-path anchors in the prompt or run
 sequentially if worktree isolation cannot be trusted.
 
-### Sprint 3.1 — Calibration Tail (2026-04-22, 7 commits on `dev`)
+### Sprint 3.1 — Calibration Tail (2026-04-22, 7 commits on `dev`) [ARCHIVED]
+
+*Per "last two live here" policy, Sprint 3.1 details now live only in
+[`docs/history/progress_archive_milestone_1.md`](docs/history/progress_archive_milestone_1.md).
+Quick summary retained below; expand in the archive for full close-out
+attribution.*
 
 **Doc:** [`docs/design/sprints/sprint_3_1_calibration_tail.md`](docs/design/sprints/sprint_3_1_calibration_tail.md) + LFPM diagnosis at [`docs/design/sprints/sprint_3_1_lfpm_diagnosis.md`](docs/design/sprints/sprint_3_1_lfpm_diagnosis.md) (both Obsidian symlinks, gitignored)
 **Test delta:** 527 → 527 passing (net 0; +1 new `HS_INIT_LAND` value-lock test offset by reporting granularity). Commits `1fa1e96 → 86f0e7b`.
@@ -162,26 +215,34 @@ Live forwarded residuals. Items absorbed or shipped have been archived with
 the corresponding sprint in `docs/history/progress_archive_milestone_1.md`
 (vault symlink; see header note above).
 
-**Forwarded to Sprint 3.5.D:**
+**Resolved at Sprint 3.5 close-out:**
 
-- **§10 G5 — CoastType v2 Cliff coverage.** 0/5 archetypes post-3.1.B.
-  Sprint 3.1 probes confirmed candidate thresholds 0.08 and 0.06 yield 0/5
-  Cliff at Sprint 3 defaults because slope sharpening requires Sprint 4's
-  physical-unit K / H* calibration. Sprint 3.5.D's hex coast grammar rework
-  may produce the visual signal via edge-decoration cliffs without requiring
-  individual-cell slope > 0.06.
-- **§10 G7 — CloudForest + CoastalScrub coverage.** 0/5 for both
-  post-3.1.C. Temperature gate (bell at 15 °C) is unreachable by pure fog
-  tuning at current archetype temperature range (19–24 °C); θ gate
-  (smoothstep 0.30, 0.75) needs higher soil_moisture than the LFPM v3 output
-  delivers. Sprint 3.5.D's biome-suitability rework is the natural home —
-  temperature + θ gating structure needs to change, not the bells on top.
+- **§10 G7 CloudForest foothold** → **met** at Sprint 3.5.D via DD6
+  bounded retune (CloudForest `f_t` envelope widened to `T_PEAK=18 /
+  T_SIGMA=6`; `coastal_margin` SM floor raises θ into the bell).
+  Foothold > 0% on ≥ 1 archetype; exact per-archetype numbers in
+  3.5.D c2's regen commit msg.
+
+**Forwarded to Sprint 4 (new at 3.5 close-out):**
+
+- **§10 G5 — CoastType v2 Cliff coverage.** DD4 Q4 empirical escape
+  triggered at 3.5.C close: hex-edge decoration grammar is in place
+  but cell-level Cliff discrimination needs Sprint 4's physical-unit
+  K / H* calibration to sharpen slopes. Sprint 3.1 probes had already
+  confirmed threshold-tuning alone cannot produce Cliffs at Sprint 3
+  defaults.
+- **§10 G7 CoastalScrub foothold.** Still 0% on 5 archetypes post-DD6's
+  `coastal_margin` SM floor + CloudForest retune. DD6 was bounded
+  retune, not biome-suitability rework; CoastalScrub's combined θ
+  gate + temperature structure is the actual blocker and needs the
+  full unit-flux calibration pass that Sprint 4 brings.
 - **2.5.D / 2.5.B — `HexDebugAttributes` production contract.** Sprint 5
-  S2 (settlement / road / WFC) will redesign `accessibility_cost` when it
-  becomes a real consumer. Sprint 3.5 may revisit earlier if hex surface
-  consumers change the interface.
+  S2 (settlement / road / WFC) will redesign `accessibility_cost` when
+  it becomes a real consumer. Sprint 3.5 consumed the existing shape
+  (DD7 panel displays `accessibility_cost` read-only) but did not
+  redesign; forward to Sprint 5 S2 as previously planned.
 
-**Forwarded to Sprint 4:**
+**Forwarded to Sprint 4 (carried from 3.1):**
 
 - **§10 G4 — erosion relief drop fraction.** 0/5 archetypes hit the
   [0.10, 0.30] target post-3.1.A. Drops 0.00144–0.01447 across the 5
@@ -194,6 +255,22 @@ the corresponding sprint in `docs/history/progress_archive_milestone_1.md`
   is a normalization-by-max-P artifact inherent to the sweep structure;
   Sprint 4's physical-unit work would remove the `[0, 1]` normalization
   step in favour of absolute fluxes.
+
+**Forwarded out of Sprint 3.5 (non-G-gate):**
+
+- **Tier-2 interactive ↔ headless beauty parity test evidence.** The
+  `IPG_RUN_VISUAL_PARITY=1`-gated integration test at
+  `crates/app/tests/interactive_headless_parity.rs` (planned in 3.5.A)
+  is unran at 3.5.F close — needs a GPU-attached session and visual
+  acceptance. Tier-1 (`render_stack_for(ViewMode)` CPU parity) is
+  green in every workspace test. Not blocking Sprint 4; pick up on a
+  future visual-acceptance pass.
+- **Sprint 3.5 hero shot pack** at
+  `docs/design/sprints/sprint_3_5_visual_acceptance/` (Obsidian
+  symlink, gitignored) — 9 curated hero shots (3 archetypes × 3 seeds,
+  one representative view each) + `INDEX.md` mirroring 1A/1B/2.5
+  pattern. Requires author-driven visual curation; does not block
+  Sprint 4.
 
 **Forwarded (long-standing):**
 
@@ -227,7 +304,7 @@ distribution, no wasm build, no binary releases.
 
 ## UPCOMING SPRINTS
 
-Sprints 0 → 3.4 are shipped. Upcoming work starts at Sprint 3.5. Per-sprint
+Sprints 0 → 3.5 are shipped. Upcoming work starts at Sprint 4. Per-sprint
 plan docs are written **one at a time** after the previous sprint closes —
 the roadmap below carries the forward-looking vision until each sprint's
 doc gets authored.
@@ -240,8 +317,7 @@ doc gets authored.
 
 | Sprint | Type | Focus | Source of truth |
 |---|---|---|---|
-| 3.5 | representation | True hex surface rendering (`HexSurfaceRenderer` + 6-edge geometry replacing the 4-edge debug box), Hex River Grammar v1 (continuous polyline), Hex Coast Grammar v1 (5-class readable shoreline cues), Hex Dominant Surface Contract (biome/elev/coast/river as base read), Interaction Readability Pass (hex pick + info panel). First sprint where hex becomes a readable final surface, not a debug slice. | Roadmap §Sprint 3.5; brief at [`sprint_3_5_hex_surface_readability.md`](docs/design/sprints/sprint_3_5_hex_surface_readability.md) (empty placeholder — authored when sprint starts) |
-| 4 | infra | `crates/gpu/` + `ComputeBackend` refactor, GPU passes (hillslope / rainfall-proxy-v2 / hex-projection + stream-power / flow-accumulation), `island-gen` CLI productization, CPU/GPU parity harness, artifact-system maturity. Physical-unit calibration closes §10 G4. Does NOT do first-pass beauty, semantic layer, or re-shape hex readability. | Roadmap §Sprint 4 |
+| 4 | infra | `crates/gpu/` + `ComputeBackend` refactor, GPU passes (hillslope / rainfall-proxy-v2 / hex-projection + stream-power / flow-accumulation), `island-gen` CLI productization, CPU/GPU parity harness, artifact-system maturity. Physical-unit calibration closes §10 G4 (and unblocks 3.5's forwarded G5 Cliff coverage + G7 CoastalScrub foothold). Does NOT do first-pass beauty, semantic layer, or re-shape hex readability. | Roadmap §Sprint 4 |
 | 4.5 | presentation | Canonical base-look lock (sky / fog / sea tonality, terrain shading polish, day-light rig), Water/Coast Presentation Pass, Depth & Framing Pass, Hero Seed Pack (6–10 curated worlds), Demo Artifact Pack (polished screenshots + GIFs + before/after strip), README / Demo Story Pass. First sprint where screenshots alone sell the repo. | Roadmap §Sprint 4.5 |
 | 5 S2 | semantics | Settlement suitability + village/town placement + road graph v1 (MST + Dijkstra on hex, weighted by Sprint 3.5's semantic-consumable `accessibility_cost`). | Roadmap §Sprint 5 S2 |
 | 5 S3 | semantics | WFC / rule-based semantic filling (points of interest, local pattern coherence). Rule-based guaranteed; 5×5 WFC patch experiment stretch. | Roadmap §Sprint 5 S3 |
@@ -257,22 +333,31 @@ Nothing paused.
 
 ## QUICK REFERENCE
 
-Active sprint: **Sprint 3.5 — Hex Surface Readability** (*representation*).
+Active sprint: **Sprint 4 — Compute Productization** (*infra*).
 
-**High energy?** → Author the Sprint 3.5 plan doc into
-`docs/design/sprints/sprint_3_5_hex_surface_readability.md` (currently empty
-placeholder), then start Sprint 3.5.A (`HexSurfaceRenderer` + 6-edge hex
-geometry). The module boundaries Sprint 3.4 cleaned up mean hex-surface
-hooks land in `runtime/view_mode.rs` + `runtime/events.rs`, new hex
-invariants land in `validation/hex.rs`, and new overlays add a single
-`SourceKey` variant + `resolve.rs` arm rather than touching a grab-bag
-file. CLAUDE.local.md's subagent cadence (implementer → simplifier →
-superpowers reviewer Opus) applies.
+**High energy?** → Author the Sprint 4 plan doc into
+`docs/design/sprints/sprint_4_compute_productization.md` (currently empty
+placeholder), then start the `crates/gpu/` + `ComputeBackend` scaffolding.
+Sprint 3.5 closed with `HexSurfaceRenderer` / `HexRiverRenderer` already
+instancing-based and `render_stack_for(ViewMode)` bridging interactive
+and headless paths — GPU ports of sim stages land alongside these
+without re-shaping the render layer. CLAUDE.local.md's subagent cadence
+(implementer → simplifier → superpowers reviewer Opus) applies.
+
+**Medium energy?** → Tier-2 interactive ↔ headless parity evidence.
+Run `IPG_RUN_VISUAL_PARITY=1 cargo test -p app --test
+interactive_headless_parity` in a GPU-attached session; attach output
+as the delayed 3.5 evidence in a follow-up doc commit.
+
+**Medium energy?** → Sprint 3.5 hero shot pack at
+`docs/design/sprints/sprint_3_5_visual_acceptance/` (vault symlink).
+9 curated shots (3 archetypes × 3 seeds, one representative view each) +
+`INDEX.md` mirroring 1A/1B/2.5 pattern.
 
 **Medium energy?** → Sprint 1B paper pack. Create
 `docs/papers/sprint_packs/sprint_1b.md`: Bruijnzeel 2005 / 2011 TMCF notes,
 Chen 2023 Budyko readthrough, Core Pack #2/#3/#5/#6/#8 "Sprint 1B 落地点"
-sections. Parallelizable with any 3.5 implementation task.
+sections. Parallelizable with any Sprint 4 implementation task.
 
 **Low energy?** → Fill Sprint 1A deep reads still outstanding at
 `docs/papers/core_pack/` (Chen 2014, Génevaux 2013, Lague 2014). Or annotate
@@ -280,8 +365,10 @@ remaining Sprint 2 / 3 paper "落地点" sections.
 
 **Quick win?** → Slider cadence measurement. Re-run cost at 256² grew with
 Sprint 2's `ErosionOuterLoop` (10×10 inner iters) and Sprint 3's SPACE-lite.
-No profiling numbers captured yet. A baseline measurement here feeds into
-Sprint 4's GPU-parity budget.
+Sprint 3.5 did not add sim stages (only a `coastal_margin` branch inside
+`SoilMoistureStage::run`) so cadence is unchanged from 3.1. Still no
+profiling numbers captured; a baseline measurement here feeds Sprint 4's
+GPU-parity budget.
 
 ---
 

@@ -641,6 +641,148 @@ app ──▶ render ──▶ gpu ──┐
   (new hex-surface invariants) rather than expanding already-fat
   single files.
 
+### Sprint 3.5 (hex surface readability)
+
+- **Flat-top hex convention is load-bearing (DD1).** Rows run
+  horizontally, each hex has **width = `sqrt(3) * hex_size`**, **height
+  = `2 * hex_size`**, row vertical spacing `1.5 * hex_size`, odd rows
+  shifted east by `hex_size * sqrt(3) / 2`. Vertical edges
+  (`HexEdge::E` / `HexEdge::W`) are the rightmost/leftmost extents.
+  `crates/hex/src/geometry.rs` is the single source of truth for axial
+  ↔ pixel math; all downstream callers go through `axial_to_pixel` /
+  `pixel_to_axial` / `offset_to_pixel` / `pixel_to_offset` rather than
+  re-deriving the formulas inline.
+- **6-edge numbering lock (DD1).** `HexEdge` `#[repr(u8)]`
+  discriminants are load-bearing: `E=0, NE=1, NW=2, W=3, SW=4, SE=5`
+  (CCW from east). Used as the stored encoding in
+  `HexDebugAttributes.river_crossing` since Sprint 3.5.B c1 (was
+  4-edge box convention through Sprint 2.5). `HexEdge::from_u8`
+  validates at deserialisation boundaries; **no raw `0..=5` edge
+  indices allowed outside `crates/hex/src/geometry.rs`** — use
+  `HexEdge` variants by name.
+- **DD2 axial-offset aggregation kernel replaces the rect fallback.**
+  `build_hex_grid` in `crates/hex/src/lib.rs` uses a true-hex
+  odd-r-offset Voronoi assignment: each sim cell goes to the hex
+  whose centre is closest in the flat-top layout, not to a rectangle.
+  Odd rows shift east by half a hex width. Reassignment cells cluster
+  near odd-row boundaries. The DD2 kernel's hex-centre placement is
+  the **sole source of truth**; `offset_to_pixel` in `geometry.rs`
+  mirrors it exactly. Value-locked via
+  `offset_to_pixel_matches_build_hex_grid_centres` — if the kernel
+  formula changes, the test fires.
+- **`HexCoastClass` enum lives in `core::world`, not `sim`
+  (DD4 crate-DAG).** `DerivedCaches.hex_coast_class:
+  Option<Vec<HexCoastClass>>` forces the enum type to sit on the
+  `core` side because `core` cannot depend on `sim` (invariant #1).
+  The classifier implementation lives at
+  `crates/sim/src/hex_coast_class.rs`; the enum lives at
+  `crates/core/src/world.rs`. 7 variants: `Inland=0, OpenOcean=1,
+  Beach=2, RockyHeadland=3, Estuary=4, Cliff=5, LavaDelta=6`.
+  `#[repr(u8)]` discriminants map 1:1 to `HexInstance.coast_class_bits`
+  (render) and are hashed by `SummaryMetrics.hex_coast_class_hash`.
+- **`coast_fetch_integral` must land before `hex_coast_class`
+  (DD4 data-flow fix).** `CoastTypeStage::run` now persists
+  `derived.coast_fetch_integral: Option<ScalarField2D<f32>>` (new
+  field) so `HexProjectionStage` reads it back without re-raycasting.
+  Invariant `hex_coast_class_requires_fetch_integral` in
+  `validation/hex.rs` enforces the implication: if
+  `hex_coast_class.is_some()` then `coast_fetch_integral.is_some()`.
+  `coast_fetch_integral` clears under the **CoastType arm** of
+  `clear_stage_outputs`; `hex_coast_class` clears under the
+  **HexProjection arm**. Adding a new consumer of `coast_fetch_integral`
+  must respect these invalidation boundaries.
+- **DD6 `coastal_margin` SM floor applies Von4≤3 → θ≥0.25
+  on land.** `SoilMoistureStage::run` adds a post-LFPM branch that
+  raises soil_moisture on land cells within Von4 distance 3 of any
+  sea cell, floored at 0.25. Named const
+  `COASTAL_MARGIN_MAX_DIST: u32 = 3` locked; floor value 0.25 verified
+  by `coastal_margin_sm_floor_applied` validator. Floor raises, never
+  exceeds the 1.0 clamp.
+- **DD6 CloudForest `f_t` envelope is
+  `T_PEAK=18.0, T_SIGMA=6.0`** (widened from Sprint 3's 15.0 / 4.0 to
+  reach into the 19-24°C archetype range). Value-locked by
+  `cloud_forest_f_t_envelope_matches_sprint_3_5_lock` in
+  `crates/sim/src/ecology/suitability.rs`. Changing these without
+  updating the lock test is a bug.
+- **Dominant surface contract (DD5): base read = {biome, elevation,
+  coast, river}; overlays are explicit augmentations, not base
+  reads.** A hex reading in HexOnly view communicates those four
+  through: tonal-ramp elevation shading (c7), dominant-biome-driven
+  hex fill colour (c6), per-edge coast decoration (3.5.C c3), and
+  river polyline (3.5.B c4). Any new "base read" must have its
+  rationale documented alongside the policy in `docs/design/sprints/
+  sprint_3_5_hex_surface_readability.md` §2 DD5, not bolted on.
+- **DD7 `HexInspectPanel` is strictly read-only.** Two-column egui
+  grid, 11 attributes (offset+axial coords, elevation, dominant
+  biome, has_river, moisture/temperature/slope/rainfall, coast class,
+  river crossing+width bucket, accessibility cost). **No buttons, no
+  sliders, no selection-clearing widget, no mutability anywhere.**
+  Reviewer gate catches interactive widgets at commit time.
+- **DD7 "off-grid clicks → no-op" contract.** `runtime/events.rs` on
+  a left-click release computes a ray → sea plane intersection →
+  `pixel_to_offset`; if any step returns `None` (sky, parallel ray,
+  behind camera, outside grid, degenerate grid), `Runtime.picked_hex`
+  stays at its previous value. A miss does NOT clear a previously
+  picked hex — that would silently blank the inspect panel. Latent
+  bug caught by reviewer at 3.5.E c2 commit.
+- **Click vs drag disambiguation: `CLICK_DRAG_THRESHOLD_PHYS_PX =
+  3.0`** (Manhattan). Press captures `InputState.left_press_cursor`;
+  release checks `|dx|+|dy|` against the threshold. Only clicks
+  (below threshold) trigger hex pick; drags (above threshold) never
+  touch `picked_hex`, so orbit-drag doesn't clobber the current
+  selection.
+- **Dock layout round-trip is strictly forward-only (DD7 L491-498).**
+  Layouts saved with `TabKind::HexInspect` round-trip cleanly through
+  `DockLayout::save` / `load_or_default`. Pre-3.5 layouts that
+  predate the variant fall through the existing `failed to parse` arm
+  at `dock.rs:122` and land on `default_layout()`. This is accepted
+  behaviour — Sprint 3.5 does NOT promise forward-compatible layout
+  migration.
+- **`pixel_to_axial` cube-rounding is deterministic but
+  implementation-defined at hex boundaries.** At a 3-way vertex
+  (hex corner, e.g. `(√3/2, 0.5)` for `hex_size=1.0`), the cube
+  rounder selects one of three valid neighbours; the choice is
+  stable across calls but NOT specified which. Tests assert "one of
+  `{(0,0), (1,0), (1,-1)}`" — NOT the specific neighbour — to avoid
+  coupling to the rounder's tie-break. Note: NE neighbour of `(0,0)`
+  is axial `(1, -1)` (mirror of SW `(-1, 1)`), NOT `(0, -1)` which
+  is NW — latent bug fixed in 3.5.E c1 review.
+- **DD8 schema bump: `CaptureRequest.schema_version: 2 → 3`.** Adds
+  `CaptureShot.view_mode: Option<ViewMode>` via `#[serde(default)]`;
+  v1 and v2 request files still parse cleanly. `SummaryMetrics`
+  gains three hash fields: `hex_attrs_hash` (DD2 witness, real data
+  from schema-lift commit), `hex_debug_river_crossing_hash` (DD3
+  witness, real 4-edge data at schema-lift → 6-edge post-3.5.B),
+  `hex_coast_class_hash` (DD4 witness, sentinel at schema-lift →
+  real post-3.5.C). All three roll up via existing
+  `TruthSummary.metrics_hash` — no `compare.rs` logic change.
+  `RunSummary.schema_version` mirrors input request version.
+- **Render-path parity between interactive and headless** is locked
+  by the pure function `render_stack_for(ViewMode) -> &'static [RenderLayer]`
+  in `crates/app/src/runtime/view_mode.rs`. Both `frame.rs::tick`
+  and `headless/executor.rs` beauty pass call it; the
+  `view_mode_dispatches_identically_in_frame_and_executor` test in
+  `frame.rs` `#[cfg(test)] mod tests` (tier-1 gate) asserts both
+  paths emit the same descriptor for every `ViewMode`. Tier-2
+  (`IPG_RUN_VISUAL_PARITY=1` integration test) is opt-in and not
+  part of `cargo test --workspace`.
+- **Truth-path invariance across view_modes (3.5.F spot-check).**
+  For the same `(seed, preset)`, shots in the 5th baseline
+  (`sprint_3_5_hex_surface/`) that differ only in `view_mode` produce
+  **bit-identical** `overlay_hashes` and `SummaryMetrics.metrics_hash`.
+  View_mode only affects the beauty render stack; simulation output
+  is invariant. If a future change makes view_mode truth-affecting,
+  it's an architectural violation — split it.
+- **Sprint 3.5 net shipped:** 31 commits (`6c0059f` through
+  close-out), 5 headless baselines (4 regenerated within
+  3.5.A/B/C/D's per-task commits + 1 first-shipped in 3.5.F.1),
+  `cargo test --workspace` 528 → 618 (net +90 across Sprint 3.5.A–F,
+  8 ignored unchanged). G5 Cliff coverage forwarded to Sprint 4
+  (empirical escape per DD4 + Q4 — slope sharpening blocked by
+  physical-unit calibration); G7 CloudForest foothold met via DD6
+  bounded retune; G7 CoastalScrub still 0% post-retune, forwarded
+  to Sprint 4 or 3.6.
+
 ---
 
 ## Commit style
