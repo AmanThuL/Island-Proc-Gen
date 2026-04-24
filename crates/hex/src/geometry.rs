@@ -698,4 +698,151 @@ mod tests {
             "negative y should be out of range"
         );
     }
+
+    // ── Sprint 3.5.E — pick edge-case coverage ──
+
+    /// Hex vertices are equidistant between 3 hex neighbours. `pixel_to_axial`
+    /// uses cube-rounding, which must choose one of the 3 valid neighbours
+    /// deterministically (no NaN, no panic). Calling twice must return the
+    /// same value.
+    #[test]
+    fn pixel_to_axial_at_hex_vertex_is_deterministic() {
+        // Vertex between E and NE of hex (0,0): angle π/6 from centre,
+        // radius = hex_size. Coordinates: (cos(π/6), sin(π/6)) = (√3/2, 0.5).
+        let hex_size = 1.0_f32;
+        let vx = hex_size * FRAC_PI_6.cos(); // √3/2
+        let vy = hex_size * FRAC_PI_6.sin(); // 0.5
+
+        let first = pixel_to_axial(vx, vy, hex_size);
+        let second = pixel_to_axial(vx, vy, hex_size);
+        // Must be one of the 3 hex corners sharing this vertex: (0,0) itself,
+        // E neighbour (1,0), NE neighbour (1,-1). (NE is the mirror of SW=(-1,1)
+        // per the axial_to_pixel_matches_known_neighbors lock.)
+        assert!(
+            (first.q == 0 && first.r == 0)
+                || (first.q == 1 && first.r == 0)
+                || (first.q == 1 && first.r == -1),
+            "vertex landed on unexpected hex ({}, {})",
+            first.q,
+            first.r
+        );
+        // Determinism: two calls with identical input must agree.
+        assert_eq!(
+            first, second,
+            "pixel_to_axial must be deterministic at a vertex"
+        );
+    }
+
+    /// An edge midpoint is shared by exactly 2 hexes. `pixel_to_axial` must
+    /// return one of them deterministically — the doc comment contracts
+    /// "deterministic but not specified which side".
+    #[test]
+    fn pixel_to_axial_at_shared_edge_midpoint_is_deterministic() {
+        let hex_size = 1.0_f32;
+        // Midpoint of the E edge of hex (0,0) — on the boundary between (0,0) and (1,0).
+        let (mx, my) = edge_midpoint((0.0, 0.0), HexEdge::E, hex_size);
+
+        let first = pixel_to_axial(mx, my, hex_size);
+        let second = pixel_to_axial(mx, my, hex_size);
+        // Must be one of the two hexes sharing this edge.
+        assert!(
+            (first.q == 0 && first.r == 0) || (first.q == 1 && first.r == 0),
+            "edge midpoint landed on unexpected hex ({}, {})",
+            first.q,
+            first.r
+        );
+        assert_eq!(
+            first, second,
+            "pixel_to_axial must be deterministic at an edge midpoint"
+        );
+    }
+
+    /// A world-space point above row 0 resolves to a negative axial `r`. The
+    /// function must return `None` cleanly — no `as u32` cast panic, no
+    /// index underflow.
+    #[test]
+    fn pixel_to_offset_rejects_negative_axial_without_panic() {
+        let hex_size = 1.0_f32;
+        let origin = default_grid_origin(hex_size);
+        // Subtract ~2 row-spacings upward from origin to land at r ≈ -2.
+        let above_grid_y = origin.1 - 2.0 * hex_size * 1.5;
+        let result = pixel_to_offset(origin.0, above_grid_y, hex_size, origin, 4, 4);
+        assert_eq!(result, None, "negative axial r must return None, not panic");
+    }
+
+    /// A zero-dimension grid (`cols=0` or `rows=0`) must return `None` for any
+    /// input — protects the click-handler path against a race with resolution
+    /// changes.
+    #[test]
+    fn pixel_to_offset_on_degenerate_grid_returns_none() {
+        let hex_size = 1.0_f32;
+        let origin = default_grid_origin(hex_size);
+        assert_eq!(
+            pixel_to_offset(0.5, 0.5, hex_size, origin, 0, 4),
+            None,
+            "cols=0 must return None"
+        );
+        assert_eq!(
+            pixel_to_offset(0.5, 0.5, hex_size, origin, 4, 0),
+            None,
+            "rows=0 must return None"
+        );
+    }
+
+    /// The odd-row right-edge half-shift makes the rightmost column
+    /// boundary fragile. A point one hex-width past the last odd-row hex
+    /// centre must return `None`, not wrap or silently clamp.
+    #[test]
+    fn pixel_to_offset_just_past_odd_row_right_edge_returns_none() {
+        let hex_size = 1.0_f32;
+        let hex_width = hex_size * SQRT_3;
+        let origin = default_grid_origin(hex_size);
+        let cols = 4_u32;
+        let rows = 4_u32;
+
+        // Centre of rightmost odd-row hex (col=3, row=1).
+        let (px, py) = offset_to_pixel(3, 1, hex_size, origin);
+        // Shift just past the right boundary of col=3 in the odd row.
+        let past_right = px + hex_width * 1.01;
+
+        assert_eq!(
+            pixel_to_offset(past_right, py, hex_size, origin, cols, rows),
+            None,
+            "point just past odd-row right edge must return None"
+        );
+    }
+
+    /// Round-trip at a representative shipping hex_size (10.0 sim units,
+    /// in the range produced by HexProjectionStage at 128² / 64-hex target).
+    /// Verifies: forward produces finite non-zero output; inverse recovers
+    /// the original coord; a point 0.9 steps toward SE still round-trips.
+    #[test]
+    fn pixel_to_offset_round_trips_at_shipping_hex_size() {
+        let hex_size = 10.0_f32;
+        let origin = default_grid_origin(hex_size);
+        let cols = 8_u32;
+        let rows = 8_u32;
+
+        let (px, py) = offset_to_pixel(2, 3, hex_size, origin);
+        assert!(
+            px.is_finite() && px != 0.0 && py.is_finite() && py != 0.0,
+            "forward (px, py) = ({px}, {py}) must both be finite and non-zero"
+        );
+
+        // Exact centre round-trips.
+        assert_eq!(
+            pixel_to_offset(px, py, hex_size, origin, cols, rows),
+            Some(OffsetCoord::new(2, 3)),
+            "exact centre must round-trip"
+        );
+
+        // A point 0.9 × hex_size toward SE (half-step, safely inside the polygon).
+        let diag_x = px + 0.9 * hex_size * (SQRT_3 / 2.0) * 0.5;
+        let diag_y = py + 0.9 * hex_size * 1.5 * 0.5;
+        assert_eq!(
+            pixel_to_offset(diag_x, diag_y, hex_size, origin, cols, rows),
+            Some(OffsetCoord::new(2, 3)),
+            "point 0.9 half-SE-step from centre must still map to (2,3)"
+        );
+    }
 }
