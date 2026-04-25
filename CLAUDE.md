@@ -332,456 +332,228 @@ app ──▶ render ──▶ gpu ──┐
   Beach/Rocky/Estuary, still 0 Cliffs on stock presets. Cliff bins
   light up under Sprint 3's v2 classifier (fetch-integral wave exposure).
 
-### Sprint 2.5 (hex)
+### Closed-sprint contracts (Sprint 2.5 → 3.5)
 
-- **`HexAttributes` is locked at 8 fields** (elevation, slope, rainfall,
-  temperature, moisture, biome_weights, dominant_biome, has_river).
-  Sprint 2.5 debug quantities (slope variance, accessibility cost,
-  river crossing) live on sibling `HexDebugAttributes` at
-  `derived.hex_debug`. Sprint 3/4 do NOT read `hex_debug`; Sprint 5 S2
-  may redesign it freely. Don't extend `HexAttributes` — it's the
-  stable contract Sprint 5 S2 depends on.
-- **`HexRiverCrossing` uses 4 box edges** (0=top/1=right/2=bottom/3=left),
-  not 6 hex edges. `crates/hex` tessellation is axis-aligned rectangles
-  per Sprint 1B. Sprint 5 S1 real-hex rework expands to 6; keeping
-  `HexRiverCrossing` inside `HexDebugAttributes` isolates that.
-- **ViewMode snapshot is the Continuous baseline, not the previous
-  view.** `Runtime::saved_visibility` populates on first departure from
-  `Continuous`, cleared on return. Round-trips (incl.
-  `Continuous → HexOverlay → HexOnly → Continuous`) land on original
-  per-overlay visibility. HexOverlay's forced `hex_aggregated=on` does
-  NOT persist after return to Continuous.
+Rationale, calibration evidence, and implementation narrative for the
+closed sprints below are archived at
+[`docs/history/claude_md_gotchas_archive.md`](docs/history/claude_md_gotchas_archive.md).
+The bullets that follow are load-bearing *today*; go to the archive when
+you need the "why" behind a constant or the full story of a decision.
 
-### Sprint 2.6
+#### Sprint 2.5 (hex contract)
 
-- **Dither toggle DROPPED (2026-04-19 in-window A/B).** `DITHER_ON`
-  uniform + Camera-panel checkbox + `TerrainRenderer::update_dither`
-  all removed in `d39e2f3`. `shaders/terrain.wgsl` keeps unconditional
-  Sprint 1A dither (tile 8, amplitude 1/255, from
-  `blue_noise_2d_64.png`). 2.6.E ComboBox closed as n/a.
-  `assets/noise/blue_noise_2d_{128,256}.png` deleted.
-  `crates/render/src/overlay_render.rs` dither path untouched (independent
-  control group). Do NOT reintroduce a dither toggle without a fresh
-  A/B session.
+- **`HexAttributes` is the stable 8-field contract** (Sprint 5 S2
+  depends on it); don't extend. Debug quantities (slope variance,
+  accessibility cost, river crossing) live on `HexDebugAttributes` at
+  `derived.hex_debug`. Sprint 3/4 do NOT read `hex_debug`.
+- **`Runtime::saved_visibility` snapshots the Continuous baseline**,
+  not the previous view. Round-trips through any ViewMode land on
+  original per-overlay visibility; HexOverlay's forced
+  `hex_aggregated=on` does NOT persist on return.
+
+#### Sprint 2.6
+
+- **Dither toggle removed 2026-04-19.** `shaders/terrain.wgsl` keeps
+  unconditional Sprint 1A dither (tile 8, amplitude 1/255, from
+  `blue_noise_2d_64.png`). `overlay_render.rs` dither path is an
+  independent control group. Do NOT reintroduce without a fresh A/B.
 - **`render::DEFAULT_WORLD_XZ_EXTENT = 5.0`** (Fuji-like aspect ≈ 0.17,
-  frozen 2026-04-19). Every render function
-  (`build_terrain_mesh`, `build_sea_quad`,
-  `render::camera::view_projection/eye_position`,
-  `app::Camera::apply_preset`, `TerrainRenderer::new`) takes
-  `extent: f32` explicitly so `Runtime::world_xz_extent` can A/B via
-  World panel. **Headless always passes `DEFAULT_WORLD_XZ_EXTENT`** — 3
-  baselines captured at that value must stay truth-identical (only
-  beauty `byte_hash` drifts with extent; truth is sim-invariant). When
-  a later sprint freezes the final value, update the const and regen
-  the 3 beauty PNGs in the same commit.
+  frozen 2026-04-19). Every render fn takes `extent: f32` explicitly;
+  `Runtime::world_xz_extent` A/B's via the World panel. **Headless
+  always passes `DEFAULT_WORLD_XZ_EXTENT`** — truth is sim-invariant,
+  only beauty `byte_hash` drifts with extent.
 
-### Sprint 3
+#### Sprint 3 (sediment + climate + coast-type v2)
 
-- **`authoritative.sediment` init lives at end of `CoastMaskStage::run`**
-  (DD1). Land = `hs_init = 0.1`, sea = `0.0`, using the just-written
-  `derived.coast_mask.is_land` oracle (NOT `height > sea_level` per the
-  Moore8/Von4 diagonal gotcha). Allocate-if-None-or-size-mismatch, else
-  reuse; `sediment_reused_across_reruns_when_resolution_unchanged`
-  locks pointer+capacity stability. `TopographyStage` writes a zero
-  placeholder (`SaveMode::Minimal` demands `Some(..)` at the boundary);
-  CoastMaskStage overwrites microseconds later. Invalidation flows
-  through **Coastal arm** of `clear_stage_outputs`, cascaded from
-  `invalidate_from(StageId::Topography)` via StageId ordering.
-- **SPACE-lite variant dispatch reads
-  `preset.erosion.spim_variant`** (DD2). Default `SpaceLite` runs the
-  dual equation (bedrock incision + sediment entrainment +
-  `exp(-hs/H_STAR)` shielding); `Plain` falls back to Sprint 2's
-  single-equation SPIM, bit-exact with pre-3.2 behaviour for Task 3.10
-  regen (`preset_override.erosion.spim_variant = Some(Plain)`). Both
-  share `stream_power_kernel(k, a, s, m, n)` via `#[inline]`. Locked by
-  `plain_branch_is_deterministic_across_repeated_runs`. `K_bed = 5e-3`
-  tuned so effective K at coast ≈ 9e-5 (well below 5% sea-crossing
-  invariant): `exp(-0.1/0.05) ≈ 0.14` shielding at `hs = 0.1`. K
-  calibration sweeps belong to Task 3.10.
-- **`ErosionOuterLoop` inner step is a 4-stage sequence** (Task 3.3):
+- **`authoritative.sediment` init lives at end of
+  `CoastMaskStage::run`** (DD1). Land = `hs_init = 0.1`, sea = `0.0`,
+  using `derived.coast_mask.is_land` (NOT `height > sea_level` per
+  the Moore8/Von4 diagonal gotcha). Size-match reuses, size-change
+  reallocates. Invalidation flows through **Coastal arm**, cascaded
+  from `invalidate_from(StageId::Topography)`. `TopographyStage`
+  writes a zero placeholder (`SaveMode::Minimal` requires `Some(..)`)
+  that CoastMaskStage overwrites microseconds later.
+- **SPACE-lite variant dispatch on `preset.erosion.spim_variant`**
+  (DD2). Default `SpaceLite` = bedrock incision + sediment entrainment
+  + `exp(-hs/H_STAR)` shielding; `Plain` preserves Sprint 2 bit-exact
+  for Task 3.10 regen. Both share `stream_power_kernel(k,a,s,m,n)`.
+  `K_bed = 5e-3` is the grid-safe ceiling; see Sprint 3.1 for why
+  any bump trips the 5% sea-crossing invariant on 40²/64² fixtures.
+- **`ErosionOuterLoop` inner step order is locked** (Task 3.3):
   `[stream_power_incision, sediment_update, deposition,
-  hillslope_diffusion]`. Locked by `erosion_inner_step_canonical_order`.
-  `SedimentUpdateStage::run` does full DD3 Qs-routing + deposition
-  math in one Kahn topo-sort (D compute, `hs += D·dt`, Qs_out
-  propagate), writing `derived.deposition_flux[p] = D[p]`.
-  `DepositionStage::run` is a diagnostic `Ok(())` finalization hook
-  (splitting would force double O(N) traversal).
-  `derived.deposition_flux` invalidates under **Topography arm** (NOT
-  Coastal) — matches sticky `erosion_baseline` pattern. Counter-test:
-  `invalidate_from_coastal_preserves_deposition_flux`.
+  hillslope_diffusion]`. `SedimentUpdateStage::run` does full DD3
+  Qs-routing + deposition math in one Kahn topo-sort, writing
+  `derived.deposition_flux`. `DepositionStage::run` is a diagnostic
+  `Ok(())` hook (splitting would double O(N)). `deposition_flux`
+  invalidates under **Topography arm** (NOT Coastal) — matches the
+  sticky `erosion_baseline` pattern.
 - **`PrecipitationStage` branches on
   `preset.climate.precipitation_variant`** (DD4). Default `V3Lfpm` =
-  sequential upwind sweep with stateful water-vapour `q`, orographic
-  condensation + fallout, coast-proximity marine recharge.
-  `V2Raymarch` preserves Sprint 1B per-cell raymarch for Task 3.10.
-  Sweep order computed on first invoke via stable sort on
-  `-wind · p_position`, cached in
-  `derived.precipitation_sweep_order: Option<Vec<usize>>` — cleared
+  sequential upwind sweep with stateful `q`; `V2Raymarch` preserves
+  Sprint 1B for regen. Sweep order cached in
+  `derived.precipitation_sweep_order: Option<Vec<usize>>`, cleared
   under **Precipitation arm** so wind-dir slider drags rebuild.
-  `run_v3_sweep` preheats 2 throwaway passes into `q_scratch` to kill
-  near-axis-aligned cold-start transients. `P = max(0, Δq)` floors
-  negative precipitation from marine_recharge injection (per-cell sign
-  is not a v1 invariant; aggregate budget is
-  `precipitation_mass_balance`'s job).
-- **`ClimateParams` is a new nested struct on `IslandArchetypePreset`**
-  (Task 3.4): `precipitation_variant / q_0 / tau_c / tau_f`.
-  `prevailing_wind_dir` + `marine_moisture_strength` stay top-level
-  (don't break existing RON). All `ClimateParams` fields are
-  `#[serde(default = ..)]` → Sprint-2-vintage RON without `climate:`
-  deserializes into V3Lfpm defaults.
-  `core::preset::default_q_0/tau_c/tau_f` mirror `Q_0_DEFAULT /
-  TAU_C_DEFAULT / TAU_F_DEFAULT` in `sim::climate::precipitation_v3`
-  because invariant #1 forbids `core → sim`. Same structural issue as
-  SPACE-lite defaults; out of scope to consolidate in Sprint 3.
-- **FogLikelihood v2 + SoilMoisture fog coupling** (DD5). Fog likelihood
-  = `elev_band(p) · (0.5 + 0.5·uplift)`; `elev_band` = Gaussian bell at
-  `inversion_z = 0.65·max_relief`, width `0.15·max_relief` (trade-wind
-  inversion-layer proxy). `SoilMoistureStage::run` writes
-  `derived.fog_water_input[p] = FOG_WATER_GAIN · fog_likelihood[p]`
-  (GAIN=0.15) on land; adds `fog_water_input · FOG_TO_SM_COUPLING`
-  (COUPLING=0.40) to soil_moisture, clamped 1.0. `fog_water_input`
-  cleared under **SoilMoisture arm**. CloudForest bell retightened
-  simultaneously: `sigma_fog = 0.08` (was 0.12), direct fog weight 0.3
-  (was 1.0) — fog now feeds CloudForest primarily via raised
-  soil_moisture rather than as a direct bell multiplier (prev
-  double-counting).
-- **`CoastType` is now 5 classes** (DD6): `Cliff=0`, `Beach=1`,
-  `Estuary=2`, `RockyHeadland=3`, **`LavaDelta=4`**, `Unknown=0xFF`.
-  `CoastTypeStage::run` dispatches on
-  `preset.erosion.coast_type_variant`: `V2FetchIntegral` (default) =
-  16-direction raycast fetch with windward-peaks-at-1.0 weighting +
-  5-class first-match classifier (`is_mouth → LavaDelta(Young ∧ …) →
-  Cliff → RockyHeadland → Beach → RockyHeadland fallthrough`);
-  `V1Cheap` preserves Sprint 2 bit-exact for Task 3.10 pre_* regen.
-  `derived.volcanic_centers: Option<Vec<[f32; 2]>>` (NEW derived
-  field, follows Sprint-2.5 `hex_debug` `Vec<[f32;2]>` precedent, not
-  a ScalarField2D) written by `TopographyStage::run` in normalized
-  `[0,1]²`, consumed by LavaDelta proximity. `COAST_TYPE_TABLE` palette
-  is now `[[f32; 4]; 5]`; `sample_f32` uses `t * 5.0`.
-  `core::validation::coast_type_well_formed` widened to 0..=4 in 3.6;
-  additional `coast_type_v2_well_formed` (3.9) enforces
-  LavaDelta-only-on-Young.
-- **16-direction fetch integral uses `-cos(θ − wind_angle)`** for the
-  windward weight, NOT DD6's literal `cos(...)` (reviewer I1).
-  `wind_angle` in this codebase = direction wind *travels* (matches
-  `climate::common::wind_unit`); `cos(θ - wind_angle)` peaks downwind,
-  opposite DD6's own 「迎风 1.0, 背风 0.5」 Chinese comment. Sign flip
-  restores windward-maximum. Future edits must use windward-max
-  semantics or lose §10 Cliff>5% acceptance on real archetypes.
-- **`BasinsStage` post-BFS CC pass is currently vacuous on real
-  terrain** because `ErosionOuterLoop` ends with fresh `PitFill`
-  eliminating interior depressions. Infrastructure +
-  `basin_partition_post_erosion_well_formed` invariant +
-  `MIN_INTERNAL_LAKE_CELLS = 8` + Von4 CC pass all activate once Sprint
-  3 sediment-aware SPACE-lite leaves intentional deposition lakes
-  unfilled. Do NOT remove the defensive code.
+  `run_v3_sweep` preheats 2 throwaway passes to kill near-axis cold
+  starts. `P = max(0, Δq)` floors negative precipitation from
+  marine-recharge injection.
+- **`ClimateParams` nested on `IslandArchetypePreset`** (Task 3.4)
+  with `#[serde(default)]` on every field — Sprint-2-vintage RON
+  without `climate:` still deserializes. `core::preset::default_*`
+  mirrors constants in `sim::climate::precipitation_v3` because
+  invariant #1 forbids `core → sim`.
+- **FogLikelihood v2 + SoilMoisture coupling** (DD5). Fog likelihood
+  = `elev_band(p) · (0.5 + 0.5·uplift)`; `elev_band` = Gaussian bell
+  at `inversion_z = 0.65·max_relief`, width `0.15·max_relief`.
+  `derived.fog_water_input` on land, cleared under **SoilMoisture
+  arm**. CloudForest bell weighting retightened so fog feeds
+  CloudForest via raised soil_moisture, not direct bell multiplier
+  (avoids double-counting). Numeric values subsequently doubled in
+  Sprint 3.1.C — see that section.
+- **`CoastType` is 5 classes** (DD6): `Cliff=0, Beach=1, Estuary=2,
+  RockyHeadland=3, LavaDelta=4, Unknown=0xFF`. `CoastTypeStage`
+  dispatches on `preset.erosion.coast_type_variant`: `V2FetchIntegral`
+  default (16-direction raycast fetch + 5-class first-match
+  classifier), `V1Cheap` for regen. `derived.volcanic_centers:
+  Option<Vec<[f32;2]>>` written by `TopographyStage`, consumed by
+  LavaDelta proximity. `COAST_TYPE_TABLE` is `[[f32;4]; 5]`;
+  `sample_f32` uses `t * 5.0`.
+- **16-direction fetch integral uses `-cos(θ − wind_angle)`** for
+  windward weight, NOT DD6's literal `cos(...)` (reviewer I1 sign
+  flip). `wind_angle` in this codebase = direction wind *travels*
+  (matches `climate::common::wind_unit`); without the flip, weight
+  peaks downwind and §10 Cliff>5% fails on real archetypes.
+- **`BasinsStage` post-BFS CC pass is currently vacuous** because
+  `ErosionOuterLoop` ends with fresh `PitFill`. Infrastructure +
+  `basin_partition_post_erosion_well_formed` + `MIN_INTERNAL_LAKE_CELLS
+  = 8` + Von4 CC pass activate once sediment-aware SPACE-lite leaves
+  intentional deposition lakes unfilled. Do NOT remove the
+  defensive code.
 
-### Sprint 3.1 (calibration tail)
+#### Sprint 3.1 (calibration tail)
 
-- **LFPM v3 precipitation was numerically collapsed pre-3.1.** Phase B
-  measured `mean_precipitation` at ~0.004 across all 5 archetypes
-  (62× drop vs V2Raymarch's 0.235) and `windward_leeward_precip_ratio`
-  up to 773. Root cause documented in
-  `docs/design/sprints/sprint_3_1_lfpm_diagnosis.md`:
-  `CONDENSATION_DT = 1.0` applied per cell with the Sprint 3 default
-  `TAU_F = 0.60` gives `fallout_decay = exp(-1/0.6) ≈ 0.189` — 81 %
-  moisture loss per cell, so `q` depleted within 3-5 cells of the
-  upwind boundary on any 128² domain. Sprint 3.1 Task 3.1.C.0 retuned
-  `TAU_F = 5.0` (18 % per-cell loss), `Q_0 = 1.3` (+30 % boundary
-  vapour), and `MARINE_RECHARGE_DECAY = 0.025` (e-folding scale 12.5
-  → 40 cells, matches ~45-cell island radius at 128²). Post-fix mean
-  precipitation is 0.012-0.031 (6× improvement) but still below V2's
-  0.235; the residual is a normalization artifact (P output is scaled
-  by max(P), and orographic condensation on windward slopes produces
-  large single-cell spikes that squash mean/max ≈ 30). Sprint 4's
-  physical-unit calibration is the natural fix.
-- **SPACE-lite K / H* / hs_init could not be raised within the 5 %
-  sea-crossing invariant.** Sprint 3.1 Task 3.1.A tried the plan's
-  candidate C (`K=1.2e-2`, `H*=0.10`, `hs_init=0.02`) — 12-13 % delta
-  at 128². Fell back to candidate B (`K=8e-3`, `H*=0.15`,
-  `hs_init=0.05`) — 7-8 % delta. A sub-candidate found by targeted
-  probe (`K=5.5e-3`, `H*=0.15`, `hs_init=0.10`) passed 128² stock
-  preset tests but tripped `-p sim --lib` synthetic 40²/64² fixtures
-  by 5.9-9.3 %. Per CLAUDE.md's existing K-grid-sensitivity gotcha
-  (Erosion Sprint 2+ section above), ANY K bump above the Sprint 3
-  default 5.0e-3 tips the smallest test grids over the 5 %
-  `erosion_no_excessive_sea_crossing` invariant. 3.1.A closed
-  DONE_WITH_CONCERNS with K/H*/hs_init retained at Sprint 3 defaults;
-  §10 G4 stays red. Calibration evidence: the smallest grids
-  (`ErosionOuterLoop::tests` 40²) are the binding constraint for any
-  future K sweep, not the 128² baseline.
-- **`HS_INIT_LAND` is now a named const** (was an inline `0.1` literal
-  in `CoastMaskStage::run`). Lives as module-private `const
-  HS_INIT_LAND: f32 = 0.10` in `crates/sim/src/geomorph/coastal.rs`
-  with a value-lock test `hs_init_land_constant_matches_sprint_3_1_lock`
-  mirroring the DD2 SPACE-lite lock pattern. Cross-file references in
-  `invalidation.rs` / `stream_power.rs` doc comments also migrated to
-  the named constant so renames are single-point changes.
-- **3:1 `K_sed = 3 · K_bed` ratio lock is now asserted in tests**
-  (both `sediment.rs::space_lite_constants_match_dd2_lock` and
-  `preset.rs::erosion_params_defaults_match_locked_constants`). Sprint
-  3 DD2's design constraint; silent drift would break the SPACE-lite
-  physics but pass point-wise value checks.
-- **Fog → soil_moisture coupling doubled in 3.1.C.** Candidate A:
-  `FOG_WATER_GAIN = 0.30` (was 0.15), `FOG_TO_SM_COUPLING = 0.60` (was
-  0.40), `CLOUD_FOREST_SIGMA_FOG = 0.15` (was 0.08),
-  `CLOUD_FOREST_FOG_PEAK_WEIGHT = 0.40` (was 0.30). Max SM boost from
-  fog increased from 0.06 to 0.18. Net effect: DryShrub → Grassland
-  shift across every archetype; MontaneWetForest foothold expanded
-  slightly on volcanic_single (0 → 0.12 %) and volcanic_caldera_young
-  (1.1 → 1.17 %). **CloudForest stayed 0 %** — temperature gate
-  (`f_t = bell(T, 15 °C, 4 °C)`) and θ gate (`smoothstep(0.30, 0.75,
-  θ)`) are both unreachable by pure fog tuning at current archetype
-  temperature range (19-24 °C) and max soil_moisture (~0.20). 3.1.C
-  closed DONE_WITH_CONCERNS; CloudForest / CoastalScrub forward to
-  Sprint 3.5.D's biome-suitability rework.
-- **CoastType v2 thresholds cannot produce Cliffs under Sprint 3
-  defaults.** 3.1.B tried `S_CLIFF_HIGH_V2` candidates 0.08 (A) and
-  0.06 (B), both yielded 0/5 archetypes with any Cliff cells at 128²
-  because 3.1.A couldn't sharpen slopes. Retained at Sprint 3's 0.12.
-  Forward G5 Cliff coverage residual to Sprint 3.5.D's hex coast
-  grammar rework (edge-decoration cliff vs cell-discriminant cliff
-  can produce the visual signal without requiring individual-cell
-  slope > 0.06).
-- **Sprint 3.1 net shipped: 1 real fix (LFPM collapse) + 3 structural
-  cleanups (`HS_INIT_LAND` const, 3:1 ratio-lock assertions,
-  diagnostic probes) + extensive calibration evidence recorded in
-  commit messages.** §10 G4 / G5 / G7 all stay red. Forwarded
-  residuals to Sprint 3.5.D (biome + coast rework) and Sprint 4
-  (physical-unit calibration).
+- **`HS_INIT_LAND: f32 = 0.10`** is a named const in
+  `crates/sim/src/geomorph/coastal.rs`, value-locked by
+  `hs_init_land_constant_matches_sprint_3_1_lock`. Cross-file doc
+  comments in `invalidation.rs` / `stream_power.rs` reference the
+  named const so renames are single-point.
+- **3:1 `K_sed = 3 · K_bed` ratio is asserted** in both
+  `sediment.rs::space_lite_constants_match_dd2_lock` and
+  `preset.rs::erosion_params_defaults_match_locked_constants`. Silent
+  drift would break SPACE-lite physics while passing point-wise
+  value checks.
+- **Fog coupling tuned to doubled values**: `FOG_WATER_GAIN = 0.30`,
+  `FOG_TO_SM_COUPLING = 0.60`, `CLOUD_FOREST_SIGMA_FOG = 0.15`,
+  `CLOUD_FOREST_FOG_PEAK_WEIGHT = 0.40`. Max SM boost from fog is
+  0.18 (was 0.06).
+- **SPIM K cannot be raised above 5.0e-3** without tripping the 5%
+  `erosion_no_excessive_sea_crossing` invariant on 40²/64² synthetic
+  fixtures. Binding constraint for any future K sweep is the
+  smallest grid, not 128². See archive for Sprint 3.1.A candidate
+  evidence.
+- **G4/G5/G7 stayed red** after 3.1. Residuals forwarded to Sprint
+  3.5.D (biome + coast rework) and Sprint 4 (physical-unit
+  calibration); LFPM numerical collapse was the one real fix.
 
-### Sprint 3.4 (module boundary cleanup)
+#### Sprint 3.4 (module boundaries + test topology)
 
-- **Three large single files directorised.** Sprint 3.4 split:
-  - `crates/app/src/runtime.rs` (1378 LOC) →
-    `crates/app/src/runtime/{mod,events,frame,regen,view_mode,tabs}.rs`
-    (`mod.rs` holds `Runtime` struct + `new` + tests; `events.rs` holds
-    the winit `handle_window_event` body + `cursor_in_rect_physical`;
-    `frame.rs` holds `tick`; `regen.rs` holds
-    `regenerate_from_world_panel` + `apply_sea_level_fast_path` +
-    `apply_world_aspect`; `view_mode.rs` holds the `ViewMode` enum;
-    `tabs.rs` holds `AppTabViewer` + `egui_dock::TabViewer` impl).
-    Public API surface (`Runtime::new` / `handle_window_event` /
-    `tick` / `run_from`) bit-identical; no downstream file needed
-    edits.
-  - `crates/core/src/validation.rs` (2282 LOC) →
-    `crates/core/src/validation/{mod,hydro,climate,erosion,biome,hex}.rs`
-    grouped by invariant family. `mod.rs` holds `ValidationError` enum
-    + `pub use` re-exports; every `island_core::validation::<name>`
-    import path is byte-identical to pre-3.4 (the 16-name `use` block
-    in `crates/sim/src/validation_stage.rs` unchanged). No
-    `validate_world` aggregator introduced — orchestration still lives
-    in `sim::ValidationStage::run`.
-  - `crates/render/src/overlay.rs` (978 LOC) →
-    `crates/render/src/overlay/{mod,catalog,range,resolve}.rs`.
-    `SourceKey` enum (new handle type) introduced in `resolve.rs`;
-    `catalog.rs`'s 20 descriptors now reference overlay sources via
-    `resolve::source_for(SourceKey::…)` rather than embedding raw
-    field-key strings. Invariant #8 below updated in the same commit
-    to repoint at `overlay/resolve.rs`.
-- **Invariant #8 is now `crates/render/src/overlay/resolve.rs`**
-  (was `crates/render/src/overlay.rs` pre-3.4). Still file-scoped —
-  the invariant was NOT softened to "module tree". The new guardrail
-  is structural: `overlay/catalog.rs`, `overlay/mod.rs`, and
-  `overlay/range.rs` reference sources only via the `SourceKey` enum
-  handle; `resolve.rs` is the single file that matches
-  `SourceKey → OverlaySource(&'static str)` and
-  `OverlaySource → ResolvedField`. Pre-existing raw-string
-  occurrences in `crates/render/src/overlay_export.rs`'s
-  `#[cfg(test)]` block were carried over unchanged (they were
-  test-scaffolding leaks before 3.4 too; cleaning them up is a
-  future sprint item, covered by the "error payloads aside" spirit
-  of the invariant).
-- **Test topology policy (CLAUDE.local.md-adjacent — repo-wide):**
-  - **Inline `#[cfg(test)] mod tests` is the default.** Small,
-    local, adjacent to the code under test.
-  - **Pattern A (`crates/<x>/src/test_support.rs` with
-    `#[cfg(test)] pub(crate) mod test_support;`)** is for sharing
-    fixtures across multiple inline `#[cfg(test)]` blocks within
-    the **same crate**. Sprint 3.4 introduced exactly one:
-    `crates/core/src/test_support.rs` holds a single `test_preset()`
-    consumed by `validation/{biome,climate,erosion,hex,hydro}.rs`.
-    The module is `#[cfg(test)]`-gated, invisible to integration
-    tests.
-  - **Pattern B (`crates/<x>/tests/common/mod.rs`)** is for sharing
-    fixtures across integration tests (`crates/<x>/tests/*.rs`) in
-    the same crate. `common/mod.rs` must live in the subdirectory
-    form (NOT `tests/common.rs`) so cargo doesn't compile it as its
-    own integration binary. Sprint 3.4 did NOT introduce pattern B —
-    the planned `validation_integration.rs` scaffolding would have
-    had no cross-family cases to extract (the family tests stay
-    family-local post-3.4.B). Deferred to Sprint 3.5/4 when
-    hex-surface and CPU/GPU parity integration tests will want it.
-  - **Pattern A and pattern B are separate worlds** — pattern A
-    modules are invisible to integration tests (Rust compiles them
-    as an external crate, `#[cfg(test)]` hides the module). If a
-    helper is needed on both sides, **duplicate it** rather than
-    promoting `test_support` to the crate's public API. This is
-    explicit in CLAUDE.local.md's subagent-driven-development
-    cadence.
-- **`sim::` was NOT deduped.** `crates/sim/src/invalidation.rs` +
-  `crates/sim/src/hydro/{accumulation,rivers,basins,flow_routing}.rs`
-  each have their own `fn test_preset()`, but they differ
-  non-trivially per module (name / island_radius / max_relief /
-  sea_level tailored per scenario). Extracting would require a
-  parameterised builder — more scope than 3.4.D's "按需" (on-demand)
-  guidance warranted. Revisit if a later sprint produces identical
-  duplication.
-- **Sprint 3.4 net shipped: zero behavioural change.** 4 baselines
-  (`sprint_1a_baseline`, `sprint_1b_acceptance`, `sprint_2_erosion`,
-  `sprint_3_sediment_climate`) re-ran with `summary.ron` diffs
-  containing ONLY AD8 whitelist fields (`timestamp_utc`,
-  `pipeline_ms`, `bake_ms`, `gpu_render_ms`); truth-path `byte_hash`,
-  `overall_status`, `warnings` bit-identical. `cargo test
-  --workspace` = 528 passed / 8 ignored strictly equal to pre-3.4
-  snapshot. `cargo tree -p core` clean. No crate DAG change; no
-  `StageId` / `default_pipeline` / `WorldState` change. Sprint 3.5's
-  diff surface now lands on `runtime/view_mode.rs` +
-  `runtime/events.rs` (hex surface hooks) and `validation/hex.rs`
-  (new hex-surface invariants) rather than expanding already-fat
-  single files.
+- **Three large files directorised**: `runtime.rs` → `runtime/{mod,
+  events,frame,regen,view_mode,tabs}.rs`; `validation.rs` →
+  `validation/{mod,hydro,climate,erosion,biome,hex}.rs`; `overlay.rs`
+  → `overlay/{mod,catalog,range,resolve}.rs`. Public APIs
+  bit-identical; see invariant #8 for the `overlay/resolve.rs`
+  file-scope rule.
+- **Test topology policy** (repo-wide):
+  - Default: inline `#[cfg(test)] mod tests` adjacent to code under
+    test.
+  - **Pattern A** (`src/test_support.rs` + `#[cfg(test)] pub(crate)
+    mod test_support;`) shares fixtures across inline tests in the
+    **same crate**; invisible to integration tests. Only instance:
+    `crates/core/src/test_support.rs::test_preset()`.
+  - **Pattern B** (`tests/common/mod.rs` — **subdirectory form**,
+    NOT `tests/common.rs`) shares fixtures across integration
+    tests in the same crate. Not yet introduced.
+  - Patterns A and B are separate worlds: if a helper is needed on
+    both sides, **duplicate** rather than promote `test_support` to
+    the public API.
+- **`sim::` has duplicate `test_preset()` fns** across
+  invalidation/hydro modules — intentionally NOT deduped
+  (per-scenario tuning); revisit only if a later sprint produces
+  identical duplication.
 
-### Sprint 3.5 (hex surface readability)
+#### Sprint 3.5 (hex surface readability) — just closed
 
-- **Flat-top hex convention is load-bearing (DD1).** Rows run
-  horizontally, each hex has **width = `sqrt(3) * hex_size`**, **height
-  = `2 * hex_size`**, row vertical spacing `1.5 * hex_size`, odd rows
-  shifted east by `hex_size * sqrt(3) / 2`. Vertical edges
-  (`HexEdge::E` / `HexEdge::W`) are the rightmost/leftmost extents.
-  `crates/hex/src/geometry.rs` is the single source of truth for axial
-  ↔ pixel math; all downstream callers go through `axial_to_pixel` /
-  `pixel_to_axial` / `offset_to_pixel` / `pixel_to_offset` rather than
-  re-deriving the formulas inline.
-- **6-edge numbering lock (DD1).** `HexEdge` `#[repr(u8)]`
-  discriminants are load-bearing: `E=0, NE=1, NW=2, W=3, SW=4, SE=5`
-  (CCW from east). Used as the stored encoding in
-  `HexDebugAttributes.river_crossing` since Sprint 3.5.B c1 (was
-  4-edge box convention through Sprint 2.5). `HexEdge::from_u8`
-  validates at deserialisation boundaries; **no raw `0..=5` edge
-  indices allowed outside `crates/hex/src/geometry.rs`** — use
-  `HexEdge` variants by name.
-- **DD2 axial-offset aggregation kernel replaces the rect fallback.**
-  `build_hex_grid` in `crates/hex/src/lib.rs` uses a true-hex
-  odd-r-offset Voronoi assignment: each sim cell goes to the hex
-  whose centre is closest in the flat-top layout, not to a rectangle.
-  Odd rows shift east by half a hex width. Reassignment cells cluster
-  near odd-row boundaries. The DD2 kernel's hex-centre placement is
-  the **sole source of truth**; `offset_to_pixel` in `geometry.rs`
-  mirrors it exactly. Value-locked via
-  `offset_to_pixel_matches_build_hex_grid_centres` — if the kernel
-  formula changes, the test fires.
-- **`HexCoastClass` enum lives in `core::world`, not `sim`
-  (DD4 crate-DAG).** `DerivedCaches.hex_coast_class:
-  Option<Vec<HexCoastClass>>` forces the enum type to sit on the
-  `core` side because `core` cannot depend on `sim` (invariant #1).
-  The classifier implementation lives at
-  `crates/sim/src/hex_coast_class.rs`; the enum lives at
-  `crates/core/src/world.rs`. 7 variants: `Inland=0, OpenOcean=1,
-  Beach=2, RockyHeadland=3, Estuary=4, Cliff=5, LavaDelta=6`.
-  `#[repr(u8)]` discriminants map 1:1 to `HexInstance.coast_class_bits`
-  (render) and are hashed by `SummaryMetrics.hex_coast_class_hash`.
-- **`coast_fetch_integral` must land before `hex_coast_class`
-  (DD4 data-flow fix).** `CoastTypeStage::run` now persists
-  `derived.coast_fetch_integral: Option<ScalarField2D<f32>>` (new
-  field) so `HexProjectionStage` reads it back without re-raycasting.
-  Invariant `hex_coast_class_requires_fetch_integral` in
-  `validation/hex.rs` enforces the implication: if
-  `hex_coast_class.is_some()` then `coast_fetch_integral.is_some()`.
-  `coast_fetch_integral` clears under the **CoastType arm** of
-  `clear_stage_outputs`; `hex_coast_class` clears under the
-  **HexProjection arm**. Adding a new consumer of `coast_fetch_integral`
-  must respect these invalidation boundaries.
-- **DD6 `coastal_margin` SM floor applies Von4≤3 → θ≥0.25
-  on land.** `SoilMoistureStage::run` adds a post-LFPM branch that
-  raises soil_moisture on land cells within Von4 distance 3 of any
-  sea cell, floored at 0.25. Named const
-  `COASTAL_MARGIN_MAX_DIST: u32 = 3` locked; floor value 0.25 verified
-  by `coastal_margin_sm_floor_applied` validator. Floor raises, never
-  exceeds the 1.0 clamp.
-- **DD6 CloudForest `f_t` envelope is
-  `T_PEAK=18.0, T_SIGMA=6.0`** (widened from Sprint 3's 15.0 / 4.0 to
-  reach into the 19-24°C archetype range). Value-locked by
-  `cloud_forest_f_t_envelope_matches_sprint_3_5_lock` in
-  `crates/sim/src/ecology/suitability.rs`. Changing these without
-  updating the lock test is a bug.
-- **Dominant surface contract (DD5): base read = {biome, elevation,
-  coast, river}; overlays are explicit augmentations, not base
-  reads.** A hex reading in HexOnly view communicates those four
-  through: tonal-ramp elevation shading (c7), dominant-biome-driven
-  hex fill colour (c6), per-edge coast decoration (3.5.C c3), and
-  river polyline (3.5.B c4). Any new "base read" must have its
-  rationale documented alongside the policy in `docs/design/sprints/
-  sprint_3_5_hex_surface_readability.md` §2 DD5, not bolted on.
+- **Flat-top hex convention is load-bearing** (DD1).
+  `crates/hex/src/geometry.rs` is the single source of truth: width
+  = `sqrt(3) * hex_size`, height = `2 * hex_size`, row spacing
+  `1.5 * hex_size`, odd rows shifted east by `hex_size * sqrt(3) / 2`.
+  All callers go through `axial_to_pixel / pixel_to_axial /
+  offset_to_pixel / pixel_to_offset` — never re-derive inline.
+- **`HexEdge` 6-edge numbering** (DD1, `#[repr(u8)]`): `E=0, NE=1,
+  NW=2, W=3, SW=4, SE=5` (CCW from east). Encoding used in
+  `HexDebugAttributes.river_crossing` since 3.5.B c1. **No raw
+  `0..=5` edge indices outside `crates/hex/src/geometry.rs`** — use
+  variants by name. `HexEdge::from_u8` validates at deserialisation
+  boundaries.
+- **DD2 axial-offset Voronoi kernel** in `build_hex_grid`
+  (`crates/hex/src/lib.rs`) is the sole source of truth for
+  hex-centre placement; `offset_to_pixel` mirrors it exactly.
+  Value-locked by `offset_to_pixel_matches_build_hex_grid_centres`.
+- **`HexCoastClass` lives in `core::world`, not `sim`** (DD4,
+  invariant #1 forbids `core → sim`). Classifier impl in
+  `crates/sim/src/hex_coast_class.rs`. 7 variants: `Inland=0,
+  OpenOcean=1, Beach=2, RockyHeadland=3, Estuary=4, Cliff=5,
+  LavaDelta=6`. Discriminants map 1:1 to
+  `HexInstance.coast_class_bits` (render) and are hashed by
+  `SummaryMetrics.hex_coast_class_hash`.
+- **`coast_fetch_integral` → `hex_coast_class` data flow** (DD4).
+  `CoastTypeStage::run` persists `derived.coast_fetch_integral:
+  Option<ScalarField2D<f32>>`; `HexProjectionStage` reads it back
+  without re-raycasting. Invariant
+  `hex_coast_class_requires_fetch_integral` enforces the implication.
+  Invalidation: `coast_fetch_integral` under **CoastType arm**,
+  `hex_coast_class` under **HexProjection arm**.
+- **DD6 SM floor + CloudForest envelope**: `COASTAL_MARGIN_MAX_DIST
+  = 3` (Von4 land cells within 3 of sea get `soil_moisture ≥ 0.25`,
+  never exceeds 1.0 clamp). CloudForest `f_t`: `T_PEAK = 18.0,
+  T_SIGMA = 6.0` (widened from Sprint 3's 15.0/4.0; value-locked).
+- **Dominant surface contract (DD5)**: base read = {biome,
+  elevation, coast, river}; overlays are explicit augmentations,
+  not base reads. New base reads need documented rationale in the
+  sprint doc §2 DD5, not bolted on.
 - **DD7 `HexInspectPanel` is strictly read-only.** Two-column egui
-  grid, 11 attributes (offset+axial coords, elevation, dominant
-  biome, has_river, moisture/temperature/slope/rainfall, coast class,
-  river crossing+width bucket, accessibility cost). **No buttons, no
-  sliders, no selection-clearing widget, no mutability anywhere.**
-  Reviewer gate catches interactive widgets at commit time.
-- **DD7 "off-grid clicks → no-op" contract.** `runtime/events.rs` on
-  a left-click release computes a ray → sea plane intersection →
-  `pixel_to_offset`; if any step returns `None` (sky, parallel ray,
-  behind camera, outside grid, degenerate grid), `Runtime.picked_hex`
-  stays at its previous value. A miss does NOT clear a previously
-  picked hex — that would silently blank the inspect panel. Latent
-  bug caught by reviewer at 3.5.E c2 commit.
-- **Click vs drag disambiguation: `CLICK_DRAG_THRESHOLD_PHYS_PX =
-  3.0`** (Manhattan). Press captures `InputState.left_press_cursor`;
-  release checks `|dx|+|dy|` against the threshold. Only clicks
-  (below threshold) trigger hex pick; drags (above threshold) never
-  touch `picked_hex`, so orbit-drag doesn't clobber the current
+  grid, 11 attributes. No buttons, sliders, clear widget, or
+  mutability. Reviewer gate catches interactive widgets at commit
+  time.
+- **Off-grid click = no-op** (DD7). `runtime/events.rs` on left-click
+  release: ray → sea plane → `pixel_to_offset`; any `None` keeps
+  `picked_hex` unchanged. A miss does NOT clear a previous pick
+  (would silently blank the inspect panel).
+- **Click-vs-drag threshold: `CLICK_DRAG_THRESHOLD_PHYS_PX = 3.0`**
+  (Manhattan). Only clicks below threshold trigger hex pick; drags
+  never touch `picked_hex`, so orbit-drag doesn't clobber the
   selection.
-- **Dock layout round-trip is strictly forward-only (DD7 L491-498).**
-  Layouts saved with `TabKind::HexInspect` round-trip cleanly through
-  `DockLayout::save` / `load_or_default`. Pre-3.5 layouts that
-  predate the variant fall through the existing `failed to parse` arm
-  at `dock.rs:122` and land on `default_layout()`. This is accepted
-  behaviour — Sprint 3.5 does NOT promise forward-compatible layout
-  migration.
-- **`pixel_to_axial` cube-rounding is deterministic but
-  implementation-defined at hex boundaries.** At a 3-way vertex
-  (hex corner, e.g. `(√3/2, 0.5)` for `hex_size=1.0`), the cube
-  rounder selects one of three valid neighbours; the choice is
-  stable across calls but NOT specified which. Tests assert "one of
-  `{(0,0), (1,0), (1,-1)}`" — NOT the specific neighbour — to avoid
-  coupling to the rounder's tie-break. Note: NE neighbour of `(0,0)`
-  is axial `(1, -1)` (mirror of SW `(-1, 1)`), NOT `(0, -1)` which
-  is NW — latent bug fixed in 3.5.E c1 review.
-- **DD8 schema bump: `CaptureRequest.schema_version: 2 → 3`.** Adds
+- **Dock layout compat is forward-only.** Pre-3.5 layouts fall
+  through `dock.rs:122`'s `failed to parse` arm onto
+  `default_layout()`. No migration promised.
+- **`pixel_to_axial` cube-rounding is implementation-defined at
+  3-way vertices**; tests assert "one of the three neighbours" to
+  avoid coupling to the rounder's tie-break. Note: NE neighbour of
+  `(0,0)` is axial `(1,-1)`, NOT `(0,-1)` which is NW.
+- **DD8 schema: `CaptureRequest.schema_version = 3`.** Adds
   `CaptureShot.view_mode: Option<ViewMode>` via `#[serde(default)]`;
-  v1 and v2 request files still parse cleanly. `SummaryMetrics`
-  gains three hash fields: `hex_attrs_hash` (DD2 witness, real data
-  from schema-lift commit), `hex_debug_river_crossing_hash` (DD3
-  witness, real 4-edge data at schema-lift → 6-edge post-3.5.B),
-  `hex_coast_class_hash` (DD4 witness, sentinel at schema-lift →
-  real post-3.5.C). All three roll up via existing
-  `TruthSummary.metrics_hash` — no `compare.rs` logic change.
-  `RunSummary.schema_version` mirrors input request version.
-- **Render-path parity between interactive and headless** is locked
-  by the pure function `render_stack_for(ViewMode) -> &'static [RenderLayer]`
-  in `crates/app/src/runtime/view_mode.rs`. Both `frame.rs::tick`
-  and `headless/executor.rs` beauty pass call it; the
-  `view_mode_dispatches_identically_in_frame_and_executor` test in
-  `frame.rs` `#[cfg(test)] mod tests` (tier-1 gate) asserts both
-  paths emit the same descriptor for every `ViewMode`. Tier-2
-  (`IPG_RUN_VISUAL_PARITY=1` integration test) is opt-in and not
-  part of `cargo test --workspace`.
-- **Truth-path invariance across view_modes (3.5.F spot-check).**
-  For the same `(seed, preset)`, shots in the 5th baseline
-  (`sprint_3_5_hex_surface/`) that differ only in `view_mode` produce
-  **bit-identical** `overlay_hashes` and `SummaryMetrics.metrics_hash`.
-  View_mode only affects the beauty render stack; simulation output
-  is invariant. If a future change makes view_mode truth-affecting,
-  it's an architectural violation — split it.
-- **Sprint 3.5 net shipped:** 31 commits (`6c0059f` through
-  close-out), 5 headless baselines (4 regenerated within
-  3.5.A/B/C/D's per-task commits + 1 first-shipped in 3.5.F.1),
-  `cargo test --workspace` 528 → 618 (net +90 across Sprint 3.5.A–F,
-  8 ignored unchanged). G5 Cliff coverage forwarded to Sprint 4
-  (empirical escape per DD4 + Q4 — slope sharpening blocked by
-  physical-unit calibration); G7 CloudForest foothold met via DD6
-  bounded retune; G7 CoastalScrub still 0% post-retune, forwarded
-  to Sprint 4 or 3.6.
+  v1/v2 files still parse. `SummaryMetrics` gains `hex_attrs_hash /
+  hex_debug_river_crossing_hash / hex_coast_class_hash`, all rolled
+  up by `TruthSummary.metrics_hash`.
+- **Render-path parity** is locked by `render_stack_for(ViewMode) ->
+  &'static [RenderLayer]` in `crates/app/src/runtime/view_mode.rs`.
+  Both `frame.rs::tick` and `headless/executor.rs` beauty pass call
+  it. `view_mode_dispatches_identically_in_frame_and_executor`
+  (tier-1 gate) asserts both paths emit the same descriptor per
+  ViewMode; tier-2 `IPG_RUN_VISUAL_PARITY=1` integration is opt-in.
+- **Truth invariance across view_modes** (3.5.F): shots differing
+  only in `view_mode` produce bit-identical `overlay_hashes` and
+  `metrics_hash`. View_mode only affects beauty; a truth-affecting
+  view_mode change would be an architectural violation.
 
 ---
 
