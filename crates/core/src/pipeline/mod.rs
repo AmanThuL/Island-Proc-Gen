@@ -11,7 +11,12 @@
 //! make the call trivial: "run stages `[start..]` on a `WorldState` whose
 //! `[0..start)` prefix is already populated".
 
+pub mod compute;
 pub mod timing;
+
+pub use compute::{
+    ComputeBackend, ComputeBackendError, ComputeOp, HillslopeParams, NoOpBackend, StreamPowerParams,
+};
 pub use timing::StageTiming;
 
 use std::collections::BTreeMap;

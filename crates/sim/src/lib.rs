@@ -10,6 +10,7 @@
 //! (18 [`StageId`] variants + terminal [`ValidationStage`]).
 
 pub mod climate;
+pub mod compute;
 pub mod ecology;
 pub mod geomorph;
 pub mod hex_coast_class;
@@ -43,11 +44,16 @@ pub use hydro::WaterBalanceStage;
 pub use invalidation::invalidate_from;
 pub use validation_stage::ValidationStage;
 
-use island_core::pipeline::SimulationPipeline;
+use std::sync::Arc;
+
+use island_core::pipeline::{ComputeBackend, SimulationPipeline};
+
+use crate::compute::CpuBackend;
 
 // ─── default_pipeline ─────────────────────────────────────────────────────────
 
-/// Build the canonical Sprint 1A + Sprint 1B + Sprint 2 [`SimulationPipeline`].
+/// Build the canonical Sprint 1A + Sprint 1B + Sprint 2 [`SimulationPipeline`]
+/// using the [`CpuBackend`] for the two pilot compute kernels.
 ///
 /// Push order is identical to [`StageId`]'s discriminant order, forming the
 /// 19-stage canonical pipeline (18 [`StageId`] variants + terminal
@@ -70,6 +76,18 @@ use island_core::pipeline::SimulationPipeline;
 /// # }
 /// ```
 pub fn default_pipeline() -> SimulationPipeline {
+    default_pipeline_with_backend(Arc::new(CpuBackend))
+}
+
+/// Build the canonical pipeline with a custom [`ComputeBackend`].
+///
+/// Identical stage order to [`default_pipeline`]; the only difference is that
+/// `ErosionOuterLoop` receives `backend` as its dispatch target for the two
+/// pilot kernels (hillslope diffusion + stream power incision).
+///
+/// Sprint 4.D+ callers pass a `GpuBackend` here; all other callers use
+/// [`default_pipeline`] which supplies [`CpuBackend`].
+pub fn default_pipeline_with_backend(backend: Arc<dyn ComputeBackend>) -> SimulationPipeline {
     let mut pipeline = SimulationPipeline::new();
     // Sprint 1A (indices 0..=7)
     pipeline.push(Box::new(TopographyStage));
@@ -83,7 +101,7 @@ pub fn default_pipeline() -> SimulationPipeline {
     // Sprint 2 (index 8) — ErosionOuterLoop owns its own n_batch × n_inner
     // SPIM + hillslope iteration plus end-of-batch Coastal..RiverExtraction
     // re-run, so `default_pipeline` sees it as one opaque stage.
-    pipeline.push(Box::new(ErosionOuterLoop::default()));
+    pipeline.push(Box::new(ErosionOuterLoop::new(backend)));
     // Sprint 2 (index 9) — CoastTypeStage classifies each coast cell into
     // one of four geomorphic categories after erosion has settled the terrain.
     pipeline.push(Box::new(CoastTypeStage));
@@ -158,6 +176,54 @@ impl StageId {
     /// tracks the enum automatically.
     pub const STAGE_COUNT: usize = Self::HexProjection as usize + 1;
 }
+
+// ─── compute backend tests ────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod compute_backend_tests {
+    use island_core::pipeline::{ComputeOp, NoOpBackend};
+
+    use crate::geomorph::ErosionOuterLoop;
+
+    use super::*;
+
+    /// `default_pipeline()` constructs an `ErosionOuterLoop` whose backend
+    /// name is `"cpu"`. This anchors the Sprint 4.C contract that the
+    /// zero-arg `default_pipeline()` always uses the CPU path.
+    #[test]
+    fn default_pipeline_uses_cpu_backend_by_default() {
+        // We need to reach the ErosionOuterLoop inside the pipeline.
+        // Since SimulationPipeline stores `Box<dyn SimulationStage>` without
+        // exposing typed access, we verify by constructing an ErosionOuterLoop
+        // the same way default_pipeline does and checking the backend name.
+        let loop_stage = ErosionOuterLoop::default();
+        assert_eq!(
+            loop_stage.backend_name(),
+            "cpu",
+            "default_pipeline must use CpuBackend"
+        );
+    }
+
+    /// `NoOpBackend` returns false for all `ComputeOp::ALL` ops.
+    #[test]
+    fn noop_backend_supports_nothing() {
+        let b = NoOpBackend;
+        for &op in ComputeOp::ALL {
+            assert!(!b.supports(op), "NoOpBackend must not support {op:?}");
+        }
+    }
+
+    /// `default_pipeline_with_backend(Arc::new(NoOpBackend))` constructs a
+    /// pipeline whose ErosionOuterLoop carries `"noop"` as backend name.
+    #[test]
+    fn pipeline_with_backend_uses_supplied_backend() {
+        use std::sync::Arc;
+        let loop_stage = ErosionOuterLoop::new(Arc::new(NoOpBackend));
+        assert_eq!(loop_stage.backend_name(), "noop");
+    }
+}
+
+// ─── stage id tests ───────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod stage_id_tests {

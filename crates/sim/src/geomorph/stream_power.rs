@@ -22,7 +22,7 @@
 //! `ErosionOuterLoop` (Task 2.3) handles cache invalidation and
 //! flow-network rebuilds around repeated SPIM calls.
 
-use island_core::pipeline::SimulationStage;
+use island_core::pipeline::{SimulationStage, StreamPowerParams};
 use island_core::preset::SpimVariant;
 use island_core::world::WorldState;
 
@@ -83,10 +83,45 @@ impl SimulationStage for StreamPowerIncisionStage {
             );
         }
 
-        match world.preset.erosion.spim_variant {
-            SpimVariant::Plain => run_plain(world),
-            SpimVariant::SpaceLite => run_space_lite(world),
-        }
+        let params = StreamPowerParams {
+            spim_k: world.preset.erosion.spim_k,
+            spim_m: world.preset.erosion.spim_m,
+            spim_n: world.preset.erosion.spim_n,
+            space_k_bed: world.preset.erosion.space_k_bed,
+            space_k_sed: world.preset.erosion.space_k_sed,
+            h_star: world.preset.erosion.h_star,
+            sea_level: world.preset.sea_level,
+            spim_variant: world.preset.erosion.spim_variant,
+        };
+        stream_power_incision_kernel(world, &params)
+    }
+}
+
+/// Free kernel: in-place Stream Power Incision Model step.
+///
+/// Dispatches to [`run_plain`] or [`run_space_lite`] based on
+/// `params.spim_variant`. Writes `authoritative.height` (both branches) and
+/// `authoritative.sediment` (`SpaceLite` branch).
+///
+/// # Preconditions
+///
+/// `world.derived.{accumulation, slope, coast_mask}` and
+/// `world.authoritative.height` must be `Some`. The caller is responsible for
+/// prerequisite checks; missing fields surface as panics via `unwrap` inside
+/// the dispatch path.
+///
+/// # Bit-identity contract
+///
+/// `StreamPowerIncisionStage::run` calls this function. `CpuBackend::
+/// run_stream_power_incision` also calls this function. Both produce
+/// bit-identical output from identical inputs.
+pub fn stream_power_incision_kernel(
+    world: &mut WorldState,
+    params: &StreamPowerParams,
+) -> anyhow::Result<()> {
+    match params.spim_variant {
+        SpimVariant::Plain => run_plain(world, params),
+        SpimVariant::SpaceLite => run_space_lite(world, params),
     }
 }
 
@@ -105,11 +140,11 @@ fn stream_power_kernel(k: f32, a: f32, s: f32, m: f32, n: f32) -> f32 {
 /// Preserved verbatim for baseline regeneration (Task 3.10's `pre_*`
 /// shots rely on `preset_override.erosion.spim_variant = Some(Plain)`)
 /// and for Sprint 3 ablations against the old physics.
-fn run_plain(world: &mut WorldState) -> anyhow::Result<()> {
-    let k = world.preset.erosion.spim_k;
-    let m = world.preset.erosion.spim_m;
-    let n = world.preset.erosion.spim_n;
-    let sea_level = world.preset.sea_level;
+fn run_plain(world: &mut WorldState, params: &StreamPowerParams) -> anyhow::Result<()> {
+    let k = params.spim_k;
+    let m = params.spim_m;
+    let n = params.spim_n;
+    let sea_level = params.sea_level;
 
     // Split borrow: `world.derived` and `world.authoritative` are disjoint
     // struct fields so the compiler accepts shared refs into `derived` held
@@ -167,7 +202,7 @@ fn run_plain(world: &mut WorldState) -> anyhow::Result<()> {
 /// bug (Coastal stage didn't run, or `invalidate_from(Coastal)` was
 /// called without a follow-up `run_from(Coastal)`); bail with a clear
 /// message rather than silently skip.
-fn run_space_lite(world: &mut WorldState) -> anyhow::Result<()> {
+fn run_space_lite(world: &mut WorldState, params: &StreamPowerParams) -> anyhow::Result<()> {
     if world.authoritative.sediment.is_none() {
         anyhow::bail!(
             "StreamPowerIncisionStage(SpaceLite): authoritative.sediment is None \
@@ -175,12 +210,12 @@ fn run_space_lite(world: &mut WorldState) -> anyhow::Result<()> {
         );
     }
 
-    let k_bed = world.preset.erosion.space_k_bed;
-    let k_sed = world.preset.erosion.space_k_sed;
-    let h_star = world.preset.erosion.h_star;
-    let m = world.preset.erosion.spim_m;
-    let n = world.preset.erosion.spim_n;
-    let sea_level = world.preset.sea_level;
+    let k_bed = params.space_k_bed;
+    let k_sed = params.space_k_sed;
+    let h_star = params.h_star;
+    let m = params.spim_m;
+    let n = params.spim_n;
+    let sea_level = params.sea_level;
 
     // Guard against a pathological h_star ≤ 0 from a misconfigured preset.
     // exp(-hs / 0) is undefined; fall back to the locked default rather

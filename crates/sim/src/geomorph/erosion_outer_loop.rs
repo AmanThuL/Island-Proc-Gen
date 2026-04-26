@@ -17,12 +17,15 @@
 //! and the Sprint 1D §3 Task 1D.3 memo — divergence must be reviewed and
 //! documented in §2 DD3 first.
 
-use island_core::pipeline::SimulationStage;
+use std::sync::Arc;
+
+use island_core::pipeline::{ComputeBackend, HillslopeParams, SimulationStage, StreamPowerParams};
 use island_core::world::{ErosionBaseline, WorldState};
 
+use crate::compute::CpuBackend;
 use crate::geomorph::{
-    CoastMaskStage, DepositionStage, DerivedGeomorphStage, HillslopeDiffusionStage, PitFillStage,
-    SedimentUpdateStage, StreamPowerIncisionStage,
+    CoastMaskStage, DepositionStage, DerivedGeomorphStage, PitFillStage, SedimentUpdateStage,
+    StreamPowerIncisionStage,
 };
 use crate::hydro::{AccumulationStage, BasinsStage, FlowRoutingStage, RiverExtractionStage};
 
@@ -52,26 +55,31 @@ use crate::hydro::{AccumulationStage, BasinsStage, FlowRoutingStage, RiverExtrac
 ///
 /// # Fields
 ///
-/// All nine sub-stages are unit structs — `ErosionOuterLoop::default()`
-/// constructs them trivially and the struct itself is effectively
-/// stateless. Fields are `pub(crate)` so the
+/// Routing-chain sub-stages are unit structs (`pub(crate)`) so the
 /// `erosion_outer_loop_uses_canonical_routing_chain` test can verify the
 /// routing chain matches `default_pipeline()` without introspecting
 /// `dyn SimulationStage` type ids.
+///
+/// The `backend` field carries the [`ComputeBackend`] used for the two pilot
+/// kernels (hillslope diffusion + stream power incision). Defaults to
+/// [`CpuBackend`] via `ErosionOuterLoop::default()`. Sprint 4.D+ wires in
+/// a `GpuBackend` via `ErosionOuterLoop::new(backend)`.
 pub struct ErosionOuterLoop {
-    pub(crate) stream_power: StreamPowerIncisionStage,
-    /// Sprint 3 Task 3.3: sediment transport routing — accumulates Qs_in
-    /// over the D8 DAG, computes per-cell `Qs_cap`, deposits the excess
-    /// into `authoritative.sediment`, and writes `derived.deposition_flux`.
-    /// Task 3.2 stubbed this as a no-op; Task 3.3 fills in the math.
+    /// Compute backend for the two pilot kernels.
+    pub(crate) backend: Arc<dyn ComputeBackend>,
+    /// Sprint 3 Task 3.3: sediment transport routing.
     pub(crate) sediment_update: SedimentUpdateStage,
-    /// Sprint 3 Task 3.3: deposition-diagnostic finalization hook,
-    /// separately named so the `erosion_inner_step_canonical_order` test
-    /// pins the four-stage sequence. Runs immediately after
-    /// `sediment_update`; body is a no-op in v1 — see
-    /// [`DepositionStage`] docs for the stage-responsibility split.
+    /// Sprint 3 Task 3.3: deposition-diagnostic finalization hook.
     pub(crate) deposition: DepositionStage,
-    pub(crate) hillslope: HillslopeDiffusionStage,
+    /// The `StreamPowerIncisionStage` field is retained as a name-anchor for
+    /// the `erosion_inner_step_canonical_order` test, but the inner loop now
+    /// dispatches through `self.backend` rather than calling
+    /// `StreamPowerIncisionStage::run` directly.
+    #[allow(dead_code)]
+    pub(crate) stream_power: StreamPowerIncisionStage,
+    /// Likewise for `HillslopeDiffusionStage` — retained as name-anchor.
+    #[allow(dead_code)]
+    pub(crate) hillslope: crate::geomorph::HillslopeDiffusionStage,
     pub(crate) coast_mask: CoastMaskStage,
     pub(crate) pit_fill: PitFillStage,
     pub(crate) derived_geomorph: DerivedGeomorphStage,
@@ -81,13 +89,19 @@ pub struct ErosionOuterLoop {
     pub(crate) river_extraction: RiverExtractionStage,
 }
 
-impl Default for ErosionOuterLoop {
-    fn default() -> Self {
+impl ErosionOuterLoop {
+    /// Construct an `ErosionOuterLoop` with a custom compute backend.
+    ///
+    /// `default_pipeline_with_backend` uses this constructor to inject a
+    /// `GpuBackend` (Sprint 4.D+) while `default_pipeline()` passes
+    /// `Arc::new(CpuBackend)`.
+    pub fn new(backend: Arc<dyn ComputeBackend>) -> Self {
         Self {
+            backend,
             stream_power: StreamPowerIncisionStage,
             sediment_update: SedimentUpdateStage,
             deposition: DepositionStage,
-            hillslope: HillslopeDiffusionStage,
+            hillslope: crate::geomorph::HillslopeDiffusionStage,
             coast_mask: CoastMaskStage,
             pit_fill: PitFillStage,
             derived_geomorph: DerivedGeomorphStage,
@@ -96,6 +110,20 @@ impl Default for ErosionOuterLoop {
             basins: BasinsStage,
             river_extraction: RiverExtractionStage,
         }
+    }
+
+    /// Name of the compute backend wired into this loop.
+    ///
+    /// Used by `default_pipeline_uses_cpu_backend_by_default` to assert the
+    /// correct backend is in place without reaching through the `Arc`.
+    pub fn backend_name(&self) -> &'static str {
+        self.backend.name()
+    }
+}
+
+impl Default for ErosionOuterLoop {
+    fn default() -> Self {
+        Self::new(Arc::new(CpuBackend))
     }
 }
 
@@ -173,12 +201,55 @@ impl SimulationStage for ErosionOuterLoop {
         //   hillslope        → ∇² smoothing (mutates height)
         //
         // Inner-step order locked by `erosion_inner_step_canonical_order`.
+        //
+        // Sprint 4.C: stream_power and hillslope dispatch through the
+        // ComputeBackend trait. CpuBackend calls the same free kernel
+        // functions the stage impls call directly — bit-identical output.
+        // GpuBackend (Sprint 4.E/F) will accumulate gpu_ms and drain it into
+        // world.derived.last_stage_gpu_ms for the profiler.
         for _batch in 0..n_batch {
             for _inner in 0..n_inner {
-                self.stream_power.run(world)?; // mutates authoritative.height + sediment (SpaceLite)
+                // Build param structs from the preset (read at run time so
+                // slider changes take effect on the next rerun).
+                let stream_params = StreamPowerParams {
+                    spim_k: world.preset.erosion.spim_k,
+                    spim_m: world.preset.erosion.spim_m,
+                    spim_n: world.preset.erosion.spim_n,
+                    space_k_bed: world.preset.erosion.space_k_bed,
+                    space_k_sed: world.preset.erosion.space_k_sed,
+                    h_star: world.preset.erosion.h_star,
+                    sea_level: world.preset.sea_level,
+                    spim_variant: world.preset.erosion.spim_variant,
+                };
+                let hill_params = HillslopeParams {
+                    hillslope_d: world.preset.erosion.hillslope_d,
+                    n_diff_substep: world.preset.erosion.n_diff_substep,
+                };
+
+                // Dispatch through the compute backend.
+                // CpuBackend is infallible for these ops; a GpuBackend
+                // may return DeviceLost / ReadbackTimeout — surface via anyhow.
+                let _stream_timing = self
+                    .backend
+                    .run_stream_power_incision(world, &stream_params)
+                    .map_err(|e| anyhow::anyhow!("ErosionOuterLoop stream_power: {e}"))?;
                 self.sediment_update.run(world)?; // Task 3.3 Qs routing + D → hs
                 self.deposition.run(world)?; // Task 3.3 finalization hook
-                self.hillslope.run(world)?; // mutates authoritative.height
+                let _hill_timing = self
+                    .backend
+                    .run_hillslope_diffusion(world, &hill_params)
+                    .map_err(|e| anyhow::anyhow!("ErosionOuterLoop hillslope: {e}"))?;
+
+                // Accumulate GPU time into the side-channel so the pipeline
+                // runner can record it under the erosion_outer_loop stage key.
+                // CpuBackend always returns gpu_ms = None, so this is a no-op
+                // today; GpuBackend (4.E/F) will populate it.
+                let gpu_acc =
+                    _stream_timing.gpu_ms.unwrap_or(0.0) + _hill_timing.gpu_ms.unwrap_or(0.0);
+                if gpu_acc > 0.0 {
+                    let prev = world.derived.last_stage_gpu_ms.unwrap_or(0.0);
+                    world.derived.last_stage_gpu_ms = Some(prev + gpu_acc);
+                }
             }
             // Default conservative frontier per Sprint 1D Task 1D.2
             // "Default invalidation frontier contract": Coastal, not

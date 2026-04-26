@@ -23,11 +23,11 @@ pub use coast_type::CoastTypeStage;
 pub use coastal::CoastMaskStage;
 pub use derived_geomorph::DerivedGeomorphStage;
 pub use erosion_outer_loop::ErosionOuterLoop;
-pub use hillslope::HillslopeDiffusionStage;
+pub use hillslope::{HillslopeDiffusionStage, hillslope_diffusion_kernel};
 pub use pit_fill::PitFillStage;
 pub use sediment::DepositionStage;
 pub use sediment::SedimentUpdateStage;
-pub use stream_power::StreamPowerIncisionStage;
+pub use stream_power::{StreamPowerIncisionStage, stream_power_incision_kernel};
 pub use topography::TopographyStage;
 
 pub(crate) use island_core::neighborhood::neighbour_offsets;

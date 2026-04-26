@@ -13,7 +13,7 @@
 //! - Sim-grid outer ring (`ix == 0 || ix == w-1 || iy == 0 || iy == h-1`):
 //!   skipped — no full 4-neighbour stencil available.
 
-use island_core::pipeline::SimulationStage;
+use island_core::pipeline::{HillslopeParams, SimulationStage};
 use island_core::world::WorldState;
 
 /// Sprint 2 DD2: hillslope creep via explicit-Euler diffusion.
@@ -32,11 +32,6 @@ impl SimulationStage for HillslopeDiffusionStage {
     }
 
     fn run(&self, world: &mut WorldState) -> anyhow::Result<()> {
-        let d = world.preset.erosion.hillslope_d;
-        let n_sub = world.preset.erosion.n_diff_substep as usize;
-        let width = world.resolution.sim_width as usize;
-        let height = world.resolution.sim_height as usize;
-
         // ── prerequisite checks ───────────────────────────────────────────────
         if world.authoritative.height.is_none() {
             anyhow::bail!(
@@ -51,57 +46,82 @@ impl SimulationStage for HillslopeDiffusionStage {
             );
         }
 
-        // ── set up double buffer ──────────────────────────────────────────────
-        // We need one reusable scratch buffer. Allocate once outside the
-        // substep loop and swap in-place to avoid per-substep allocation.
-        let dt_sub = 1.0_f32 / n_sub as f32;
+        let params = HillslopeParams {
+            hillslope_d: world.preset.erosion.hillslope_d,
+            n_diff_substep: world.preset.erosion.n_diff_substep,
+        };
+        hillslope_diffusion_kernel(world, &params);
+        Ok(())
+    }
+}
 
-        // Split borrow: `world.derived` and `world.authoritative` are disjoint
-        // struct fields, so shared refs into `coast_mask` coexist with the
-        // `&mut` into `authoritative.height`.
-        let coast_mask = world.derived.coast_mask.as_ref().unwrap();
-        let is_sea = &coast_mask.is_sea.data;
-        let is_coast = &coast_mask.is_coast.data;
-        let h_field = world.authoritative.height.as_mut().unwrap();
+/// Free kernel: in-place explicit-Euler hillslope diffusion stencil.
+///
+/// Applies `n_diff_substep` sub-steps of `∂z/∂t = D · ∇²z` to
+/// `world.authoritative.height` using the coast mask in
+/// `world.derived.coast_mask`.
+///
+/// # Preconditions
+///
+/// Both `world.authoritative.height` and `world.derived.coast_mask` must be
+/// `Some`. Callers are responsible for the prerequisite checks — the kernel
+/// panics via `unwrap` if either field is missing.
+///
+/// # Bit-identity contract
+///
+/// `HillslopeDiffusionStage::run` calls this function. `CpuBackend::
+/// run_hillslope_diffusion` also calls this function. Both paths produce
+/// bit-identical output from identical inputs.
+pub fn hillslope_diffusion_kernel(world: &mut WorldState, params: &HillslopeParams) {
+    let d = params.hillslope_d;
+    let n_sub = params.n_diff_substep as usize;
+    let width = world.resolution.sim_width as usize;
+    let height = world.resolution.sim_height as usize;
+    let dt_sub = 1.0_f32 / n_sub as f32;
 
-        // Scratch buffer reused across all substeps.
-        let mut z_new: Vec<f32> = h_field.data.clone();
+    // Split borrow: `world.derived` and `world.authoritative` are disjoint
+    // struct fields, so shared refs into `coast_mask` coexist with the
+    // `&mut` into `authoritative.height`.
+    let coast_mask = world.derived.coast_mask.as_ref().unwrap();
+    let is_sea = &coast_mask.is_sea.data;
+    let is_coast = &coast_mask.is_coast.data;
+    let h_field = world.authoritative.height.as_mut().unwrap();
 
-        for _ in 0..n_sub {
-            // z_new starts as a copy of the current state; we overwrite only
-            // interior land cells and then swap.
-            z_new.copy_from_slice(&h_field.data);
+    // Scratch buffer reused across all substeps.
+    let mut z_new: Vec<f32> = h_field.data.clone();
 
-            for iy in 1..(height - 1) {
-                for ix in 1..(width - 1) {
-                    let i = iy * width + ix;
+    for _ in 0..n_sub {
+        // z_new starts as a copy of the current state; we overwrite only
+        // interior land cells and then swap.
+        z_new.copy_from_slice(&h_field.data);
 
-                    if is_sea[i] == 1 {
-                        continue;
-                    }
-                    if is_coast[i] == 1 {
-                        continue;
-                    }
+        for iy in 1..(height - 1) {
+            for ix in 1..(width - 1) {
+                let i = iy * width + ix;
 
-                    let z_here = h_field.data[i];
-                    let z_n = h_field.data[(iy - 1) * width + ix];
-                    let z_s = h_field.data[(iy + 1) * width + ix];
-                    let z_w = h_field.data[iy * width + (ix - 1)];
-                    let z_e = h_field.data[iy * width + (ix + 1)];
-
-                    let lap = z_n + z_s + z_e + z_w - 4.0 * z_here;
-                    z_new[i] = z_here + d * lap * dt_sub;
+                if is_sea[i] == 1 {
+                    continue;
                 }
+                if is_coast[i] == 1 {
+                    continue;
+                }
+
+                let z_here = h_field.data[i];
+                let z_n = h_field.data[(iy - 1) * width + ix];
+                let z_s = h_field.data[(iy + 1) * width + ix];
+                let z_w = h_field.data[iy * width + (ix - 1)];
+                let z_e = h_field.data[iy * width + (ix + 1)];
+
+                let lap = z_n + z_s + z_e + z_w - 4.0 * z_here;
+                z_new[i] = z_here + d * lap * dt_sub;
             }
-
-            // Domain-boundary ring (ix == 0, ix == w-1, iy == 0, iy == h-1)
-            // was already preserved by `copy_from_slice` — no write needed.
-
-            // Swap: h_field.data becomes z_new for the next substep.
-            std::mem::swap(&mut h_field.data, &mut z_new);
         }
 
-        Ok(())
+        // Domain-boundary ring (ix == 0, ix == w-1, iy == 0, iy == h-1)
+        // was already preserved by `copy_from_slice` — no write needed.
+
+        // Swap: h_field.data becomes z_new for the next substep.
+        std::mem::swap(&mut h_field.data, &mut z_new);
     }
 }
 
