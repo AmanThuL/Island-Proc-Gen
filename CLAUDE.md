@@ -480,7 +480,7 @@ you need the "why" behind a constant or the full story of a decision.
   (per-scenario tuning); revisit only if a later sprint produces
   identical duplication.
 
-#### Sprint 3.5 (hex surface readability) — just closed
+#### Sprint 3.5 (hex surface readability)
 
 - **Flat-top hex convention is load-bearing** (DD1).
   `crates/hex/src/geometry.rs` is the single source of truth: width
@@ -554,6 +554,134 @@ you need the "why" behind a constant or the full story of a decision.
   only in `view_mode` produce bit-identical `overlay_hashes` and
   `metrics_hash`. View_mode only affects beauty; a truth-affecting
   view_mode change would be an architectural violation.
+
+#### Sprint 4 (compute productization, Phase 1) — just closed
+
+- **`ComputeBackend` trait in `core::pipeline::compute`** (DD1) — NOT
+  in `gpu`. Two real impls: `sim::compute::CpuBackend` and
+  `gpu::compute::GpuBackend`. `core::pipeline::compute::NoOpBackend`
+  for `core` consumers that never construct a real backend. Trait
+  signatures take pure-Rust types (`&mut WorldState`, `&HillslopeParams`,
+  `&StreamPowerParams`, return `Result<StageTiming, ComputeBackendError>`).
+  NO opaque `BufferHandle / PipelineHandle` — Sprint 4.x problem.
+  Trait-method-count snapshot lock at `ComputeOp::ALL.len() == 2` —
+  Sprint 4.x adding a 7th op MUST review DD1 alternatives table
+  (b: primitive signatures / c: `crates/compute_iface` micro-crate /
+  d: orchestrator-level dispatch) before unlocking the snapshot.
+- **CPU is canonical truth path; GPU is opt-in benchmark** (DD5). The
+  5 baselines' truth-path hashes (`overlay_hashes.*` + `metrics_hash`)
+  stay CPU-canonical — GPU runs produce drifted hashes by FP
+  reassociation, do NOT regenerate baselines under GPU. Run via
+  `IPG_COMPUTE_BACKEND=gpu` env or `--compute-backend gpu` CLI flag;
+  default is CPU. **NO silent CPU fallback** — when `--compute-backend
+  gpu` is requested but a pilot op is unsupported, exit 3
+  (`InternalError`) with a clear "GPU compute backend has no
+  implementation for op X yet" message.
+- **`RunSummary.schema_version: 4`** (DD2). Adds `ShotSummary
+  .stage_timings: BTreeMap<String, StageTiming>` keyed by
+  `SimulationStage::name()` (lowercase strings like `"topography"`,
+  `"erosion_outer_loop"`, `"validation"` — NOT `format!("{:?}", StageId)`,
+  because `core::pipeline` cannot reference `StageId` per invariant
+  #1). v3 RON parses under v4 binary via `#[serde(default)]`. The
+  `assert_eq!(summary.schema_version, request.schema_version)` test
+  (Sprint 1C policy) is replaced by `assert!(summary.schema_version
+  >= request.schema_version)` — upgrade direction enforced. AD8
+  whitelist extends to `stage_timings.*.cpu_ms` and
+  `stage_timings.*.gpu_ms` (non-deterministic wall-clock; NEVER part
+  of pass/fail).
+- **`WorldState.derived.last_stage_timings + last_stage_gpu_ms`**
+  (`#[serde(skip)]`). `Pipeline::run_from` wraps each stage with
+  `Instant::now() / elapsed()` capturing `cpu_ms`; reads + clears
+  `world.derived.last_stage_gpu_ms` per stage as the GPU-side-channel.
+  Cleared by `invalidate_from(StageId::Topography)` per derived-arm
+  policy. **`last_stage_timings` accumulates across sequential
+  `run_from(K)` calls** — slider re-runs preserve `[0..K)` entries
+  from the previous run so the Profiler tab can display the full
+  18-stage breakdown without re-running upstream stages.
+- **`default_pipeline()` keeps zero-arg signature**;
+  `default_pipeline_with_backend(backend: Arc<dyn ComputeBackend>)`
+  is the swap point. `Arc<dyn ComputeBackend>` (NOT generic
+  `<B: ComputeBackend>`) — backend choice is runtime-driven via env
+  var / CLI flag, monomorphizing would bloat compile time.
+- **Hillslope + StreamPower kernels live as `pub fn` free functions**
+  in `sim::geomorph::{hillslope, stream_power}`. Both
+  `HillslopeDiffusionStage::run` (standalone) AND
+  `CpuBackend::run_hillslope_diffusion` (trait dispatch) call into
+  the same free fn. Single source of truth for the math.
+  `GpuBackend::run_*` uses WGSL shaders that are math-identical
+  (verified by DD8 parity tests).
+- **Per-kernel parity tolerances per DD8** — opt-in via
+  `IPG_RUN_GPU_PARITY=1`:
+  - Hillslope: `max_abs_interior ≤ 1e-5`, `max_rel ≤ 1e-4`,
+    boundary cells exact copy-through, mean drift `≤ 1e-6` per iter.
+    M4 Pro Metal observation: `5.96e-8 abs / 1.04e-7 rel` (167-1000×
+    margins).
+  - Stream-power per-iter: sea cells (A==0) exact 0.0,
+    near-flat (slope < 1e-6) `≤ 1e-7`, normal-A `≤ 1e-4`. M4 Pro
+    Metal observation: all bounds `0.0e0` (math is bit-exact on
+    Metal at 128² for these params).
+  - Accumulated 100-iter ErosionOuterLoop: `≤ 1e-3 * max(h_cpu)`. M4
+    Pro Metal: `5.96e-8` vs tol `9.9e-4` (16,000× margin).
+  - Hard invariants (any failure = test fail): no NaN/Inf, no
+    negative sediment, `erosion_no_excessive_sea_crossing < 5%`.
+- **Benchmarks live at `crates/data/benchmarks/sprint_4/`, NOT
+  `crates/data/golden/`** (DD7). Wall-clock measurements are evidence
+  artifacts that drift across machines/scheduler/thermal envelope —
+  same-host before/after diffs are interpretable; cross-host
+  comparisons are not. CSVs do NOT participate in the AD9 exit-code
+  map. Regression threshold: `> 10%` median drift across 5 baselines
+  triggers investigation, not auto-block.
+- **GPU on M4 Pro Metal is 40-55× SLOWER end-to-end than CPU at 128²**
+  on the canonical baselines. Inner kernels are sub-microsecond
+  (TIMESTAMP_QUERY underflow → `gpu_ms = Some(0.0)`); wall-clock cost
+  is dominated by 100 dispatches × (CPU→GPU buffer upload + GPU
+  dispatch + sync readback) per regen. **Sprint 4 ships
+  measurement-rich foundation, not guaranteed speedup** — DD7 / §10
+  G5 explicitly accept negative whole-pipeline delta as long as
+  attribution is clear. Sprint 4.x candidates: persistent buffers
+  across batches, deferred readback, kernel fusion.
+- **`ComputePassDescriptor::timestamp_writes` ONLY** (DD6) — NEVER
+  `CommandEncoder::write_timestamp` (that path needs the rarer
+  `TIMESTAMP_QUERY_INSIDE_ENCODERS` feature; Sprint 4 deliberately
+  sticks to the lighter `wgpu::Features::TIMESTAMP_QUERY` gate).
+  Structural test `gpu_backend_uses_pass_descriptor_timestamp_writes`
+  guards drift. `gpu_ms` reports `None` on adapters without
+  TIMESTAMP_QUERY (some old Linux Intel iGPU, current wasm32);
+  CPU wall-clock around the dispatch is a usable proxy. Sprint 5 S4
+  wasm32 / WebGPU bring-up: `Option<f64>` shape stays graceful.
+- **Synchronous readback inside `run_from`** is intentional (DD6) —
+  parity correctness + measurement determinism > peak throughput for
+  Sprint 4. Per-frame stall lands on `run_from` calls (slider
+  release, regen click), NOT on idle interactive ticks (lazy).
+  Sprint 4.x is allowed to introduce deferred readback / persistent
+  buffers / kernel fusion as a throughput pass.
+- **`shaders/{hillslope_diffusion, stream_power_incision}.wgsl`** —
+  workgroup `(8, 8, 1)` locked by `*_wgsl_workgroup_size_matches_dd8_lock`
+  tests. `naga` validation in `#[cfg(test)]` blocks (`naga` is dev-dep
+  on `gpu` AND `render`, both pinned to the wgpu 29.0.1-transitive
+  version). NO subgroup intrinsics, NO 16-bit floats, storage buffer
+  reads only — forward-compatible to wasm32 / WebGPU at Sprint 5 S4.
+  Bind group hygiene: `@group(0)` uniforms, `@group(1)` read-only
+  inputs, `@group(2)` read-write outputs.
+- **Profiler egui_dock tab MVP** — read-only (DD7-style).
+  18-row grid + 4-row header. NO sparkline, NO last-N ring buffer
+  (deferred to Sprint 4.x). Backend selector is text label only —
+  switching backend requires app reload (no live switch).
+  `dirty_frontier: Option<StageId>` persists from `invalidate_from`
+  call until next invalidation, NOT cleared by `run_from` completion
+  (deliberate Sprint 4 interpretation; spec wording would naively
+  reset on run, but that defeats "show me what just got rerun").
+- **`IPG_RUN_GPU_TESTS=1` and `IPG_RUN_GPU_PARITY=1`** are the opt-in
+  gates for GPU-required tests; default `cargo test --workspace` runs
+  CPU-only and stays green on GPU-less CI machines. The 4
+  GPU-required smoke tests + 3 parity tests are `#[ignore]`-gated.
+- **`HillslopeParams.hs_entrain_max` was added to the trait surface
+  at 4.F** because the GPU shader needs it inline. Was previously
+  hard-coded as `sim::geomorph::sediment::HS_ENTRAIN_MAX`. Plumbed
+  through `ErosionOuterLoop`'s params construction. The companion
+  constants `FALLBACK_H_STAR` / `FALLBACK_HS_ENTRAIN_MAX` in
+  `core::pipeline::compute` mirror the `sim` constants for the GPU
+  pipeline (which can't depend on `sim` per DAG).
 
 ---
 

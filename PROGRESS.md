@@ -1,12 +1,15 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-25 (Sprint 4 Compute Productization Phase 1
-*active* — Task 4.0 pre-flight gates green; 5 `--headless` baselines
-exit 0 idempotently; lump-sum CPU BEFORE benchmark captured under
-`crates/data/benchmarks/sprint_4/pre/cpu/<5>.csv` against the v3
-`summary.ron` lump-sum trio (`pipeline_ms`, `bake_ms`, `gpu_render_ms`).
-Per-stage extension lands at 4.B once `RunSummary.schema_version: 3 →
-4` ships.)
+**Last Updated:** 2026-04-26 (Sprint 4 Compute Productization Phase 1
+**closed** on `dev` — 9 atomic commits `66562ba → <this>`; `cargo test
+--workspace` 618 → 672 passing / 8 → 19 ignored (net +54 non-ignored
++11 GPU-gated); 5 `--headless` baselines under `--compute-backend cpu`
+bit-identical truth path; full 5-baseline cascade with
+`IPG_COMPUTE_BACKEND=gpu` exits 0 on Apple M4 Pro Metal. Sprint 4
+ships **measurement-rich GPU compute scaffold**; CPU stays canonical
+truth (DD5). DD8 parity met by 167-16,000× margins; GPU is 40-55×
+SLOWER end-to-end at 128² due to synchronous readback + small grid
+amortization — attribution clear, Sprint 4.x optimizes.)
 
 ---
 
@@ -34,31 +37,49 @@ is at [`docs/design/sprints/sprint_3_5_hex_surface_readability.md`](docs/design/
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 4 — Compute Productization (Phase 1, *active*).
-`crates/gpu/` + `ComputeBackend` scaffold, per-stage CPU/GPU timing
-harness, **HillslopeDiffusion + StreamPowerIncision** GPU pilots inside
-`ErosionOuterLoop`. CPU stays canonical truth; GPU is opt-in benchmark
-via `IPG_COMPUTE_BACKEND=gpu` env / `--compute-backend gpu` CLI flag.
-`RunSummary.schema_version: 3 → 4` adds `stage_timings` (BTreeMap of
-`StageId` debug name → `StageTiming { cpu_ms, gpu_ms? }`). Profiler
-egui_dock tab MVP joins the existing dock layout; `--print-breakdown`
-prints per-shot console tables. Sprint 4's plan doc is at
-[`docs/design/sprints/sprint_4_compute_productization.md`](docs/design/sprints/sprint_4_compute_productization.md).
+**Primary:** Sprint 4.1 — CLI Productization (*active-next*).
+`crates/cli/` extraction, `island-gen` binary, `batch / bench / sweep /
+atlas` subcommands. Adopts Sprint 4's per-stage timing as a first-class
+benchmark output (extends `crates/data/benchmarks/sprint_4/` →
+`benchmarks/<sprint_4_x>/`). NO new GPU compute, NO new sim science,
+NO physical-unit calibration. Sprint 4.1's plan doc is the next sprint
+to author at `docs/design/sprints/sprint_4_1_cli_productization.md`
+once 4.1 starts; until then, the Sprint 4 §8 Handoff entry carries the
+forward-looking intent.
 
-**Sprint 4 is intentionally Phase 1 of the roadmap §Sprint 4 arc.** The
-roadmap's full bundle (CLI productization + physical-unit calibration +
-remaining GPU ports + multi-platform CI) is decomposed into:
+**Sprint 4 (Phase 1) closed at 2026-04-26** in 9 atomic commits on
+`dev` (`66562ba → <this>`). Shipped:
+- `ComputeBackend` trait in `core::pipeline::compute` (DD1) +
+  CpuBackend (`sim::compute`) + GpuBackend (`gpu::compute`)
+- Hillslope + StreamPower GPU pilots inside `ErosionOuterLoop`
+- DD8 numerical parity (167-16,000× margin on M4 Pro Metal)
+- `RunSummary.schema_version: 3 → 4` + `ShotSummary.stage_timings`
+- `--print-breakdown` headless flag + Profiler egui_dock tab MVP
+- `--compute-backend cpu|gpu` flag + `IPG_COMPUTE_BACKEND` env var
+- `crates/data/benchmarks/sprint_4/{pre,post}/{cpu,gpu}/` evidence
+- 5 baselines bit-identical truth path under default cpu; full
+  `IPG_COMPUTE_BACKEND=gpu` cascade exits 0 end-to-end.
 
-- **Sprint 4** (active, this doc): GPU compute scaffold + per-stage
-  timing + 2 GPU pilots
-- **Sprint 4.1** — CLI productization: `crates/cli/`, `island-gen`
-  binary, `batch / bench / sweep / atlas` subcommands
+**Sprint 4 ships measurement-rich foundation, NOT guaranteed speedup**
+(per DD7 / §10 G5). On 128² M4 Pro Metal, GPU is **40-55× SLOWER
+end-to-end** because inner kernels are sub-microsecond
+(TIMESTAMP_QUERY underflow) and 100 dispatches × sync readback
+dominate wall-clock. Sprint 4.x candidates by name: persistent
+buffers across batches, deferred readback, kernel fusion.
+
+**Sprint 4.1 is intentionally next of the Phase 1 / 4.1 / 4.2 / 4.x
+arc**:
+
+- **Sprint 4.1** (active-next): CLI productization (`island-gen`
+  binary + `batch / bench / sweep / atlas` subcommands).
 - **Sprint 4.2** — Physical-unit calibration (mm/yr, m, mm·yr⁻¹).
   Closes §10 G4 (max_z drop), G5 (Cliff coverage), G7 (CoastalScrub
   foothold). All forwarded from Sprint 3.1 / 3.5 land here.
 - **Sprint 4.x** — Remaining GPU ports (HexProjection, FlowAccumulation,
-  LFPM v3, CoastType v2 fetch integral, FogLikelihood) + multi-platform
-  CI matrix (Linux / Windows headless backend)
+  LFPM v3, CoastType v2 fetch integral, FogLikelihood) + GPU
+  performance pass (persistent buffers, deferred readback, kernel
+  fusion) + multi-platform CI matrix (Linux / Windows headless
+  backend).
 
 Sprint 4 does NOT do first-pass beauty (Sprint 4.5), semantic layer
 (Sprint 5), or re-shape hex readability (Sprint 3.5 territory, closed).
@@ -72,13 +93,71 @@ SM floor `COASTAL_MARGIN_MAX_DIST=3` + floor 0.25; CloudForest
 `HexInspectPanel`; DD8 schema_version 3 + optional `view_mode` on
 `CaptureShot`; `render_stack_for(ViewMode)` parity tier-1 gate.
 
-**Last shipped:** Sprint 3.5 Hex Surface Readability (2026-04-24, 31
-commits A→F). **Previous:** Sprint 3.4 Module Boundary Cleanup
-(2026-04-23, 5 commits). Both full tables below in RECENTLY SHIPPED.
+**Last shipped:** Sprint 4 Compute Productization (Phase 1)
+(2026-04-26, 9 commits 4.0 → 4.G). **Previous:** Sprint 3.5 Hex
+Surface Readability (2026-04-24, 31 commits A→F). Both full tables
+below in RECENTLY SHIPPED.
 
 ---
 
 ## RECENTLY SHIPPED
+
+### Sprint 4 — Compute Productization (Phase 1) (2026-04-26, 9 commits on `dev`)
+
+**Doc:** [`docs/design/sprints/sprint_4_compute_productization.md`](docs/design/sprints/sprint_4_compute_productization.md) (Obsidian symlink, gitignored)
+**Test delta:** 618 → 672 passing / 8 → 19 ignored (net +54 non-ignored across 4.0 → 4.G; +11 GPU-gated `#[ignore]` tests behind `IPG_RUN_GPU_TESTS=1` / `IPG_RUN_GPU_PARITY=1`). Commits `66562ba → <this>`.
+**Close-out status:** All G1-G6 acceptance gates met or characterized per DD7 / §10 G5 (frame-time delta NOT presumed positive). CPU stays canonical truth (DD5); GPU is opt-in benchmark. 5 baselines bit-identical truth path under `--compute-backend cpu`; full cascade with `IPG_COMPUTE_BACKEND=gpu` exits 0 end-to-end.
+
+| Commit | Task | What shipped |
+|---|---|---|
+| `66562ba` | 4.0 | Pre-flight + doc-sync + lump-sum BEFORE benchmark. PROGRESS.md decomposition into 4.1/4.2/4.x; benchmarks/sprint_4 scaffold (regen.sh + extract_summary.py + README.md + lump-sum CSVs at v3). Entry gate green: 5 cargo gates + 5 baselines exit 0 idempotently. |
+| `ac2e8e2` | 4.A | Per-stage CPU timing substrate. `core::pipeline::timing::StageTiming` struct (PartialEq only — no Eq because f64); `WorldState.derived.{last_stage_timings, last_stage_gpu_ms}` (both `#[serde(skip)]`); `Pipeline::run_from` wraps each stage with `Instant::now()/elapsed()`; `RunSummary.schema_version: 3 → 4`; `ShotSummary.stage_timings`; AD8 whitelist extension; `--print-breakdown` flag; forward-compat tests with static V3_FIXTURE. |
+| `2650d72` | 4.B step 1 | Cascade-regen 5 baselines under v4 binary (truth-path bit-identical). per-stage BEFORE benchmark CSV overwrite. schema_compat fixture refactor (live → static V3_FIXTURE). |
+| `5f957ee` | 4.B step 2 | Profiler egui_dock tab MVP (read-only, 18-row grid, no sparkline). `Runtime::{last_tick_timings, cumulative_timings, last_regen_ms, dirty_frontier, backend_name}`. cumulative reset on `invalidate_from`; dirty_frontier persist-until-next-invalidate. |
+| `905d559` | 4.C | `ComputeBackend` trait in `core::pipeline::compute` (DD1). CpuBackend impl in `sim::compute`. `hillslope_diffusion_kernel` + `stream_power_incision_kernel` extracted as free fns. `default_pipeline_with_backend` swap point; `default_pipeline()` zero-arg signature preserved. ErosionOuterLoop dispatches via `Arc<dyn ComputeBackend>`. **CPU bit-identical** to 2650d72. ComputeOp::ALL snapshot lock at len==2. |
+| `b449b15` | 4.D | GPU infrastructure scaffold. `GpuContext` opts into `wgpu::Features::TIMESTAMP_QUERY` when adapter supports; GpuBackend struct stub (both pipeline slots None); `--compute-backend cpu|gpu` flag + `IPG_COMPUTE_BACKEND` env var. NO silent CPU fallback — gpu mode at 4.D exits 3 with clear "GPU compute backend has no implementation for op X yet — pilots land at Tasks 4.E / 4.F" message. timestamp helper uses ComputePassDescriptor::timestamp_writes ONLY (DD6 lock — never CommandEncoder::write_timestamp). |
+| `11e777e` | 4.E | HillslopeDiffusion GPU port (Pilot #1). `shaders/hillslope_diffusion.wgsl` 5-point Laplacian @workgroup_size(8,8,1). `HillslopeComputePipeline` with ping-pong storage buffers + bind groups. DD8 hillslope parity contract: `max_abs_interior=5.96e-8` (167× under 1e-5 limit), `max_rel=1.04e-7` (1000× under 1e-4), boundary cells exact, drift_per_iter=3.74e-7 (under 1e-6). M4 Pro Metal: cpu_ms=6.115, gpu_ms=0.012 on the inner kernel alone. |
+| `23a2689` | 4.F | StreamPowerIncision GPU port (Pilot #2). `shaders/stream_power_incision.wgsl` per-cell `K·A^m·S^n·exp(-hs/H*)` + sediment shielding. DD8 stream-power per-iter contract: all sub-bounds 0.0e0 (math is bit-exact on Metal at 128² for these params). Accumulated 100-iter test: max_abs_err=5.96e-8 vs tol=9.9e-4 (16,000× margin). After 4.F: full 5-baseline cascade with --compute-backend gpu exits 0. |
+| `<this>` | 4.G | Close-out: AFTER benchmarks captured (post/cpu/<5>.csv + post/gpu/<5>.csv); benchmarks/README.md close-out characterization with per-baseline numbers; CLAUDE.md Gotchas §Sprint 4 subsection (~14 bullets); PROGRESS.md "Last shipped: Sprint 4 (Phase 1)" + RECENTLY SHIPPED roll-forward (this commit). |
+
+**§10 acceptance verdicts at 4 close:**
+
+- **G1 Behavioural truth-path equivalence** — **MET**. All 5 baselines exit 0 with `--compute-backend cpu`; truth-path `overlay_hashes.*` + `metrics_hash` + beauty `byte_hash` bit-identical to Sprint 3.5 close (`a2992c5`).
+- **G2 Structural delivery** — **MET**. ComputeBackend trait + 2 impls + 2 shaders + parity harness + Profiler tab all in expected locations. `cargo tree -p core` clean.
+- **G3 Verification gates green** — **MET**. cargo fmt + clippy + 672 passing / 19 ignored. `cargo tree -p core` zero matches for forbidden deps.
+- **G4 Per-stage timing populated** — **MET**. v4 schema across all 5 baselines; `stage_timings` keyed by stage name; cpu_ms populated for every stage; gpu_ms populated for ErosionOuterLoop in post/gpu/<5>.csv.
+- **G5 Frame-time delta characterized (NOT presumed positive)** — **MET-WITH-NEGATIVE-DELTA**. Per-baseline `ErosionOuterLoop` inner-kernel CPU vs GPU ms with attribution. **Whole-pipeline GPU is 40-55× SLOWER than CPU at 128² on M4 Pro Metal** (1004 ms vs 23 ms on sprint_1a_baseline, etc.). Bottleneck attribution clear: 100 dispatches × sync readback dominates wall-clock; inner GPU kernels are sub-microsecond (TIMESTAMP_QUERY underflow). Sprint 4.x candidates documented in close-out: persistent buffers, deferred readback, kernel fusion. Per DD7 / §10 G5: "*performance characterized* is the gate, not *speedup achieved*". **A negative whole-pipeline delta is a valid Sprint 4 outcome as long as the attribution is clear** — and it is.
+- **G6 Interactive Profiler tab usable** — **STRUCTURALLY MET**. Profiler tab registered in default_layout (8 tabs total); cumulative-since-regen counter resets on invalidate_from (tested); backend selector reads "cpu" by default. Live `cargo run -p app` interactive verification is the consent-gated user step (deferred per CLAUDE.local.md gate).
+
+**Verification evidence (captured in close-out commit msgs):**
+
+- `cargo test --workspace` = **672 passed / 0 failed / 19 ignored** (net +54 non-ignored across 4.0 → 4.G).
+- `cargo clippy --workspace -- -D warnings` green throughout; `cargo fmt --all --check` green.
+- `cargo tree -p core` — no `wgpu` / `winit` / `egui*` / `png` / `image` / `tempfile` / `naga` — CLAUDE.md invariant #1 held.
+- 5 baselines under default `--compute-backend cpu`: bit-identical truth path. 5 baselines under `--compute-backend gpu`: all exit 0 (truth hashes drift by FP reassociation per DD5 — expected; baselines stay CPU-canonical).
+- `IPG_RUN_GPU_PARITY=1 cargo test -p app --test compute_backend_parity` green on M4 Pro Metal with empirical numbers documented in commit messages.
+- DD8 numerical parity met by 167-16,000× margins.
+
+**Handoff to Sprint 4.1:**
+
+- `crates/data/benchmarks/sprint_4/` is the schema for benchmark CSVs (4 lump-sum + 19 stages × 2 columns = 42 cols). 4.1's `island-gen bench --resolutions 256,512,1024` extends this with grid-size dimension as new bucket directories (`benchmarks/sprint_4_1/<resolution>/...`).
+- Sprint 4's per-stage `stage_timings: BTreeMap<String, StageTiming>` is the first-class benchmark output that 4.1's `bench` subcommand consumes.
+- `default_pipeline_with_backend(Arc<dyn ComputeBackend>)` is the shared infrastructure between `--headless` (Sprint 4) and `island-gen` (Sprint 4.1).
+
+**Forwarded to Sprint 4.2:**
+
+- §10 G4 (max_z drop), G5 (Cliff coverage), G7 (CoastalScrub foothold) — all blocked behind physical-unit calibration. Sprint 4 explicitly does NOT touch these.
+
+**Forwarded to Sprint 4.x:**
+
+- Persistent buffers across outer batches (eliminate per-dispatch upload).
+- Deferred readback (don't block CPU on `device.poll(Wait{...})` per dispatch).
+- Kernel fusion (combine Hillslope + StreamPower into one compute-pass-encoder).
+- Larger-grid benchmarks (256² / 512² / 1024²) to find GPU cross-over point.
+- GPU port of HexProjection (scatter/atomics), FlowAccumulation (parallel scan), LFPM v3 (sequential sweep), CoastType v2 fetch integral (raycast), FogLikelihood (cheap).
+- Multi-platform CI matrix (Linux / Windows headless backend).
+- Profiler tab evolution: per-iter sub-stage breakdown inside ErosionOuterLoop (visualize the 100 inner kernel calls); sparkline + last-N-tick ring buffer.
+- Tier-2 interactive ↔ headless beauty parity test evidence (still unran from Sprint 3.5).
 
 ### Sprint 3.5 — Hex Surface Readability (2026-04-24, 31 commits on `dev`)
 
@@ -318,14 +397,15 @@ distribution, no wasm build, no binary releases.
 
 ## UPCOMING SPRINTS
 
-Sprints 0 → 3.5 are shipped. Upcoming work starts at Sprint 4. Per-sprint
-plan docs are written **one at a time** after the previous sprint closes —
-the roadmap below carries the forward-looking vision until each sprint's
+Sprints 0 → 3.5 → 4 (Phase 1) are shipped. Upcoming work starts at
+Sprint 4.1 (CLI productization, *active-next*). Per-sprint plan docs
+are written **one at a time** after the previous sprint closes — the
+roadmap below carries the forward-looking vision until each sprint's
 doc gets authored.
 
-> **Roadmap vNext (2026-04-20, with 2026-04-22 3.4 insertion):**
+> **Roadmap vNext (2026-04-20, with 2026-04-22 3.4 insertion + 2026-04-25 Sprint 4 Phase 1 decomposition):**
 > post-Sprint-3 sequence is
-> `3 (science) → 3.1 (calibration) → 3.4 (structural cleanup) → 3.5 (hex readability) → 4 (infra) → 4.5 (beauty/demo) → 5 (semantic completion)`.
+> `3 (science) → 3.1 (calibration) → 3.4 (structural cleanup) → 3.5 (hex readability) → 4 (compute scaffold + 2 GPU pilots) → 4.1 (CLI) → 4.2 (physical units) → 4.x (remaining GPU + multi-platform CI) → 4.5 (beauty/demo) → 5 (semantic completion)`.
 > Each sprint has a single thesis and its own out-of-scope list.
 > See [roadmap §Post-Sprint-3 Roadmap Revision](docs/design/island_generation_complete_roadmap.md#post-sprint-3-roadmap-revision-vnext-2026-04-20).
 
@@ -349,24 +429,35 @@ Nothing paused.
 
 ## QUICK REFERENCE
 
-Active sprint: **Sprint 4 — Compute Productization (Phase 1)** (*infra*).
+Active sprint: **Sprint 4.1 — CLI Productization** (*active-next*; plan
+doc not yet authored).
 
-**High energy?** → Sprint 4 task ladder per
-[`docs/design/sprints/sprint_4_compute_productization.md`](docs/design/sprints/sprint_4_compute_productization.md):
-4.0 (pre-flight + doc-sync + lump-sum BEFORE benchmark) → 4.A (per-stage
-CPU timing substrate + `RunSummary.schema_version: 3 → 4` + `--print-breakdown`)
-→ 4.B (5-baseline cascade regen v4 + Profiler tab MVP) → 4.C
-(`ComputeBackend` boundary + kernel extraction; behavioural equivalence)
-→ 4.D (`GpuContext::TIMESTAMP_QUERY` + GpuBackend skeleton + helpers)
-→ 4.E (HillslopeDiffusion GPU port + parity test) → 4.F
-(StreamPowerIncision GPU port + accumulated parity test) → 4.G
-(close-out: AFTER benchmarks + CLAUDE.md / PROGRESS.md / sprint
-summary). CLAUDE.local.md's subagent cadence (implementer → simplifier
-→ superpowers reviewer Opus) applies. Sprint 3.5 closed with
-`HexSurfaceRenderer` / `HexRiverRenderer` already instancing-based and
-`render_stack_for(ViewMode)` bridging interactive and headless paths —
-GPU ports of sim stages land alongside these without re-shaping the
-render layer.
+**High energy?** → Author the Sprint 4.1 plan doc into
+`docs/design/sprints/sprint_4_1_cli_productization.md` (currently
+empty placeholder per Obsidian symlink), then start the `crates/cli/`
+extraction. Sprint 4 (Phase 1) closed with `default_pipeline_with_backend`
+and `--compute-backend cpu|gpu` already plumbing through the headless
+executor — `island-gen batch / bench / sweep / atlas` consume the
+same infrastructure without re-architecting. Sprint 4 also shipped
+the per-stage `stage_timings: BTreeMap<String, StageTiming>` schema
+that 4.1's `bench` subcommand emits as machine-readable benchmark
+output. CLAUDE.local.md's subagent cadence (implementer → simplifier
+→ superpowers reviewer Opus) applies.
+
+**Quick win?** → Live `cargo run -p app` interactive verification of
+the Profiler egui_dock tab (deferred at 4.B step 2 close per CLAUDE.local.md
+consent gate). Open the app, drive a few slider re-runs, observe
+the cumulative-since-regen accumulator + Dirty frontier reflecting
+the most recent invalidate_from. Attach screenshots to the eventual
+4.B2 evidence commit.
+
+**Medium energy?** → Sprint 4.x performance pass: persistent buffers
+across batches, deferred readback (decouple GPU dispatch latency
+from CPU thread), kernel fusion. The benchmark CSVs at
+`crates/data/benchmarks/sprint_4/post/{cpu,gpu}/<5>.csv` are the
+reference that Sprint 4.x's optimizations should beat. Documented
+attribution: 100 dispatches × sync readback dominates wall-clock at
+128² on M4 Pro Metal.
 
 **Medium energy?** → Tier-2 interactive ↔ headless parity evidence.
 Run `IPG_RUN_VISUAL_PARITY=1 cargo test -p app --test
