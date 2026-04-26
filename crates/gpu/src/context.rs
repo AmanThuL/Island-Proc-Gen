@@ -29,6 +29,11 @@ use winit::{dpi::PhysicalSize, window::Window};
 /// pipelines always agree on the depth attachment.
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
+/// Minimum surface size used when bootstrapping a headless GPU context for
+/// compute-only work (no beauty renders). Sprint 4.D uses this when
+/// `--compute-backend gpu` is requested from the CLI without a beauty spec.
+pub const GPU_BOOTSTRAP_SIZE_FOR_COMPUTE: (u32, u32) = (64, 64);
+
 /// Texture format used by the Sprint 1C offscreen beauty path.
 ///
 /// Fixed to `Rgba8Unorm` rather than sampled from adapter capabilities: the
@@ -61,6 +66,14 @@ pub struct GpuContext {
     pub depth_view: wgpu::TextureView,
     /// Format of the depth texture (always [`DEPTH_FORMAT`]).
     pub depth_format: wgpu::TextureFormat,
+    /// Nanoseconds per GPU timestamp tick, derived from
+    /// [`wgpu::Queue::get_timestamp_period`].
+    ///
+    /// `Some(ns)` when the adapter granted [`wgpu::Features::TIMESTAMP_QUERY`]
+    /// at device creation time; `None` when the feature was absent or not
+    /// requested. Used by [`crate::compute::timestamp`] to convert raw tick
+    /// deltas to milliseconds.
+    pub timestamp_period_ns: Option<f64>,
 }
 
 impl GpuContext {
@@ -110,6 +123,8 @@ impl GpuContext {
             "Surface configured"
         );
 
+        let timestamp_period_ns = timestamp_period_ns_if_granted(&adapter, &device, &queue);
+
         Ok(Self {
             instance,
             surface: Some(surface),
@@ -122,6 +137,7 @@ impl GpuContext {
             depth_texture,
             depth_view,
             depth_format: DEPTH_FORMAT,
+            timestamp_period_ns,
         })
     }
 
@@ -159,10 +175,13 @@ impl GpuContext {
 
         let (depth_texture, depth_view) = create_depth(&device, width, height, DEPTH_FORMAT);
 
+        let timestamp_period_ns = timestamp_period_ns_if_granted(&adapter, &device, &queue);
+
         info!(
             width = width,
             height = height,
             format = ?surface_format,
+            timestamp_query = timestamp_period_ns.is_some(),
             "Headless GPU context initialised"
         );
 
@@ -178,6 +197,7 @@ impl GpuContext {
             depth_texture,
             depth_view,
             depth_format: DEPTH_FORMAT,
+            timestamp_period_ns,
         })
     }
 
@@ -403,15 +423,47 @@ pub(crate) fn request_adapter_and_device(
         "GPU adapter selected"
     );
 
+    // Sprint 4.D: opt into TIMESTAMP_QUERY when the adapter supports it.
+    // The feature is requested conditionally so the device creation never
+    // fails on adapters that lack it (e.g. software rasterisers on CI).
+    // `TIMESTAMP_QUERY_INSIDE_ENCODERS` is NOT requested — DD6 uses only
+    // `ComputePassDescriptor::timestamp_writes`, which needs the lighter gate.
+    let adapter_features = adapter.features();
+    let requested_features = if adapter_features.contains(wgpu::Features::TIMESTAMP_QUERY) {
+        info!(path = label, "TIMESTAMP_QUERY supported; opting in");
+        wgpu::Features::TIMESTAMP_QUERY
+    } else {
+        info!(path = label, "TIMESTAMP_QUERY not supported; skipping");
+        wgpu::Features::empty()
+    };
+
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("island-proc-gen device"),
-        required_features: wgpu::Features::empty(),
+        required_features: requested_features,
         required_limits: wgpu::Limits::default(),
         ..Default::default()
     }))
     .with_context(|| format!("request_device failed (path = {label})"))?;
 
     Ok((adapter, device, queue))
+}
+
+/// Return the queue's timestamp period in nanoseconds when the device was
+/// granted [`wgpu::Features::TIMESTAMP_QUERY`], or `None` otherwise.
+///
+/// The check uses `device.features()` (the *granted* set, not the adapter's
+/// available set) so the result is accurate even when the feature was
+/// conditionally requested.
+fn timestamp_period_ns_if_granted(
+    _adapter: &wgpu::Adapter,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+) -> Option<f64> {
+    if device.features().contains(wgpu::Features::TIMESTAMP_QUERY) {
+        Some(queue.get_timestamp_period() as f64)
+    } else {
+        None
+    }
 }
 
 fn create_depth(

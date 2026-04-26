@@ -12,8 +12,10 @@
 //! to set the process exit code without scraping any string.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
+use island_core::pipeline::ComputeBackend;
 
 pub mod compare;
 pub mod executor;
@@ -22,17 +24,33 @@ pub mod request;
 
 use output::{OverallStatus, RunLayout, RunSummary};
 
-/// Execute a `CaptureRequest` loaded from `request_path`.
+/// Execute a `CaptureRequest` loaded from `request_path` using the CPU
+/// compute backend (default path).
 ///
 /// Thin facade over [`executor::run_request`]; kept as the stable public API
-/// that `main.rs` calls so the executor module can evolve without breaking
-/// the `app::headless::run` call site.
+/// that `main.rs --compute-backend cpu` calls.
 ///
 /// Returns `(OverallStatus, Vec<String>)` where the second element is always
 /// empty — `run` writes warnings into `summary.ron::warnings` itself rather
 /// than surfacing them to the caller.
 pub fn run(request_path: &Path) -> Result<(OverallStatus, Vec<String>)> {
     Ok((executor::run_request(request_path)?, Vec::new()))
+}
+
+/// Execute a `CaptureRequest` with a custom [`ComputeBackend`].
+///
+/// Used by `main.rs --compute-backend gpu` at Sprint 4.D (and later 4.E/F
+/// when the GPU pilots are live). The GPU backend returns
+/// `ComputeBackendError::Unsupported` for both pilot ops at 4.D, which the
+/// executor surfaces as `OverallStatus::InternalError` (exit 3).
+pub fn run_with_backend(
+    request_path: &Path,
+    backend: Arc<dyn ComputeBackend>,
+) -> Result<(OverallStatus, Vec<String>)> {
+    Ok((
+        executor::run_request_with_backend(request_path, backend)?,
+        Vec::new(),
+    ))
 }
 
 /// Diff a runtime capture directory against a checked-in expected directory.

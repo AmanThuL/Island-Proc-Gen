@@ -7,8 +7,10 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-wgpu      = { workspace = true }
-winit     = { workspace = true }
-anyhow    = { workspace = true }
-tracing   = { workspace = true }
-pollster  = { workspace = true }
+island_core = { path = "../core", package = "core" }
+wgpu        = { workspace = true }
+winit       = { workspace = true }
+anyhow      = { workspace = true }
+bytemuck    = { workspace = true }
+tracing     = { workspace = true }
+pollster    = { workspace = true }

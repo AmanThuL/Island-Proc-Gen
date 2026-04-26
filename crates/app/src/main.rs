@@ -13,6 +13,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use winit::{
@@ -24,8 +25,21 @@ use winit::{
 
 use app::headless;
 use app::runtime::Runtime;
+use gpu::GpuBackend;
+use island_core::pipeline::ComputeBackend;
 
 // ── CLI argument parsing ──────────────────────────────────────────────────────
+
+/// Compute backend selection for `--compute-backend cpu|gpu`.
+///
+/// Sprint 4.D: `gpu` returns `Unsupported` for both pilot ops (exit 3);
+/// `cpu` is the default and is always bit-identical to the pre-4.D baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum ComputeBackendChoice {
+    #[default]
+    Cpu,
+    Gpu,
+}
 
 /// Top-level CLI mode selected by argv.
 ///
@@ -40,6 +54,9 @@ enum CliMode {
         /// stdout after the run completes. GPU columns show `—` in 4.A;
         /// populated by Sprint 4.D+ `GpuBackend` implementations.
         print_breakdown: bool,
+        /// Sprint 4.D: compute backend to use for the pilot kernels.
+        /// Default = `cpu`; `gpu` exits 3 at 4.D (no pilots yet).
+        compute_backend: ComputeBackendChoice,
     },
     HeadlessValidate {
         run: PathBuf,
@@ -53,9 +70,11 @@ fn parse_cli(args: &[String]) -> Result<CliMode> {
             .get(i + 1)
             .ok_or_else(|| anyhow!("--headless requires a <request.ron> path"))?;
         let print_breakdown = args.iter().any(|a| a == "--print-breakdown");
+        let compute_backend = parse_compute_backend(args)?;
         return Ok(CliMode::Headless {
             request: PathBuf::from(request),
             print_breakdown,
+            compute_backend,
         });
     }
 
@@ -82,6 +101,71 @@ fn parse_cli(args: &[String]) -> Result<CliMode> {
     }
 
     Ok(CliMode::Interactive)
+}
+
+/// Parse the `--compute-backend cpu|gpu` flag (Sprint 4.D).
+///
+/// Priority order:
+/// 1. `--compute-backend <value>` argv flag (case-sensitive: must be lowercase).
+/// 2. `IPG_COMPUTE_BACKEND` env var (must be lowercase; mixed-case warns and
+///    falls back to cpu).
+///
+/// Returns `Err` when the flag is present with an unrecognised value.
+fn parse_compute_backend(args: &[String]) -> Result<ComputeBackendChoice> {
+    // argv flag takes priority.
+    if let Some(i) = args.iter().position(|a| a == "--compute-backend") {
+        let value = args
+            .get(i + 1)
+            .ok_or_else(|| anyhow!("--compute-backend requires a value: cpu or gpu"))?;
+        return match value.as_str() {
+            "cpu" => Ok(ComputeBackendChoice::Cpu),
+            "gpu" => Ok(ComputeBackendChoice::Gpu),
+            other => Err(anyhow!(
+                "--compute-backend: unrecognised value '{other}'; valid values are: cpu, gpu"
+            )),
+        };
+    }
+
+    // Env var fallback.
+    if let Ok(env) = std::env::var("IPG_COMPUTE_BACKEND") {
+        return match env.as_str() {
+            "cpu" => Ok(ComputeBackendChoice::Cpu),
+            "gpu" => Ok(ComputeBackendChoice::Gpu),
+            other => {
+                // Mixed-case or unknown value: warn and fall back to cpu.
+                eprintln!(
+                    "warn: IPG_COMPUTE_BACKEND={other:?} is not a recognised value \
+                     (expected lowercase 'cpu' or 'gpu'); falling back to cpu"
+                );
+                Ok(ComputeBackendChoice::Cpu)
+            }
+        };
+    }
+
+    Ok(ComputeBackendChoice::Cpu)
+}
+
+/// Construct the [`ComputeBackend`] selected by `choice`.
+///
+/// For `Gpu`, constructs a headless [`GpuContext`] (reusing the render
+/// adapter that the headless executor will also bootstrap for beauty shots)
+/// and wraps it in a [`GpuBackend`]. At Sprint 4.D both pilot ops return
+/// `Unsupported`, causing the first erosion step to fail with `InternalError`
+/// (exit 3).
+///
+/// Returns `Err` when `Gpu` is requested but no adapter is available.
+fn build_compute_backend(choice: ComputeBackendChoice) -> Result<Arc<dyn ComputeBackend>> {
+    match choice {
+        ComputeBackendChoice::Cpu => Ok(Arc::new(sim::compute::CpuBackend)),
+        ComputeBackendChoice::Gpu => {
+            use gpu::context::GPU_BOOTSTRAP_SIZE_FOR_COMPUTE;
+            let ctx =
+                gpu::GpuContext::new_headless(GPU_BOOTSTRAP_SIZE_FOR_COMPUTE).map_err(|e| {
+                    anyhow!("--compute-backend gpu: failed to initialise GPU context: {e:#}")
+                })?;
+            Ok(Arc::new(GpuBackend::new(Arc::new(ctx))))
+        }
+    }
 }
 
 // ── AppHandler ────────────────────────────────────────────────────────────────
@@ -156,8 +240,23 @@ fn main() -> ExitCode {
         CliMode::Headless {
             request,
             print_breakdown,
+            compute_backend,
         } => {
-            let result = headless::run(&request);
+            // Build the compute backend (GPU bootstrap happens here for `gpu`).
+            let backend = match build_compute_backend(compute_backend) {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("headless harness error: {e:#}");
+                    return ExitCode::from(3);
+                }
+            };
+
+            let result = if compute_backend == ComputeBackendChoice::Cpu {
+                headless::run(&request)
+            } else {
+                headless::run_with_backend(&request, backend)
+            };
+
             // Print breakdown before exit if requested.
             if print_breakdown {
                 if let Ok((ref status, _)) = result {
@@ -377,6 +476,7 @@ mod tests {
         let CliMode::Headless {
             request,
             print_breakdown,
+            compute_backend,
         } = parse_cli(&args).unwrap()
         else {
             panic!("expected CliMode::Headless");
@@ -386,6 +486,11 @@ mod tests {
             !print_breakdown,
             "--print-breakdown should default to false"
         );
+        assert_eq!(
+            compute_backend,
+            ComputeBackendChoice::Cpu,
+            "--compute-backend should default to cpu"
+        );
     }
 
     #[test]
@@ -394,6 +499,7 @@ mod tests {
         let CliMode::Headless {
             request,
             print_breakdown,
+            ..
         } = parse_cli(&args).unwrap()
         else {
             panic!("expected CliMode::Headless");
@@ -402,6 +508,66 @@ mod tests {
         assert!(
             print_breakdown,
             "--print-breakdown should be true when present"
+        );
+    }
+
+    #[test]
+    fn compute_backend_flag_cpu_is_parsed() {
+        let args = s(&[
+            "app",
+            "--headless",
+            "/tmp/req.ron",
+            "--compute-backend",
+            "cpu",
+        ]);
+        let CliMode::Headless {
+            compute_backend, ..
+        } = parse_cli(&args).unwrap()
+        else {
+            panic!("expected CliMode::Headless");
+        };
+        assert_eq!(compute_backend, ComputeBackendChoice::Cpu);
+    }
+
+    #[test]
+    fn compute_backend_flag_gpu_is_parsed() {
+        let args = s(&[
+            "app",
+            "--headless",
+            "/tmp/req.ron",
+            "--compute-backend",
+            "gpu",
+        ]);
+        let CliMode::Headless {
+            compute_backend, ..
+        } = parse_cli(&args).unwrap()
+        else {
+            panic!("expected CliMode::Headless");
+        };
+        assert_eq!(compute_backend, ComputeBackendChoice::Gpu);
+    }
+
+    #[test]
+    fn compute_backend_flag_unknown_value_errors() {
+        let args = s(&[
+            "app",
+            "--headless",
+            "/tmp/req.ron",
+            "--compute-backend",
+            "metal",
+        ]);
+        assert!(
+            parse_cli(&args).is_err(),
+            "--compute-backend with unknown value must return Err"
+        );
+    }
+
+    #[test]
+    fn compute_backend_flag_missing_value_errors() {
+        let args = s(&["app", "--headless", "/tmp/req.ron", "--compute-backend"]);
+        assert!(
+            parse_cli(&args).is_err(),
+            "--compute-backend without value must return Err"
         );
     }
 

@@ -24,15 +24,19 @@ use std::time::Instant;
 use anyhow::{Context as _, Result, bail};
 use tracing::{error, info, warn};
 
+use std::sync::Arc;
+
 use crate::runtime::view_mode::{RenderLayer, ViewMode, render_stack_for};
 use data::golden::SummaryMetrics;
 use gpu::GpuContext;
 use island_core::{
+    pipeline::ComputeBackend,
     seed::Seed,
     world::{Resolution, WorldState},
 };
 use render::overlay::OverlayRegistry;
 use render::overlay_export::bake_overlay_to_rgba8;
+use sim::compute::CpuBackend;
 
 use crate::headless::output::{
     BeautyStatus, BeautySummary, InternalErrorKind, OverallStatus, RunLayout, RunSummary,
@@ -59,7 +63,17 @@ const GPU_BOOTSTRAP_SIZE: (u32, u32) = (1280, 800);
 /// and production users should never set it.
 const FORCE_GPU_FAIL_ENV: &str = "IPG_FORCE_HEADLESS_GPU_FAIL";
 
-/// Execute the [`CaptureRequest`] stored at `request_path`.
+/// Execute the [`CaptureRequest`] stored at `request_path` using the CPU
+/// compute backend.
+///
+/// This is the default entry point; `main.rs --compute-backend cpu` calls
+/// this. For GPU dispatch, use [`run_request_with_backend`].
+pub fn run_request(request_path: &Path) -> Result<OverallStatus> {
+    run_request_with_backend(request_path, Arc::new(CpuBackend))
+}
+
+/// Execute the [`CaptureRequest`] stored at `request_path` using `backend`
+/// for the pilot compute kernels (hillslope diffusion + stream power incision).
 ///
 /// On success the returned [`OverallStatus`] is exactly what was written to
 /// `<output_dir>/summary.ron`; `main.rs` then maps it to the AD9 exit code.
@@ -68,7 +82,16 @@ const FORCE_GPU_FAIL_ENV: &str = "IPG_FORCE_HEADLESS_GPU_FAIL";
 /// `Ok(OverallStatus::InternalError { .. })` so the exit-code mapping stays a
 /// single switch — `Err(_)` is reserved for genuinely unexpected panics that
 /// bubble out of `anyhow::Result` from pipelines / GPU submits.
-pub fn run_request(request_path: &Path) -> Result<OverallStatus> {
+///
+/// Sprint 4.D: when `backend.name() == "gpu"` and neither pilot op is
+/// implemented yet, the pipeline will fail with
+/// [`island_core::pipeline::ComputeBackendError::Unsupported`] on the first
+/// erosion inner step. The executor translates this into
+/// `OverallStatus::InternalError` (exit 3) with a clear message.
+pub fn run_request_with_backend(
+    request_path: &Path,
+    backend: Arc<dyn ComputeBackend>,
+) -> Result<OverallStatus> {
     // ── Load request ─────────────────────────────────────────────────────────
     let request_text = match std::fs::read_to_string(request_path) {
         Ok(s) => s,
@@ -158,7 +181,13 @@ pub fn run_request(request_path: &Path) -> Result<OverallStatus> {
     let mut shot_summaries: Vec<ShotSummary> = Vec::with_capacity(req.shots.len());
     let mut mid_shot_error: Option<(String, InternalErrorKind)> = None;
     for shot in &req.shots {
-        match run_shot(shot, gpu_opt.as_ref(), &layout, &gpu_unavailable_reason) {
+        match run_shot(
+            shot,
+            gpu_opt.as_ref(),
+            &layout,
+            &gpu_unavailable_reason,
+            backend.clone(),
+        ) {
             Ok(summary) => shot_summaries.push(summary),
             Err(e) => {
                 let kind = classify_shot_error(&e);
@@ -232,14 +261,20 @@ pub fn run_request(request_path: &Path) -> Result<OverallStatus> {
 /// write metrics, and (when a GPU is available and a [`BeautySpec`](crate::headless::request::BeautySpec)
 /// was supplied) render the beauty shot via [`GpuContext::capture_offscreen_rgba8`].
 ///
+/// `backend` is the [`ComputeBackend`] to use for the two pilot kernels.
+/// At Sprint 4.D, passing `GpuBackend` here will hit `Unsupported` on the
+/// first erosion step and surface as a `ShotError::Pipeline`; the caller
+/// classifies that as `InternalErrorKind::PipelineError` (exit 3).
+///
 /// Returns an [`anyhow::Error`] on unrecoverable per-shot failures;
-/// [`run_request`] classifies those via [`classify_shot_error`] and returns
-/// `OverallStatus::InternalError`.
+/// [`run_request_with_backend`] classifies those via [`classify_shot_error`]
+/// and returns `OverallStatus::InternalError`.
 pub fn run_shot(
     shot: &CaptureShot,
     gpu_opt: Option<&GpuContext>,
     layout: &RunLayout,
     gpu_unavailable_reason: &str,
+    backend: Arc<dyn ComputeBackend>,
 ) -> Result<ShotSummary> {
     // ── Setup ────────────────────────────────────────────────────────────────
     layout
@@ -261,9 +296,27 @@ pub fn run_shot(
     let mut world = WorldState::new(Seed(shot.seed), preset.clone(), resolution);
 
     let pipeline_start = Instant::now();
-    sim::default_pipeline()
+    let backend_name = backend.name();
+    sim::default_pipeline_with_backend(backend)
         .run(&mut world)
-        .map_err(|e| ShotError::Pipeline(e.to_string()))?;
+        .map_err(|e| {
+            // Sprint 4.D: when the GPU backend returns Unsupported, emit a
+            // clear message so reviewers can pattern-match on it.
+            let msg = e.to_string();
+            if backend_name == "gpu" && msg.contains("does not support op") {
+                // Extract the op name for a user-friendly message.
+                let clear = format!(
+                    "GPU compute backend has no implementation for op {} yet \
+                     — pilots land at Tasks 4.E / 4.F",
+                    extract_unsupported_op(&msg)
+                );
+                error!(backend = backend_name, clear_msg = %clear, raw = %msg,
+                    "GPU compute backend unsupported op");
+                ShotError::Pipeline(clear)
+            } else {
+                ShotError::Pipeline(msg)
+            }
+        })?;
     let pipeline_ms = elapsed_ms(pipeline_start);
 
     // Sprint 4.A: harvest per-stage timings captured by run_from.
@@ -557,6 +610,22 @@ fn render_beauty_shot(
 }
 
 // ─── Error classification ────────────────────────────────────────────────────
+
+/// Extract the op name from a `ComputeBackendError::Unsupported` message of
+/// the form `"backend 'gpu' does not support op 'hillslope_diffusion'"`.
+///
+/// Returns the raw message unchanged when the pattern doesn't match so the
+/// caller always gets a readable string.
+fn extract_unsupported_op(msg: &str) -> &str {
+    // Pattern: "... does not support op '<name>'"
+    if let Some(after) = msg.find("does not support op '") {
+        let rest = &msg[after + "does not support op '".len()..];
+        if let Some(end) = rest.find('\'') {
+            return &rest[..end];
+        }
+    }
+    msg
+}
 
 /// Typed per-shot error used so [`run_request`] can pick the right
 /// [`InternalErrorKind`] without regex-matching error messages.
