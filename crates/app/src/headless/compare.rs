@@ -84,12 +84,20 @@ pub fn validate(run_dir: &Path, expected_dir: &Path) -> Result<(OverallStatus, V
     };
 
     // ── Step 1B: schema version ───────────────────────────────────────────────
-    if run_summary.schema_version != expected_summary.schema_version {
+    // Sprint 4.A DD2: the binary always writes schema_version 4 even when
+    // processing older v1–v3 requests.  The compare tool therefore allows the
+    // run side to carry a *higher* version than the expected (golden) side —
+    // this is the normal upgrade direction and must not fail.  Only a *lower*
+    // run version (reading a v4 summary under a hypothetical older binary) or an
+    // equal version (standard case) triggers the mismatch guard.
+    if run_summary.schema_version < expected_summary.schema_version {
         let run_v = run_summary.schema_version;
         let exp_v = expected_summary.schema_version;
         return Ok((
             OverallStatus::InternalError {
-                reason: format!("schema_version mismatch: run={run_v} expected={exp_v}"),
+                reason: format!(
+                    "schema_version mismatch: run={run_v} is older than expected={exp_v}"
+                ),
                 kind: InternalErrorKind::SchemaVersionMismatch,
             },
             warnings,
@@ -432,6 +440,7 @@ mod tests {
             pipeline_ms: 0.0,
             bake_ms: 0.0,
             gpu_render_ms: None,
+            stage_timings: BTreeMap::new(),
         }
     }
 
@@ -463,6 +472,7 @@ mod tests {
             pipeline_ms: 0.0,
             bake_ms: 0.0,
             gpu_render_ms: None,
+            stage_timings: BTreeMap::new(),
         }
     }
 
@@ -851,5 +861,103 @@ mod tests {
             warnings.iter().any(|w| w.contains("beauty-spec asymmetry")),
             "asymmetry warning must appear in returned warnings; got {warnings:?}"
         );
+    }
+
+    // ── Sprint 4.A AD8 whitelist tests ────────────────────────────────────────
+
+    /// Sprint 4.A: `stage_timings.*` values are timing measurements that vary
+    /// per-run and per-machine. The compare tool must NOT fail when two
+    /// summaries differ only in `stage_timings` — those fields are inherently
+    /// not compared (the compare tool only checks overlay_hashes + metrics_hash).
+    ///
+    /// This test writes two summaries with identical truth data but different
+    /// `stage_timings` and asserts the comparison yields exit-0 (Passed).
+    #[test]
+    fn ad8_whitelist_includes_stage_timings_fields() {
+        use island_core::pipeline::StageTiming;
+
+        let overlays = single_overlay("slope", &hash(1));
+
+        // Shot A: stage_timings with specific cpu_ms values.
+        let mut shot_a = make_shot("s1", overlays.clone(), Some(hash(2)));
+        shot_a.stage_timings.insert(
+            "TopographyStage".to_owned(),
+            StageTiming {
+                cpu_ms: 5.0,
+                gpu_ms: None,
+            },
+        );
+        shot_a.stage_timings.insert(
+            "CoastMaskStage".to_owned(),
+            StageTiming {
+                cpu_ms: 2.0,
+                gpu_ms: None,
+            },
+        );
+
+        // Shot B: same truth, different timing values.
+        let mut shot_b = make_shot("s1", overlays, Some(hash(2)));
+        shot_b.stage_timings.insert(
+            "TopographyStage".to_owned(),
+            StageTiming {
+                cpu_ms: 99.0,
+                gpu_ms: Some(10.0),
+            }, // very different
+        );
+        shot_b.stage_timings.insert(
+            "CoastMaskStage".to_owned(),
+            StageTiming {
+                cpu_ms: 0.1,
+                gpu_ms: None,
+            },
+        );
+
+        let (status, _warnings) = validate_via_tempdirs(
+            &make_summary(1, &hash(10), vec![shot_a]),
+            &make_summary(1, &hash(10), vec![shot_b]),
+        );
+        assert_eq!(
+            status,
+            OverallStatus::Passed,
+            "differing stage_timings must not fail compare; got {status:?}"
+        );
+    }
+
+    /// Sprint 4.A DD2: a run with schema_version=4 against a baseline at
+    /// schema_version=3 must succeed (upgrade direction: run >= expected).
+    #[test]
+    fn schema_version_upgrade_direction_passes() {
+        let shot = make_shot("s1", single_overlay("slope", &hash(1)), Some(hash(2)));
+        // Run = v4 (fresh binary output), expected = v3 (stored baseline).
+        let run_summary = make_summary(4, &hash(10), vec![shot.clone()]);
+        let exp_summary = make_summary(3, &hash(10), vec![shot]);
+
+        let (status, _warnings) = validate_via_tempdirs(&run_summary, &exp_summary);
+        assert_eq!(
+            status,
+            OverallStatus::Passed,
+            "run(v4) vs expected(v3) must pass — upgrade direction; got {status:?}"
+        );
+    }
+
+    /// Sprint 4.A DD2: run schema_version OLDER than expected must fail with
+    /// SchemaVersionMismatch.
+    #[test]
+    fn schema_version_downgrade_direction_fails() {
+        let shot = make_shot("s1", single_overlay("slope", &hash(1)), Some(hash(2)));
+        // Run = v2 (hypothetical old binary), expected = v4 (stored baseline).
+        let run_summary = make_summary(2, &hash(10), vec![shot.clone()]);
+        let exp_summary = make_summary(4, &hash(10), vec![shot]);
+
+        let (status, _warnings) = validate_via_tempdirs(&run_summary, &exp_summary);
+        match status {
+            OverallStatus::InternalError {
+                kind: InternalErrorKind::SchemaVersionMismatch,
+                ..
+            } => {}
+            other => {
+                panic!("run(v2) vs expected(v4) must fail SchemaVersionMismatch; got {other:?}")
+            }
+        }
     }
 }

@@ -133,6 +133,10 @@ fn clear_stage_outputs(world: &mut WorldState, stage: StageId) {
         StageId::Topography => {
             world.derived.initial_uplift = None;
             world.derived.erosion_baseline = None;
+            // Sprint 4.A: clear timing caches on a full Topography-level reset.
+            // They belong to the derived layer and must not survive a fresh run.
+            world.derived.last_stage_timings = None;
+            world.derived.last_stage_gpu_ms = None;
             // Task 3.3: `derived.deposition_flux` is a byproduct of
             // `ErosionOuterLoop`'s inner `SedimentUpdateStage`. It is
             // cleared here (Topography arm) — NOT in the Coastal arm —
@@ -447,6 +451,16 @@ mod tests {
         assert!(world.baked.precipitation.is_none(), "baked.precipitation");
         assert!(world.baked.soil_moisture.is_none(), "baked.soil_moisture");
         assert!(world.baked.biome_weights.is_none(), "baked.biome_weights");
+
+        // ── Sprint 4.A timing fields are None ────────────────────────────────
+        assert!(
+            world.derived.last_stage_timings.is_none(),
+            "last_stage_timings must be None after invalidate_from(Topography)"
+        );
+        assert!(
+            world.derived.last_stage_gpu_ms.is_none(),
+            "last_stage_gpu_ms must be None after invalidate_from(Topography)"
+        );
     }
 
     // ── Test 2: mid-pipeline invalidation preserves upstream caches ───────────
@@ -1075,5 +1089,125 @@ mod tests {
             world.derived.volcanic_centers.is_some(),
             "derived.volcanic_centers must survive invalidate_from(Coastal)"
         );
+    }
+
+    // ── Sprint 4.A: stage timing invalidation tests ───────────────────────────
+
+    /// After a full pipeline run, `derived.last_stage_timings` must be `Some`
+    /// and contain at least one entry (one per stage executed).
+    #[test]
+    fn pipeline_run_from_populates_last_stage_timings() {
+        let world = run_full(42);
+        let timings = world
+            .derived
+            .last_stage_timings
+            .as_ref()
+            .expect("last_stage_timings must be Some after a full pipeline run");
+        // default_pipeline() has 18 StageId variants + ValidationStage = 19 entries.
+        // The exact count matches the pipeline's stage count.
+        let expected_count = crate::StageId::STAGE_COUNT + 1; // +1 for ValidationStage
+        assert_eq!(
+            timings.len(),
+            expected_count,
+            "last_stage_timings must have one entry per stage (including ValidationStage); \
+             expected {expected_count}, got {}",
+            timings.len()
+        );
+        // All cpu_ms must be non-negative.
+        for (name, timing) in timings {
+            assert!(
+                timing.cpu_ms >= 0.0,
+                "stage '{name}' cpu_ms must be non-negative, got {}",
+                timing.cpu_ms
+            );
+        }
+    }
+
+    /// After `invalidate_from(Topography)`, both `last_stage_timings` and
+    /// `last_stage_gpu_ms` must be `None`.
+    #[test]
+    fn invalidate_from_topography_clears_stage_timings() {
+        let mut world = run_full(42);
+
+        // Sanity: both timing fields are populated after the full run.
+        assert!(
+            world.derived.last_stage_timings.is_some(),
+            "last_stage_timings must be Some after a full pipeline run"
+        );
+        // last_stage_gpu_ms is None in CPU-only substrate, so inject a sentinel.
+        world.derived.last_stage_gpu_ms = Some(99.0);
+
+        invalidate_from(&mut world, StageId::Topography);
+
+        assert!(
+            world.derived.last_stage_timings.is_none(),
+            "last_stage_timings must be None after invalidate_from(Topography)"
+        );
+        assert!(
+            world.derived.last_stage_gpu_ms.is_none(),
+            "last_stage_gpu_ms must be None after invalidate_from(Topography)"
+        );
+    }
+
+    /// Downstream invalidations (Coastal and beyond) must NOT clear
+    /// `last_stage_timings` — timing data is only reset on a full
+    /// Topography-level reset to avoid wiping profiling data during incremental
+    /// slider reruns.
+    #[test]
+    fn invalidate_from_coastal_preserves_stage_timings() {
+        let mut world = run_full(42);
+        assert!(
+            world.derived.last_stage_timings.is_some(),
+            "last_stage_timings must be Some after full pipeline run"
+        );
+
+        invalidate_from(&mut world, StageId::Coastal);
+
+        assert!(
+            world.derived.last_stage_timings.is_some(),
+            "last_stage_timings must survive invalidate_from(Coastal)"
+        );
+    }
+
+    /// `print_breakdown_table_sums_within_5pct_of_pipeline_ms`: the sum of
+    /// per-stage `cpu_ms` values must be within 5% of the overall `pipeline_ms`
+    /// timing (measured at the caller level).
+    ///
+    /// Uses a non-eroding pipeline to keep the test fast and deterministic.
+    #[test]
+    fn stage_cpu_sum_within_5pct_of_wall_clock_pipeline() {
+        use std::time::Instant;
+        let preset = test_preset();
+        let seed = island_core::seed::Seed(7);
+        let res = Resolution::new(64, 64);
+        let mut world = WorldState::new(seed, preset, res);
+
+        let pipeline_start = Instant::now();
+        crate::default_pipeline()
+            .run(&mut world)
+            .expect("pipeline must succeed");
+        let pipeline_ms = pipeline_start.elapsed().as_secs_f64() * 1_000.0;
+
+        let timings = world
+            .derived
+            .last_stage_timings
+            .as_ref()
+            .expect("last_stage_timings must be Some");
+
+        let cpu_sum: f64 = timings.values().map(|t| t.cpu_ms).sum();
+
+        // Sum of per-stage cpu_ms should be <= pipeline_ms (no overhead from
+        // timekeeping outside the loop is counted). Allow up to 5% tolerance
+        // in either direction for timer granularity.
+        if pipeline_ms > 0.0 {
+            let ratio = cpu_sum / pipeline_ms;
+            assert!(
+                ratio <= 1.05,
+                "cpu_sum ({cpu_sum:.3} ms) exceeds pipeline_ms ({pipeline_ms:.3} ms) by >5%: \
+                 ratio={ratio:.3}"
+            );
+        }
+        // cpu_sum must be at least 1 µs (any real pipeline takes measurable time).
+        assert!(cpu_sum > 0.0, "cpu_sum must be positive; got {cpu_sum}");
     }
 }

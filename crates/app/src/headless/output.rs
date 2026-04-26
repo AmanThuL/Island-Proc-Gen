@@ -15,6 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 use data::golden::SummaryMetrics;
+use island_core::pipeline::StageTiming;
 
 use crate::headless::request::CaptureRequest;
 
@@ -25,11 +26,17 @@ use crate::headless::request::CaptureRequest;
 /// Top-level summary written to `<run_dir>/summary.ron` after a headless run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunSummary {
-    /// Mirrors `CaptureRequest.schema_version` — the output summary
-    /// declares the same schema its request did. Sprint 1C shipped v1;
-    /// Sprint 2 added v2 (for `CaptureShot.preset_override`). A v1 request
-    /// file against a v1 baseline continues to exit 0 under a v2 binary
-    /// because the summary's `schema_version` echoes the request's.
+    /// Output schema version — **stamped to the binary's current schema, NOT
+    /// mirrored from the request**. Sprint 1C / 2 / 3.5 binaries echoed the
+    /// request's version (`assert_eq!`); Sprint 4 (DD2) inverts this so the
+    /// v4 binary always writes `4` even when consuming a v1/v2/v3
+    /// `request.ron`. The compare tool's gate becomes
+    /// `summary.schema_version >= expected.schema_version`, enforcing forward
+    /// progression while still letting older baselines validate (v3 RON
+    /// without `stage_timings` parses via `#[serde(default)]`). The bump
+    /// is the load-bearing signal that `ShotSummary.stage_timings` may now
+    /// be present; downstream tools should branch on this field, not on
+    /// the request's schema.
     pub schema_version: u32,
     /// Stable identifier for this run (first 16 hex chars of the request
     /// fingerprint when not explicitly supplied).
@@ -64,6 +71,15 @@ pub struct ShotSummary {
     /// Wall time spent on the GPU offscreen render (ms); `None` when skipped.
     #[serde(default)]
     pub gpu_render_ms: Option<f64>,
+    /// Sprint 4.A: per-stage CPU (and optionally GPU) timing. Keys are the
+    /// stage names produced by `SimulationStage::name()`. Empty on v3
+    /// baselines parsed under a v4 binary (via `#[serde(default)]`); fully
+    /// populated on fresh v4 runs.
+    ///
+    /// Whitelisted in the AD8 compare tool — `cpu_ms` and `gpu_ms` are
+    /// timing measurements and will differ across machines / runs.
+    #[serde(default)]
+    pub stage_timings: BTreeMap<String, StageTiming>,
 }
 
 /// CPU truth results for a single shot.
@@ -891,6 +907,7 @@ mod tests {
                 pipeline_ms: 1234.5,
                 bake_ms: 56.7,
                 gpu_render_ms: Some(89.0),
+                stage_timings: BTreeMap::new(),
             }],
             overall_status: OverallStatus::Passed,
             warnings: vec!["minor warning".into()],
@@ -963,5 +980,125 @@ mod tests {
         ts[11..13].parse::<u32>().expect("hour must be numeric");
         ts[14..16].parse::<u32>().expect("minute must be numeric");
         ts[17..19].parse::<u32>().expect("second must be numeric");
+    }
+
+    // ── Sprint 4.A: stage_timings round-trip tests ────────────────────────────
+
+    /// `ShotSummary.stage_timings` round-trips through RON with full fidelity.
+    /// A populated `BTreeMap<String, StageTiming>` serializes and deserializes
+    /// back to an equal map.
+    #[test]
+    fn stage_timings_round_trip_under_v4_schema() {
+        use island_core::pipeline::StageTiming;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let layout = RunLayout::new(dir.path());
+
+        let mut timings = BTreeMap::new();
+        timings.insert(
+            "topography".to_owned(),
+            StageTiming {
+                cpu_ms: 1.5,
+                gpu_ms: None,
+            },
+        );
+        timings.insert(
+            "coastal".to_owned(),
+            StageTiming {
+                cpu_ms: 0.3,
+                gpu_ms: Some(2.1),
+            },
+        );
+
+        let summary = RunSummary {
+            schema_version: 4,
+            run_id: "rt_test".into(),
+            request_fingerprint: "a".repeat(64),
+            timestamp_utc: "2026-04-25T00:00:00Z".into(),
+            shots: vec![ShotSummary {
+                id: "s1".into(),
+                truth: TruthSummary {
+                    overlay_hashes: BTreeMap::new(),
+                    metrics_hash: None,
+                },
+                beauty: None,
+                pipeline_ms: 10.0,
+                bake_ms: 1.0,
+                gpu_render_ms: None,
+                stage_timings: timings.clone(),
+            }],
+            overall_status: OverallStatus::Passed,
+            warnings: vec![],
+        };
+
+        write_summary_ron(&layout, &summary).expect("write must succeed");
+
+        let raw = std::fs::read_to_string(layout.summary_ron()).expect("read summary.ron");
+        let recovered: RunSummary = ron::de::from_str(&raw).expect("parse summary.ron");
+
+        assert_eq!(recovered.schema_version, 4);
+        assert_eq!(recovered.shots.len(), 1);
+        let rt_timings = &recovered.shots[0].stage_timings;
+        assert_eq!(
+            rt_timings.len(),
+            2,
+            "both timing entries must survive round-trip"
+        );
+
+        let topo = rt_timings
+            .get("topography")
+            .expect("topography must be present");
+        assert!((topo.cpu_ms - 1.5).abs() < 1e-9);
+        assert!(topo.gpu_ms.is_none());
+
+        let coast = rt_timings.get("coastal").expect("coastal must be present");
+        assert!((coast.cpu_ms - 0.3).abs() < 1e-9);
+        assert!((coast.gpu_ms.unwrap() - 2.1).abs() < 1e-9);
+    }
+
+    /// Forward-compat: a v3 `summary.ron` (no `stage_timings` field) parses
+    /// under the v4 schema with an empty `stage_timings` map (via
+    /// `#[serde(default)]`). Truth hashes are preserved.
+    #[test]
+    fn v3_summary_parses_under_v4_schema_with_empty_stage_timings() {
+        // Hand-craft a minimal v3 summary RON string (no stage_timings field).
+        let v3_ron = r#"(
+            schema_version: 3,
+            run_id: "test_v3",
+            request_fingerprint: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            timestamp_utc: "2026-04-24T00:00:00Z",
+            shots: [
+                (
+                    id: "s1",
+                    truth: (
+                        overlay_hashes: {
+                            "slope": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        },
+                        metrics_hash: None,
+                    ),
+                    pipeline_ms: 5.0,
+                    bake_ms: 1.0,
+                ),
+            ],
+            overall_status: Passed,
+            warnings: [],
+        )"#;
+
+        let summary: RunSummary =
+            ron::de::from_str(v3_ron).expect("v3 summary must parse under v4 schema");
+
+        assert_eq!(summary.schema_version, 3);
+        assert_eq!(summary.shots.len(), 1);
+        // stage_timings must be empty (absent field → serde(default) = BTreeMap::new()).
+        assert!(
+            summary.shots[0].stage_timings.is_empty(),
+            "v3 summary must parse with empty stage_timings, got {:?}",
+            summary.shots[0].stage_timings
+        );
+        // Truth data must survive.
+        assert_eq!(
+            summary.shots[0].truth.overlay_hashes.get("slope"),
+            Some(&"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_owned())
+        );
     }
 }

@@ -20,7 +20,7 @@ pub mod executor;
 pub mod output;
 pub mod request;
 
-use output::OverallStatus;
+use output::{OverallStatus, RunLayout, RunSummary};
 
 /// Execute a `CaptureRequest` loaded from `request_path`.
 ///
@@ -43,4 +43,34 @@ pub fn run(request_path: &Path) -> Result<(OverallStatus, Vec<String>)> {
 /// should print to stderr.
 pub fn validate(run_dir: &Path, expected_dir: &Path) -> Result<(OverallStatus, Vec<String>)> {
     compare::validate(run_dir, expected_dir)
+}
+
+/// Read the `summary.ron` written by a `--headless <request_path>` run.
+///
+/// Resolves the output directory the same way [`executor::run_request`] does:
+/// uses `CaptureRequest.output_dir` when present, otherwise falls back to
+/// `captures/headless/<run_id>`. Returns the parsed [`RunSummary`] on
+/// success; returns `Err` when the request or summary cannot be read/parsed.
+///
+/// Used by `main.rs` for `--print-breakdown`: we re-read the summary that the
+/// executor wrote to disk so we don't have to plumb the full summary through
+/// the `run()` return type (which only returns `(OverallStatus, Vec<String>)`
+/// to keep the public API stable across sprints).
+pub fn read_last_summary(request_path: &Path) -> Result<RunSummary> {
+    let text = std::fs::read_to_string(request_path)?;
+    let req: request::CaptureRequest = ron::de::from_str(&text)?;
+
+    let run_id = req
+        .run_id
+        .clone()
+        .unwrap_or_else(|| output::compute_run_id(&req));
+    let output_dir = req
+        .output_dir
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from("captures/headless").join(&run_id));
+
+    let layout = RunLayout::new(output_dir);
+    let summary_text = std::fs::read_to_string(layout.summary_ron())?;
+    let summary: RunSummary = ron::de::from_str(&summary_text)?;
+    Ok(summary)
 }

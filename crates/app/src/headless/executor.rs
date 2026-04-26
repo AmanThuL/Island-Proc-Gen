@@ -196,14 +196,14 @@ pub fn run_request(request_path: &Path) -> Result<OverallStatus> {
     };
 
     // ── Build summary + write ────────────────────────────────────────────────
-    // Propagate the request's schema_version into the output so that
-    // `--headless-validate` against a Sprint 1C v1 baseline continues to
-    // exit 0 under a v2 binary: the checked-in summary.ron is stamped
-    // `schema_version: 1`, and a re-run of the v1 request writes a fresh
-    // summary also stamped `schema_version: 1`, letting `compare.rs`'s
-    // SchemaVersionMismatch check pass.
+    // Sprint 4.A DD2: the v4 binary always writes `schema_version: 4` regardless
+    // of the input request's schema. This diverges from the v1–v3 policy of
+    // mirroring the request version. v3 baselines on disk will read as v3 until
+    // the 4.B chore(data) commit regenerates them; the compare tool's
+    // schema_version check is updated to accept run >= expected, so old baselines
+    // continue to pass under the v4 binary (see compare.rs).
     let summary = RunSummary {
-        schema_version: req.schema_version,
+        schema_version: 4,
         run_id,
         request_fingerprint: fingerprint,
         timestamp_utc: timestamp,
@@ -265,6 +265,9 @@ pub fn run_shot(
         .run(&mut world)
         .map_err(|e| ShotError::Pipeline(e.to_string()))?;
     let pipeline_ms = elapsed_ms(pipeline_start);
+
+    // Sprint 4.A: harvest per-stage timings captured by run_from.
+    let stage_timings = world.derived.last_stage_timings.take().unwrap_or_default();
 
     // ── Truth path: overlay bakes ───────────────────────────────────────────
     let registry = OverlayRegistry::sprint_3_defaults();
@@ -348,6 +351,7 @@ pub fn run_shot(
         pipeline_ms,
         bake_ms,
         gpu_render_ms,
+        stage_timings,
     })
 }
 
@@ -959,34 +963,30 @@ mod tests {
         );
     }
 
-    /// Sprint 3.5 DD8 end-to-end lock: `RunSummary.schema_version` MUST
-    /// mirror the input `CaptureRequest.schema_version` across every shipped
-    /// schema version. The plan §5 "DD8 schema backwards compat gate" names
-    /// this stamping behaviour explicitly — the pre-existing
-    /// `schema_v1_and_v2_still_parse_under_v3_binary` covers parse but not
-    /// the round-trip stamping.
+    /// Sprint 4.A DD2: the v4 binary always writes `schema_version: 4`
+    /// regardless of the input request's schema version. This supersedes the
+    /// Sprint 3.5 "mirror-the-request" policy.
     ///
-    /// This test loops over the 3 shipped versions (1, 2, 3). For each, it
-    /// writes a minimal request RON fixture, runs the headless executor with
+    /// For each of the 3 previously-shipped schema versions (1, 2, 3), this
+    /// test writes a minimal request, runs the headless executor with
     /// GPU bootstrap force-failed (truth path still runs; beauty skipped),
     /// reads the generated `summary.ron`, and asserts
-    /// `summary.schema_version == input.schema_version`. A regression in
-    /// the stamping line at `executor.rs::run_request` (see "Propagate the
-    /// request's schema_version into the output" comment block) would fire
-    /// exactly here.
+    /// `summary.schema_version >= input.schema_version` (the upgrade direction
+    /// is always forward — never backward).
+    ///
+    /// Also asserts that the output is exactly 4 (the current binary's version)
+    /// regardless of the input schema.
     #[test]
-    fn run_summary_stamps_input_schema_version_v1_v2_v3() {
+    fn run_summary_always_stamps_schema_version_4_for_v4_binary() {
         let _lock = pipeline_test_lock();
 
-        for schema_version in [1_u32, 2_u32, 3_u32] {
+        for input_schema_version in [1_u32, 2_u32, 3_u32] {
             let dir = tempfile::tempdir().expect("tempdir");
 
             // Build a minimal truth-only request (no beauty → no GPU need).
-            // view_mode is None for all 3 — v1/v2 didn't have the field;
-            // v3 with None is additive-compatible.
             let req = CaptureRequest {
-                schema_version,
-                run_id: Some(format!("schema_v{schema_version}_stamp_test")),
+                schema_version: input_schema_version,
+                run_id: Some(format!("schema_v{input_schema_version}_v4binary_test")),
                 output_dir: Some(dir.path().join("run")),
                 shots: vec![CaptureShot {
                     id: "truth_only".into(),
@@ -1021,7 +1021,7 @@ mod tests {
             match status {
                 OverallStatus::Passed | OverallStatus::PassedWithBeautySkipped { .. } => {}
                 other => panic!(
-                    "schema_version {schema_version}: expected Passed/PassedWithBeautySkipped, got {other:?}"
+                    "input_schema_version {input_schema_version}: expected Passed/PassedWithBeautySkipped, got {other:?}"
                 ),
             }
 
@@ -1032,11 +1032,18 @@ mod tests {
             let summary: RunSummary =
                 ron::de::from_str(&summary_text).expect("summary.ron must parse");
 
+            // Sprint 4.A DD2: binary always stamps v4, not the input version.
             assert_eq!(
-                summary.schema_version, schema_version,
-                "schema_version {schema_version}: summary.ron stamped \
-                 {} instead of the input's {schema_version}",
+                summary.schema_version, 4,
+                "input_schema_version {input_schema_version}: v4 binary must stamp 4, got {}",
                 summary.schema_version
+            );
+            // Upgrade direction is always forward.
+            assert!(
+                summary.schema_version >= input_schema_version,
+                "summary schema_version {} must be >= input {}",
+                summary.schema_version,
+                input_schema_version
             );
         }
     }

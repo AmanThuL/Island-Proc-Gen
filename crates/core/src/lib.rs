@@ -15,7 +15,7 @@ pub use neighborhood::{
     COAST_DETECT_NEIGHBORHOOD, Neighborhood, RIVER_CC_NEIGHBORHOOD, RIVER_COAST_CONTACT,
     neighbour_offsets,
 };
-pub use pipeline::{NoopStage, PipelineError, SimulationPipeline, SimulationStage};
+pub use pipeline::{NoopStage, PipelineError, SimulationPipeline, SimulationStage, StageTiming};
 pub use preset::{IslandAge, IslandArchetypePreset, MAX_RELIEF_REF_M};
 pub use save::{LoadedWorld, SaveError, SaveMode};
 pub use seed::Seed;

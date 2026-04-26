@@ -11,6 +11,12 @@
 //! make the call trivial: "run stages `[start..]` on a `WorldState` whose
 //! `[0..start)` prefix is already populated".
 
+pub mod timing;
+pub use timing::StageTiming;
+
+use std::collections::BTreeMap;
+use std::time::Instant;
+
 use crate::world::WorldState;
 
 // ─── trait ───────────────────────────────────────────────────────────────────
@@ -136,10 +142,26 @@ impl SimulationPipeline {
             .into());
         }
 
+        // Preserve any timings recorded for stages *before* start_index so a
+        // partial run_from doesn't wipe them. On a fresh run_from(0) the map
+        // starts empty; on an incremental run the caller can inspect the full
+        // map after completion.
+        let mut timings: BTreeMap<String, StageTiming> =
+            world.derived.last_stage_timings.take().unwrap_or_default();
+
         for s in &self.stages[start_index..] {
-            tracing::info!(stage = s.name(), "running");
+            let name = s.name().to_owned();
+            tracing::info!(stage = %name, "running");
+            let cpu_start = Instant::now();
             s.run(world)?;
+            let cpu_ms = cpu_start.elapsed().as_secs_f64() * 1_000.0;
+            // Drain the GPU side-channel written by ComputeBackend implementations.
+            // Always None in the Sprint 4.A CPU-only substrate.
+            let gpu_ms = world.derived.last_stage_gpu_ms.take();
+            timings.insert(name, StageTiming { cpu_ms, gpu_ms });
         }
+
+        world.derived.last_stage_timings = Some(timings);
         Ok(())
     }
 }
@@ -333,6 +355,173 @@ mod tests {
             log.borrow().is_empty(),
             "no stages should have run on error: {:?}",
             log.borrow()
+        );
+    }
+
+    // ── Sprint 4.A: timing capture tests ─────────────────────────────────────
+
+    /// After `run()`, `world.derived.last_stage_timings` must be `Some` with
+    /// one entry per stage (keyed by stage name).
+    #[test]
+    fn run_populates_last_stage_timings() {
+        let mut world = WorldState::new(Seed(10), test_preset(), Resolution::new(4, 4));
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        let pipeline = make_abc_pipeline(log.clone());
+
+        pipeline.run(&mut world).expect("run should succeed");
+
+        let timings = world
+            .derived
+            .last_stage_timings
+            .as_ref()
+            .expect("last_stage_timings must be Some after run()");
+        assert_eq!(
+            timings.len(),
+            3,
+            "3-stage pipeline must have 3 timing entries"
+        );
+        assert!(timings.contains_key("a"), "timings must have entry 'a'");
+        assert!(timings.contains_key("b"), "timings must have entry 'b'");
+        assert!(timings.contains_key("c"), "timings must have entry 'c'");
+        for (name, t) in timings {
+            assert!(
+                t.cpu_ms >= 0.0,
+                "stage '{name}' cpu_ms must be non-negative"
+            );
+            assert!(
+                t.gpu_ms.is_none(),
+                "stage '{name}' gpu_ms must be None in CPU substrate"
+            );
+        }
+    }
+
+    /// `run_from(1)` on a fresh world populates timings only for the executed
+    /// stages (b, c) and does not include stage a.
+    #[test]
+    fn run_from_partial_populates_only_executed_stages() {
+        let mut world = WorldState::new(Seed(11), test_preset(), Resolution::new(4, 4));
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        let pipeline = make_abc_pipeline(log.clone());
+
+        // Run from index 1 — skips 'a'.
+        pipeline
+            .run_from(&mut world, 1)
+            .expect("run_from(1) should succeed");
+
+        let timings = world
+            .derived
+            .last_stage_timings
+            .as_ref()
+            .expect("last_stage_timings must be Some after run_from(1)");
+        // 'a' was skipped; only 'b' and 'c' ran.
+        assert_eq!(
+            timings.len(),
+            2,
+            "run_from(1) must produce 2 timing entries"
+        );
+        assert!(timings.contains_key("b"), "'b' must be timed");
+        assert!(timings.contains_key("c"), "'c' must be timed");
+        assert!(
+            !timings.contains_key("a"),
+            "'a' must not be timed (skipped)"
+        );
+    }
+
+    /// `run_from(len())` (no-op) leaves `last_stage_timings` as an empty Some.
+    #[test]
+    fn run_from_len_produces_empty_timings() {
+        let mut world = WorldState::new(Seed(12), test_preset(), Resolution::new(4, 4));
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        let pipeline = make_abc_pipeline(log.clone());
+
+        pipeline
+            .run_from(&mut world, pipeline.len())
+            .expect("run_from(len()) should succeed");
+
+        // The map should be Some but empty (no stages ran).
+        let timings = world
+            .derived
+            .last_stage_timings
+            .as_ref()
+            .expect("last_stage_timings must be Some even for no-op run_from");
+        assert!(
+            timings.is_empty(),
+            "no-op run_from must produce empty timings"
+        );
+    }
+
+    /// The GPU side-channel (`last_stage_gpu_ms`) is drained by `run_from` for
+    /// each stage. After the run, it must be `None`.
+    #[test]
+    fn run_from_drains_gpu_side_channel() {
+        let mut world = WorldState::new(Seed(13), test_preset(), Resolution::new(4, 4));
+        // Pre-inject a GPU side-channel value; a real GpuBackend would do this.
+        world.derived.last_stage_gpu_ms = Some(5.0);
+
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        let pipeline = make_abc_pipeline(log.clone());
+
+        // Only run stage 'a' (index 0). It should drain last_stage_gpu_ms.
+        pipeline
+            .run_from(&mut world, 0)
+            .expect("run should succeed");
+
+        // After run, the side-channel must be None (drained by the loop).
+        assert!(
+            world.derived.last_stage_gpu_ms.is_none(),
+            "run_from must drain last_stage_gpu_ms to None"
+        );
+
+        // The pre-injected `gpu_ms = Some(5.0)` is drained by stage 'a's
+        // `take()` after its run; subsequent stages see `None` because the
+        // side-channel was cleared.
+        let timings = world.derived.last_stage_timings.as_ref().unwrap();
+        let a_timing = timings.get("a").expect("stage 'a' must have timing");
+        assert_eq!(
+            a_timing.gpu_ms,
+            Some(5.0),
+            "stage 'a' must capture the pre-injected GPU time"
+        );
+        let b_timing = timings.get("b").expect("stage 'b' must have timing");
+        assert!(b_timing.gpu_ms.is_none(), "stage 'b' must have None gpu_ms");
+    }
+
+    /// `last_stage_timings` accumulates across sequential `run_from` calls
+    /// on the same world: a second `run_from(2)` after `run_from(0)` merges
+    /// the new entries rather than replacing the map.
+    #[test]
+    fn sequential_run_from_accumulates_timings() {
+        let mut world = WorldState::new(Seed(14), test_preset(), Resolution::new(4, 4));
+        let log: Rc<RefCell<Vec<&'static str>>> = Rc::new(RefCell::new(Vec::new()));
+        let pipeline = make_abc_pipeline(log.clone());
+
+        // First call: runs all stages (a, b, c).
+        pipeline.run_from(&mut world, 0).expect("first run_from");
+        {
+            let t = world.derived.last_stage_timings.as_ref().unwrap();
+            assert_eq!(t.len(), 3, "after run_from(0): 3 entries");
+        }
+
+        // Second call: re-runs only stage c (index 2). Should keep a+b from
+        // the previous map and overwrite c.
+        pipeline.run_from(&mut world, 2).expect("second run_from");
+        let t = world.derived.last_stage_timings.as_ref().unwrap();
+        assert_eq!(
+            t.len(),
+            3,
+            "after run_from(2): still 3 entries (a+b preserved)"
+        );
+        assert!(
+            t.contains_key("a"),
+            "entry 'a' must be preserved from first run"
+        );
+        assert!(
+            t.contains_key("b"),
+            "entry 'b' must be preserved from first run"
+        );
+        assert!(
+            t.contains_key("c"),
+            "entry 'c' must be updated by second run"
         );
     }
 }

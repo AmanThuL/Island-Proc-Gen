@@ -10,9 +10,12 @@
 //! Render LOD / supersample factors live in `crates/render`; hex grid
 //! dimensions live in `crates/hex::HexGrid`. Neither ever enters `WorldState`.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::field::{MaskField2D, ScalarField2D, VectorField2D};
+use crate::pipeline::StageTiming;
 use crate::preset::IslandArchetypePreset;
 use crate::seed::Seed;
 
@@ -695,6 +698,30 @@ pub struct DerivedCaches {
     /// Invalidation: cleared under `StageId::HexProjection` arm (same
     /// arm as `hex_attrs` / `hex_debug` / `hex_grid`).
     pub hex_coast_class: Option<Vec<HexCoastClass>>,
+
+    /// Sprint 4.A: per-stage CPU timing recorded by
+    /// [`crate::pipeline::SimulationPipeline::run_from`].
+    ///
+    /// Keys are the stage names (`SimulationStage::name()`). The map is
+    /// `Some` after any `run_from` call and contains one entry per stage
+    /// executed in that call (plus any entries from stages preceding
+    /// `start_index` that were already populated). `None` on a fresh
+    /// `WorldState` or after `invalidate_from(StageId::Topography)`.
+    ///
+    /// Not serialized — the whole `DerivedCaches` struct is `#[serde(skip)]`
+    /// at the `WorldState` level; this is a purely runtime measurement cache.
+    pub last_stage_timings: Option<BTreeMap<String, StageTiming>>,
+
+    /// Sprint 4.A: GPU side-channel used by future `ComputeBackend`
+    /// implementations. A GPU stage writes its elapsed time here (in ms)
+    /// before returning; `SimulationPipeline::run_from` drains it with
+    /// `.take()` into the current stage's [`StageTiming::gpu_ms`].
+    ///
+    /// Always `None` in the Sprint 4.A CPU-only substrate. Populated by
+    /// Sprint 4.D+ `GpuBackend` implementations.
+    ///
+    /// Not serialized — same rationale as `last_stage_timings`.
+    pub last_stage_gpu_ms: Option<f64>,
 }
 
 // ─── WorldState ──────────────────────────────────────────────────────────────
@@ -884,5 +911,45 @@ mod tests {
         // authoritative fields stay None on both sides (skipped payload)
         assert!(decoded.authoritative.height.is_none());
         assert!(decoded.authoritative.sediment.is_none());
+    }
+
+    // ── Sprint 4.A: timing fields on WorldState ───────────────────────────────
+
+    /// `WorldState::new` produces `None` for both timing fields — neither
+    /// `last_stage_timings` nor `last_stage_gpu_ms` should have a value on a
+    /// freshly constructed world.
+    #[test]
+    fn world_state_new_has_none_timing_fields() {
+        let world = WorldState::new(Seed(99), test_preset(), Resolution::new(16, 16));
+        assert!(
+            world.derived.last_stage_timings.is_none(),
+            "last_stage_timings must be None on a fresh WorldState"
+        );
+        assert!(
+            world.derived.last_stage_gpu_ms.is_none(),
+            "last_stage_gpu_ms must be None on a fresh WorldState"
+        );
+    }
+
+    /// `DerivedCaches::default()` also starts with `None` timing fields.
+    #[test]
+    fn derived_caches_default_has_none_timing_fields() {
+        let d = DerivedCaches::default();
+        assert!(d.last_stage_timings.is_none());
+        assert!(d.last_stage_gpu_ms.is_none());
+    }
+
+    /// `last_stage_gpu_ms` is a plain `Option<f64>` field that can be set and
+    /// read back without any special infrastructure — this ensures the
+    /// `ComputeBackend` side-channel protocol will work as expected.
+    #[test]
+    fn derived_caches_gpu_side_channel_set_and_take() {
+        let mut d = DerivedCaches::default();
+        assert!(d.last_stage_gpu_ms.is_none());
+
+        d.last_stage_gpu_ms = Some(3.7);
+        let v = d.last_stage_gpu_ms.take();
+        assert_eq!(v, Some(3.7));
+        assert!(d.last_stage_gpu_ms.is_none(), "take() clears the field");
     }
 }

@@ -10,6 +10,7 @@
 //! process exits with the AD9 code (0 / 2 / 3) mapped from
 //! [`headless::output::OverallStatus::exit_code`].
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -33,8 +34,17 @@ use app::runtime::Runtime;
 /// break the routing.
 enum CliMode {
     Interactive,
-    Headless { request: PathBuf },
-    HeadlessValidate { run: PathBuf, expected: PathBuf },
+    Headless {
+        request: PathBuf,
+        /// Sprint 4.A: when `true`, print a per-stage timing breakdown to
+        /// stdout after the run completes. GPU columns show `—` in 4.A;
+        /// populated by Sprint 4.D+ `GpuBackend` implementations.
+        print_breakdown: bool,
+    },
+    HeadlessValidate {
+        run: PathBuf,
+        expected: PathBuf,
+    },
 }
 
 fn parse_cli(args: &[String]) -> Result<CliMode> {
@@ -42,8 +52,10 @@ fn parse_cli(args: &[String]) -> Result<CliMode> {
         let request = args
             .get(i + 1)
             .ok_or_else(|| anyhow!("--headless requires a <request.ron> path"))?;
+        let print_breakdown = args.iter().any(|a| a == "--print-breakdown");
         return Ok(CliMode::Headless {
             request: PathBuf::from(request),
+            print_breakdown,
         });
     }
 
@@ -141,10 +153,156 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        CliMode::Headless { request } => run_headless_exit(headless::run(&request)),
+        CliMode::Headless {
+            request,
+            print_breakdown,
+        } => {
+            let result = headless::run(&request);
+            // Print breakdown before exit if requested.
+            if print_breakdown {
+                if let Ok((ref status, _)) = result {
+                    if let Ok(summary) = headless::read_last_summary(&request) {
+                        print_stage_breakdown(&summary);
+                    } else {
+                        // Summary may not be written on InternalError; best effort only.
+                        eprintln!(
+                            "warn: --print-breakdown requested but summary.ron could not be read \
+                             (status: {status:?})"
+                        );
+                    }
+                }
+            }
+            run_headless_exit(result)
+        }
         CliMode::HeadlessValidate { run, expected } => {
             run_headless_exit(headless::validate(&run, &expected))
         }
+    }
+}
+
+/// Slack percentage above which a warning is emitted for a single shot's
+/// timing breakdown. Represents overhead outside the per-stage timing loop
+/// (e.g. ValidationStage not captured, OS scheduling jitter).
+const SLACK_WARNING_PCT: f64 = 10.0;
+
+/// Sprint 4.A DD3 surface A: print per-shot stage timing tables after a
+/// `--headless --print-breakdown` run.
+///
+/// Format per sprint doc DD3:
+/// - One table per shot, plus a cross-shot summary table.
+/// - GPU columns show `—` in Sprint 4.A (always `None`); populated by 4.D+.
+/// - Slack = `pipeline_ms − Σcpu_ms`. Normal < 5%; > 10% emits a warning.
+fn print_stage_breakdown(summary: &app::headless::output::RunSummary) {
+    use app::headless::output::ShotSummary;
+
+    /// Format an optional GPU timing as a right-aligned 8-char field,
+    /// substituting `—` when no GPU time was recorded.
+    fn format_gpu_ms(gpu_ms: Option<f64>) -> String {
+        gpu_ms
+            .map(|g| format!("{g:>8.3}"))
+            .unwrap_or_else(|| "       —".to_owned())
+    }
+
+    /// Compute a percentage of `value / total * 100`, returning 0.0 when
+    /// `total` is zero to avoid division-by-zero in degenerate runs.
+    fn pct_of(value: f64, total: f64) -> f64 {
+        if total > 0.0 {
+            value / total * 100.0
+        } else {
+            0.0
+        }
+    }
+
+    fn print_shot_table(shot: &ShotSummary) {
+        let pipeline_ms = shot.pipeline_ms;
+        println!("\nShot: {}  (backend: cpu)", shot.id);
+        println!(
+            "  {:<28} {:>8}   {:>8}   {:>10}",
+            "Stage", "CPU ms", "GPU ms", "% of pipeline"
+        );
+        println!("  {}", "─".repeat(62));
+
+        let mut cpu_sum = 0.0_f64;
+        for (name, timing) in &shot.stage_timings {
+            let pct = pct_of(timing.cpu_ms, pipeline_ms);
+            println!(
+                "  {:<28} {:>8.3}   {}   {:>9.1}%",
+                name,
+                timing.cpu_ms,
+                format_gpu_ms(timing.gpu_ms),
+                pct
+            );
+            cpu_sum += timing.cpu_ms;
+        }
+
+        println!("  {}", "─".repeat(62));
+        println!(
+            "  {:<28} {:>8.3}             {:>9.1}%",
+            "TOTAL (stage sum)",
+            cpu_sum,
+            pct_of(cpu_sum, pipeline_ms)
+        );
+        let slack_pct = pct_of(pipeline_ms - cpu_sum, pipeline_ms);
+        println!(
+            "  {:<28} {:>8.3}             {:>+9.1}% slack",
+            "pipeline_ms (lump)", pipeline_ms, slack_pct
+        );
+        if slack_pct > SLACK_WARNING_PCT {
+            eprintln!(
+                "warn: shot '{}' slack {slack_pct:.1}% exceeds {SLACK_WARNING_PCT:.0}% — \
+                 overhead outside stage loop is high",
+                shot.id
+            );
+        }
+    }
+
+    for shot in &summary.shots {
+        print_shot_table(shot);
+    }
+
+    // Cross-shot summary
+    if summary.shots.len() > 1 {
+        println!("\n{}", "═".repeat(66));
+        println!("Cross-shot summary ({} shots):", summary.shots.len());
+        println!(
+            "  {:<28} {:>8}   {:>8}   {:>10}",
+            "Stage", "CPU ms", "GPU ms", "% of total pipeline"
+        );
+        println!("  {}", "─".repeat(62));
+
+        // Collect all stage names in consistent (alphabetical) BTreeMap order.
+        let mut totals: BTreeMap<&str, (f64, Option<f64>)> = BTreeMap::new();
+        let mut pipeline_total = 0.0_f64;
+
+        for shot in &summary.shots {
+            pipeline_total += shot.pipeline_ms;
+            for (name, timing) in &shot.stage_timings {
+                let entry = totals.entry(name.as_str()).or_insert((0.0, None));
+                entry.0 += timing.cpu_ms;
+                if let Some(g) = timing.gpu_ms {
+                    *entry.1.get_or_insert(0.0) += g;
+                }
+            }
+        }
+
+        let mut cpu_sum = 0.0_f64;
+        for (name, (cpu, gpu)) in &totals {
+            let pct = pct_of(*cpu, pipeline_total);
+            println!(
+                "  {:<28} {:>8.3}   {}   {:>9.1}%",
+                name,
+                cpu,
+                format_gpu_ms(*gpu),
+                pct
+            );
+            cpu_sum += cpu;
+        }
+        println!("  {}", "─".repeat(62));
+        let slack_pct = pct_of(pipeline_total - cpu_sum, pipeline_total);
+        println!(
+            "  {:<28} {:>8.3}             {:>+9.1}% slack",
+            "pipeline_ms (total)", pipeline_total, slack_pct
+        );
     }
 }
 
@@ -216,10 +374,35 @@ mod tests {
     #[test]
     fn headless_flag_takes_request_path() {
         let args = s(&["app", "--headless", "/tmp/req.ron"]);
-        let CliMode::Headless { request } = parse_cli(&args).unwrap() else {
+        let CliMode::Headless {
+            request,
+            print_breakdown,
+        } = parse_cli(&args).unwrap()
+        else {
             panic!("expected CliMode::Headless");
         };
         assert_eq!(request, PathBuf::from("/tmp/req.ron"));
+        assert!(
+            !print_breakdown,
+            "--print-breakdown should default to false"
+        );
+    }
+
+    #[test]
+    fn headless_print_breakdown_flag_is_parsed() {
+        let args = s(&["app", "--headless", "/tmp/req.ron", "--print-breakdown"]);
+        let CliMode::Headless {
+            request,
+            print_breakdown,
+        } = parse_cli(&args).unwrap()
+        else {
+            panic!("expected CliMode::Headless");
+        };
+        assert_eq!(request, PathBuf::from("/tmp/req.ron"));
+        assert!(
+            print_breakdown,
+            "--print-breakdown should be true when present"
+        );
     }
 
     #[test]
