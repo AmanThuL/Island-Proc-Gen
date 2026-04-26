@@ -1,8 +1,8 @@
 (
-    schema_version: 2,
+    schema_version: 4,
     run_id: "sprint_2_erosion",
     request_fingerprint: "91678efbbf85e412d68bf3a13d07ce3703bd4aee2da9659285d4309c20e09f92",
-    timestamp_utc: "2026-04-24T02:42:20Z",
+    timestamp_utc: "2026-04-26T04:57:53Z",
     shots: [
         (
             id: "pre_volcanic_single_seed42",
@@ -29,9 +29,87 @@
                 status: Rendered,
                 byte_hash: Some("bf95a3da93481a20725e35ea23458c1e242fc55c98a14a92ecbdfba27048e6fe"),
             )),
-            pipeline_ms: 6.36025,
-            bake_ms: 19.689,
-            gpu_render_ms: Some(39.126416),
+            pipeline_ms: 3.520791,
+            bake_ms: 36.618584000000006,
+            gpu_render_ms: Some(28.727249999999998),
+            stage_timings: {
+                "accumulation": (
+                    cpu_ms: 0.088458,
+                    gpu_ms: None,
+                ),
+                "basins": (
+                    cpu_ms: 0.181542,
+                    gpu_ms: None,
+                ),
+                "biome_weights": (
+                    cpu_ms: 0.454208,
+                    gpu_ms: None,
+                ),
+                "coast_mask": (
+                    cpu_ms: 0.046792,
+                    gpu_ms: None,
+                ),
+                "coast_type": (
+                    cpu_ms: 0.08583400000000001,
+                    gpu_ms: None,
+                ),
+                "derived_geomorph": (
+                    cpu_ms: 0.016875,
+                    gpu_ms: None,
+                ),
+                "erosion_outer_loop": (
+                    cpu_ms: 0.018208,
+                    gpu_ms: None,
+                ),
+                "flow_routing": (
+                    cpu_ms: 0.076583,
+                    gpu_ms: None,
+                ),
+                "fog_likelihood": (
+                    cpu_ms: 0.02375,
+                    gpu_ms: None,
+                ),
+                "hex_projection": (
+                    cpu_ms: 0.5812499999999999,
+                    gpu_ms: None,
+                ),
+                "pet": (
+                    cpu_ms: 0.01,
+                    gpu_ms: None,
+                ),
+                "pit_fill": (
+                    cpu_ms: 0.131417,
+                    gpu_ms: None,
+                ),
+                "precipitation": (
+                    cpu_ms: 0.889,
+                    gpu_ms: None,
+                ),
+                "river_extraction": (
+                    cpu_ms: 0.035416,
+                    gpu_ms: None,
+                ),
+                "soil_moisture": (
+                    cpu_ms: 0.20691700000000002,
+                    gpu_ms: None,
+                ),
+                "temperature": (
+                    cpu_ms: 0.106458,
+                    gpu_ms: None,
+                ),
+                "topography": (
+                    cpu_ms: 0.21762499999999999,
+                    gpu_ms: None,
+                ),
+                "validation": (
+                    cpu_ms: 0.316959,
+                    gpu_ms: None,
+                ),
+                "water_balance": (
+                    cpu_ms: 0.024208,
+                    gpu_ms: None,
+                ),
+            },
         ),
         (
             id: "post_volcanic_single_seed42",
@@ -58,9 +136,87 @@
                 status: Rendered,
                 byte_hash: Some("d3624cb0894d94964b9f74870af02de1ee0c83b8ac365aa75e82acd5bd29db84"),
             )),
-            pipeline_ms: 19.609041,
-            bake_ms: 13.259083,
-            gpu_render_ms: Some(27.467458),
+            pipeline_ms: 19.648916999999997,
+            bake_ms: 34.437000000000005,
+            gpu_render_ms: Some(26.918709),
+            stage_timings: {
+                "accumulation": (
+                    cpu_ms: 0.07200000000000001,
+                    gpu_ms: None,
+                ),
+                "basins": (
+                    cpu_ms: 0.123542,
+                    gpu_ms: None,
+                ),
+                "biome_weights": (
+                    cpu_ms: 0.36570800000000003,
+                    gpu_ms: None,
+                ),
+                "coast_mask": (
+                    cpu_ms: 0.031584,
+                    gpu_ms: None,
+                ),
+                "coast_type": (
+                    cpu_ms: 0.07825,
+                    gpu_ms: None,
+                ),
+                "derived_geomorph": (
+                    cpu_ms: 0.012625,
+                    gpu_ms: None,
+                ),
+                "erosion_outer_loop": (
+                    cpu_ms: 16.865083,
+                    gpu_ms: None,
+                ),
+                "flow_routing": (
+                    cpu_ms: 0.052167,
+                    gpu_ms: None,
+                ),
+                "fog_likelihood": (
+                    cpu_ms: 0.019083,
+                    gpu_ms: None,
+                ),
+                "hex_projection": (
+                    cpu_ms: 0.455375,
+                    gpu_ms: None,
+                ),
+                "pet": (
+                    cpu_ms: 0.007542,
+                    gpu_ms: None,
+                ),
+                "pit_fill": (
+                    cpu_ms: 0.095833,
+                    gpu_ms: None,
+                ),
+                "precipitation": (
+                    cpu_ms: 0.768417,
+                    gpu_ms: None,
+                ),
+                "river_extraction": (
+                    cpu_ms: 0.025582999999999998,
+                    gpu_ms: None,
+                ),
+                "soil_moisture": (
+                    cpu_ms: 0.153708,
+                    gpu_ms: None,
+                ),
+                "temperature": (
+                    cpu_ms: 0.078625,
+                    gpu_ms: None,
+                ),
+                "topography": (
+                    cpu_ms: 0.167375,
+                    gpu_ms: None,
+                ),
+                "validation": (
+                    cpu_ms: 0.252833,
+                    gpu_ms: None,
+                ),
+                "water_balance": (
+                    cpu_ms: 0.017750000000000002,
+                    gpu_ms: None,
+                ),
+            },
         ),
         (
             id: "pre_volcanic_twin_seed42",
@@ -87,9 +243,87 @@
                 status: Rendered,
                 byte_hash: Some("2cd0642300463090fbe98ded35c2fe601efdfc8e8232104ce8f1f0b9442f6bdd"),
             )),
-            pipeline_ms: 3.365958,
-            bake_ms: 16.522917000000003,
-            gpu_render_ms: Some(21.554958),
+            pipeline_ms: 3.517625,
+            bake_ms: 43.316417,
+            gpu_render_ms: Some(23.289958),
+            stage_timings: {
+                "accumulation": (
+                    cpu_ms: 0.097334,
+                    gpu_ms: None,
+                ),
+                "basins": (
+                    cpu_ms: 0.189583,
+                    gpu_ms: None,
+                ),
+                "biome_weights": (
+                    cpu_ms: 0.5770000000000001,
+                    gpu_ms: None,
+                ),
+                "coast_mask": (
+                    cpu_ms: 0.040666,
+                    gpu_ms: None,
+                ),
+                "coast_type": (
+                    cpu_ms: 0.11675,
+                    gpu_ms: None,
+                ),
+                "derived_geomorph": (
+                    cpu_ms: 0.02125,
+                    gpu_ms: None,
+                ),
+                "erosion_outer_loop": (
+                    cpu_ms: 0.01475,
+                    gpu_ms: None,
+                ),
+                "flow_routing": (
+                    cpu_ms: 0.074584,
+                    gpu_ms: None,
+                ),
+                "fog_likelihood": (
+                    cpu_ms: 0.031334,
+                    gpu_ms: None,
+                ),
+                "hex_projection": (
+                    cpu_ms: 0.505167,
+                    gpu_ms: None,
+                ),
+                "pet": (
+                    cpu_ms: 0.009415999999999999,
+                    gpu_ms: None,
+                ),
+                "pit_fill": (
+                    cpu_ms: 0.208791,
+                    gpu_ms: None,
+                ),
+                "precipitation": (
+                    cpu_ms: 0.753833,
+                    gpu_ms: None,
+                ),
+                "river_extraction": (
+                    cpu_ms: 0.03225,
+                    gpu_ms: None,
+                ),
+                "soil_moisture": (
+                    cpu_ms: 0.169917,
+                    gpu_ms: None,
+                ),
+                "temperature": (
+                    cpu_ms: 0.101084,
+                    gpu_ms: None,
+                ),
+                "topography": (
+                    cpu_ms: 0.225417,
+                    gpu_ms: None,
+                ),
+                "validation": (
+                    cpu_ms: 0.3125,
+                    gpu_ms: None,
+                ),
+                "water_balance": (
+                    cpu_ms: 0.031875,
+                    gpu_ms: None,
+                ),
+            },
         ),
         (
             id: "post_volcanic_twin_seed42",
@@ -116,9 +350,87 @@
                 status: Rendered,
                 byte_hash: Some("0892d2ff489a916674eb79e929b8d3bf4825e0b7a5984224443752b674d0eb92"),
             )),
-            pipeline_ms: 27.588624999999997,
-            bake_ms: 15.870249999999999,
-            gpu_render_ms: Some(21.60725),
+            pipeline_ms: 28.225041,
+            bake_ms: 44.991917,
+            gpu_render_ms: Some(23.640749999999997),
+            stage_timings: {
+                "accumulation": (
+                    cpu_ms: 0.078916,
+                    gpu_ms: None,
+                ),
+                "basins": (
+                    cpu_ms: 0.185916,
+                    gpu_ms: None,
+                ),
+                "biome_weights": (
+                    cpu_ms: 0.597042,
+                    gpu_ms: None,
+                ),
+                "coast_mask": (
+                    cpu_ms: 0.040292,
+                    gpu_ms: None,
+                ),
+                "coast_type": (
+                    cpu_ms: 0.13712500000000002,
+                    gpu_ms: None,
+                ),
+                "derived_geomorph": (
+                    cpu_ms: 0.021334,
+                    gpu_ms: None,
+                ),
+                "erosion_outer_loop": (
+                    cpu_ms: 24.672541,
+                    gpu_ms: None,
+                ),
+                "flow_routing": (
+                    cpu_ms: 0.08820800000000001,
+                    gpu_ms: None,
+                ),
+                "fog_likelihood": (
+                    cpu_ms: 0.031542,
+                    gpu_ms: None,
+                ),
+                "hex_projection": (
+                    cpu_ms: 0.50325,
+                    gpu_ms: None,
+                ),
+                "pet": (
+                    cpu_ms: 0.009167,
+                    gpu_ms: None,
+                ),
+                "pit_fill": (
+                    cpu_ms: 0.17583400000000002,
+                    gpu_ms: None,
+                ),
+                "precipitation": (
+                    cpu_ms: 0.7865,
+                    gpu_ms: None,
+                ),
+                "river_extraction": (
+                    cpu_ms: 0.030166,
+                    gpu_ms: None,
+                ),
+                "soil_moisture": (
+                    cpu_ms: 0.168958,
+                    gpu_ms: None,
+                ),
+                "temperature": (
+                    cpu_ms: 0.106959,
+                    gpu_ms: None,
+                ),
+                "topography": (
+                    cpu_ms: 0.232334,
+                    gpu_ms: None,
+                ),
+                "validation": (
+                    cpu_ms: 0.323833,
+                    gpu_ms: None,
+                ),
+                "water_balance": (
+                    cpu_ms: 0.030957999999999996,
+                    gpu_ms: None,
+                ),
+            },
         ),
         (
             id: "pre_caldera_seed42",
@@ -145,9 +457,87 @@
                 status: Rendered,
                 byte_hash: Some("c06b8663b846090b9f59712b5196e4e5c3094b0e04006888976cd821323e2257"),
             )),
-            pipeline_ms: 2.4962920000000004,
-            bake_ms: 12.535416000000001,
-            gpu_render_ms: Some(31.420792000000002),
+            pipeline_ms: 2.639,
+            bake_ms: 39.897667,
+            gpu_render_ms: Some(28.731375),
+            stage_timings: {
+                "accumulation": (
+                    cpu_ms: 0.074458,
+                    gpu_ms: None,
+                ),
+                "basins": (
+                    cpu_ms: 0.10195900000000001,
+                    gpu_ms: None,
+                ),
+                "biome_weights": (
+                    cpu_ms: 0.26245799999999997,
+                    gpu_ms: None,
+                ),
+                "coast_mask": (
+                    cpu_ms: 0.034875,
+                    gpu_ms: None,
+                ),
+                "coast_type": (
+                    cpu_ms: 0.049959,
+                    gpu_ms: None,
+                ),
+                "derived_geomorph": (
+                    cpu_ms: 0.011208000000000001,
+                    gpu_ms: None,
+                ),
+                "erosion_outer_loop": (
+                    cpu_ms: 0.0155,
+                    gpu_ms: None,
+                ),
+                "flow_routing": (
+                    cpu_ms: 0.045334000000000006,
+                    gpu_ms: None,
+                ),
+                "fog_likelihood": (
+                    cpu_ms: 0.014167,
+                    gpu_ms: None,
+                ),
+                "hex_projection": (
+                    cpu_ms: 0.38766700000000004,
+                    gpu_ms: None,
+                ),
+                "pet": (
+                    cpu_ms: 0.007292,
+                    gpu_ms: None,
+                ),
+                "pit_fill": (
+                    cpu_ms: 0.17845799999999998,
+                    gpu_ms: None,
+                ),
+                "precipitation": (
+                    cpu_ms: 0.721166,
+                    gpu_ms: None,
+                ),
+                "river_extraction": (
+                    cpu_ms: 0.034458,
+                    gpu_ms: None,
+                ),
+                "soil_moisture": (
+                    cpu_ms: 0.158834,
+                    gpu_ms: None,
+                ),
+                "temperature": (
+                    cpu_ms: 0.074333,
+                    gpu_ms: None,
+                ),
+                "topography": (
+                    cpu_ms: 0.205458,
+                    gpu_ms: None,
+                ),
+                "validation": (
+                    cpu_ms: 0.241416,
+                    gpu_ms: None,
+                ),
+                "water_balance": (
+                    cpu_ms: 0.015958,
+                    gpu_ms: None,
+                ),
+            },
         ),
         (
             id: "post_caldera_seed42",
@@ -174,9 +564,87 @@
                 status: Rendered,
                 byte_hash: Some("c1172970f7cab6999f267bf5fda05a80a2f54c5e9bc94dca3c6bfa1e7b753d5a"),
             )),
-            pipeline_ms: 15.613125,
-            bake_ms: 11.662792,
-            gpu_render_ms: Some(27.032625),
+            pipeline_ms: 16.526625,
+            bake_ms: 39.377458,
+            gpu_render_ms: Some(28.324875),
+            stage_timings: {
+                "accumulation": (
+                    cpu_ms: 0.06325,
+                    gpu_ms: None,
+                ),
+                "basins": (
+                    cpu_ms: 0.09325,
+                    gpu_ms: None,
+                ),
+                "biome_weights": (
+                    cpu_ms: 0.27849999999999997,
+                    gpu_ms: None,
+                ),
+                "coast_mask": (
+                    cpu_ms: 0.030750000000000003,
+                    gpu_ms: None,
+                ),
+                "coast_type": (
+                    cpu_ms: 0.052167,
+                    gpu_ms: None,
+                ),
+                "derived_geomorph": (
+                    cpu_ms: 0.009125,
+                    gpu_ms: None,
+                ),
+                "erosion_outer_loop": (
+                    cpu_ms: 13.918542,
+                    gpu_ms: None,
+                ),
+                "flow_routing": (
+                    cpu_ms: 0.037416000000000005,
+                    gpu_ms: None,
+                ),
+                "fog_likelihood": (
+                    cpu_ms: 0.015958,
+                    gpu_ms: None,
+                ),
+                "hex_projection": (
+                    cpu_ms: 0.41516699999999995,
+                    gpu_ms: None,
+                ),
+                "pet": (
+                    cpu_ms: 0.006875,
+                    gpu_ms: None,
+                ),
+                "pit_fill": (
+                    cpu_ms: 0.129,
+                    gpu_ms: None,
+                ),
+                "precipitation": (
+                    cpu_ms: 0.802083,
+                    gpu_ms: None,
+                ),
+                "river_extraction": (
+                    cpu_ms: 0.030459,
+                    gpu_ms: None,
+                ),
+                "soil_moisture": (
+                    cpu_ms: 0.143084,
+                    gpu_ms: None,
+                ),
+                "temperature": (
+                    cpu_ms: 0.06970900000000001,
+                    gpu_ms: None,
+                ),
+                "topography": (
+                    cpu_ms: 0.173541,
+                    gpu_ms: None,
+                ),
+                "validation": (
+                    cpu_ms: 0.241708,
+                    gpu_ms: None,
+                ),
+                "water_balance": (
+                    cpu_ms: 0.012416,
+                    gpu_ms: None,
+                ),
+            },
         ),
     ],
     overall_status: Passed,

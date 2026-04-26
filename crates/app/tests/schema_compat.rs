@@ -1,75 +1,84 @@
 //! Sprint 4.A forward-compat integration tests.
 //!
-//! These tests exercise schema compatibility between v3 golden baselines and
-//! the v4 binary. They use real on-disk `summary.ron` files from the checked-in
-//! baselines to confirm that parsing works under the v4 `ShotSummary` schema
-//! (which added the `stage_timings` field with `#[serde(default)]`).
+//! These tests exercise schema compatibility between v3 baseline RON
+//! files (which lack the `stage_timings` field) and the v4 binary's
+//! `RunSummary` / `ShotSummary` types. The fixtures are **statically
+//! embedded** RON strings, NOT live baseline files: Sprint 4.B's
+//! cascade regen lifts the on-disk baselines to v4, after which a
+//! test reading from `crates/data/golden/headless/<x>/summary.ron`
+//! would see v4 RON with populated `stage_timings`. The point of the
+//! forward-compat test is the parse contract, which is independent of
+//! the live baselines' current schema.
+//!
+//! If `RunSummary` / `ShotSummary` / `TruthSummary` shape changes in a
+//! way that breaks v3 parse, these tests fire — that is the contract
+//! the `#[serde(default)]` annotation on `stage_timings` is meant to
+//! preserve forever.
 
 use app::headless::output::{RunSummary, ShotSummary};
 
-/// Parse the real sprint_3_5_hex_surface v3 `summary.ron` under the v4
-/// binary's `RunSummary` type.
+/// A minimal v3-style `summary.ron` fixture — schema_version 3, two
+/// shots, no `stage_timings` field anywhere. Mirrors the shape that
+/// Sprint 1C / 2 / 3.5 binaries wrote.
+const V3_FIXTURE: &str = r#"(
+    schema_version: 3,
+    run_id: "v3_fixture",
+    request_fingerprint: "0000000000000000000000000000000000000000000000000000000000000000",
+    timestamp_utc: "2026-04-20T00:00:00Z",
+    shots: [
+        (
+            id: "shot_a",
+            truth: (
+                overlay_hashes: {
+                    "final_elevation": "deadbeef",
+                },
+                metrics_hash: Some("cafebabe"),
+            ),
+            beauty: None,
+            pipeline_ms: 12.34,
+            bake_ms: 5.67,
+            gpu_render_ms: Some(8.90),
+        ),
+        (
+            id: "shot_b",
+            truth: (
+                overlay_hashes: {},
+                metrics_hash: None,
+            ),
+            beauty: None,
+            pipeline_ms: 10.0,
+            bake_ms: 5.0,
+            gpu_render_ms: None,
+        ),
+    ],
+    overall_status: Passed,
+    warnings: [],
+)
+"#;
+
+/// Parse a static v3-style fixture under the v4 binary's `RunSummary` type.
 ///
-/// Asserts:
-/// - `schema_version == 3` (the file keeps its original version)
-/// - `stage_timings.is_empty()` for all shots (absent field → default empty map)
-/// - No parse error (forward-compat via `#[serde(default)]`)
+/// This is the single load-bearing forward-compat assertion. If
+/// `ShotSummary.stage_timings` ever loses its `#[serde(default)]` (or if
+/// any other field gains a non-default-able mandatory addition), this test
+/// fires.
 #[test]
 fn v3_summary_parses_under_v4_binary_with_empty_stage_timings() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../data/golden/headless/sprint_3_5_hex_surface/summary.ron"
-    );
-
-    let text =
-        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
-
     let summary: RunSummary =
-        ron::de::from_str(&text).expect("sprint_3_5_hex_surface/summary.ron must parse");
+        ron::de::from_str(V3_FIXTURE).expect("static v3 fixture must parse under v4 binary");
 
-    // The on-disk file is schema_version 3.
     assert_eq!(
         summary.schema_version, 3,
-        "on-disk v3 baseline must still report schema_version 3 when parsed"
+        "static v3 fixture parses as schema_version 3"
     );
+    assert_eq!(summary.shots.len(), 2);
 
-    // All shots must have empty stage_timings (v3 had no such field).
     for shot in &summary.shots {
         assert!(
             shot.stage_timings.is_empty(),
-            "shot '{}': v3 baseline must parse with empty stage_timings under v4 binary; \
-             got {:?}",
+            "shot '{}': v3 fixture must yield empty stage_timings via #[serde(default)]; got {:?}",
             shot.id,
             shot.stage_timings
-        );
-    }
-
-    // The file must have at least one shot (sanity).
-    assert!(
-        !summary.shots.is_empty(),
-        "sprint_3_5_hex_surface baseline must have at least one shot"
-    );
-}
-
-/// Parse the sprint_1a_baseline v3 summary and confirm forward-compat.
-#[test]
-fn v3_sprint_1a_summary_parses_with_empty_stage_timings() {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../data/golden/headless/sprint_1a_baseline/summary.ron"
-    );
-
-    let text =
-        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
-
-    let summary: RunSummary =
-        ron::de::from_str(&text).expect("sprint_1a_baseline/summary.ron must parse");
-
-    for shot in &summary.shots {
-        assert!(
-            shot.stage_timings.is_empty(),
-            "shot '{}': v3 baseline must parse with empty stage_timings",
-            shot.id
         );
     }
 }
