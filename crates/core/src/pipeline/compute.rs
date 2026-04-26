@@ -89,11 +89,27 @@ pub struct StreamPowerParams {
     pub space_k_sed: f32,
     /// SPACE-lite cover thickness `H*`.
     pub h_star: f32,
+    /// SPACE-lite sediment entrainment cap `HS_ENTRAIN_MAX` — passed
+    /// explicitly so the GPU kernel can read it without a `sim` dependency.
+    pub hs_entrain_max: f32,
     /// Sea level — lower bound for `z` after incision.
     pub sea_level: f32,
     /// Which SPIM variant to run.
     pub spim_variant: crate::preset::SpimVariant,
 }
+
+/// Fallback cover-decay scale used by the GPU kernel when `h_star ≤ 0`.
+///
+/// Matches `crates/sim/src/geomorph/sediment::H_STAR` (value-locked in
+/// Sprint 3.1). Declared in `core` so `crates/gpu/` can reference it without
+/// a `sim` dependency (architectural invariant #1).
+pub const FALLBACK_H_STAR: f32 = 0.05;
+
+/// Fallback sediment entrainment cap exposed to `crates/gpu/`.
+///
+/// Matches `crates/sim/src/geomorph/sediment::HS_ENTRAIN_MAX`. Declared in
+/// `core` so the GPU kernel can read it without a `sim` dependency.
+pub const FALLBACK_HS_ENTRAIN_MAX: f32 = 0.5;
 
 // ─── ComputeBackendError ─────────────────────────────────────────────────────
 

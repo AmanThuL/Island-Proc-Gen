@@ -15,7 +15,8 @@ pub mod compute;
 pub mod timing;
 
 pub use compute::{
-    ComputeBackend, ComputeBackendError, ComputeOp, HillslopeParams, NoOpBackend, StreamPowerParams,
+    ComputeBackend, ComputeBackendError, ComputeOp, FALLBACK_H_STAR, FALLBACK_HS_ENTRAIN_MAX,
+    HillslopeParams, NoOpBackend, StreamPowerParams,
 };
 pub use timing::StageTiming;
 

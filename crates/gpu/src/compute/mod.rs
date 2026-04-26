@@ -42,11 +42,10 @@ use stream_power_pipeline::StreamPowerComputePipeline;
 
 // ─── GpuBackend ──────────────────────────────────────────────────────────────
 
-/// GPU compute backend — Sprint 4.D / 4.E.
+/// GPU compute backend — Sprint 4.D / 4.E / 4.F.
 ///
-/// From Sprint 4.E, `HillslopeDiffusion` is fully supported: `supports` returns
-/// `true` and `run_hillslope_diffusion` dispatches the WGSL compute shader.
-/// `StreamPowerIncision` remains `Err(Unsupported)` until Sprint 4.F.
+/// From Sprint 4.E, `HillslopeDiffusion` is fully supported.
+/// From Sprint 4.F, `StreamPowerIncision` is also fully supported.
 ///
 /// The struct is `Send + Sync` because [`GpuContext`] holds only `wgpu`
 /// handles that are `Send + Sync` on native backends. Interior mutability for
@@ -62,8 +61,11 @@ pub struct GpuBackend {
     /// (may reallocate ping-pong buffers) while `ComputeBackend::run_hillslope_diffusion`
     /// takes `&self`.
     hillslope: Mutex<Option<HillslopeComputePipeline>>,
-    /// Stream power incision pipeline. `None` at 4.E; `Some` at 4.F.
-    stream_power: Option<StreamPowerComputePipeline>,
+    /// Stream power incision pipeline. `Some` from Sprint 4.F.
+    ///
+    /// Same `Mutex` pattern as `hillslope`: `dispatch` takes `&mut`, the
+    /// trait method takes `&self`.
+    stream_power: Mutex<Option<StreamPowerComputePipeline>>,
 }
 
 impl GpuBackend {
@@ -73,10 +75,11 @@ impl GpuBackend {
     /// `StreamPowerComputePipeline` is left `None` until Sprint 4.F.
     pub fn new(ctx: Arc<GpuContext>) -> Self {
         let hillslope = HillslopeComputePipeline::new(Arc::clone(&ctx));
+        let stream_power = StreamPowerComputePipeline::new(Arc::clone(&ctx));
         Self {
             ctx,
             hillslope: Mutex::new(Some(hillslope)),
-            stream_power: None, // Sprint 4.F
+            stream_power: Mutex::new(Some(stream_power)),
         }
     }
 }
@@ -98,7 +101,11 @@ impl ComputeBackend for GpuBackend {
             ComputeOp::HillslopeDiffusion => {
                 self.hillslope.lock().map(|g| g.is_some()).unwrap_or(false)
             }
-            ComputeOp::StreamPowerIncision => self.stream_power.is_some(),
+            ComputeOp::StreamPowerIncision => self
+                .stream_power
+                .lock()
+                .map(|g| g.is_some())
+                .unwrap_or(false),
         }
     }
 
@@ -127,13 +134,25 @@ impl ComputeBackend for GpuBackend {
 
     fn run_stream_power_incision(
         &self,
-        _world: &mut WorldState,
-        _params: &StreamPowerParams,
+        world: &mut WorldState,
+        params: &StreamPowerParams,
     ) -> Result<StageTiming, ComputeBackendError> {
-        Err(ComputeBackendError::Unsupported {
+        let cpu_start = Instant::now();
+
+        let mut guard = self
+            .stream_power
+            .lock()
+            .map_err(|_| ComputeBackendError::Other("stream_power Mutex poisoned".into()))?;
+
+        let pipeline = guard.as_mut().ok_or(ComputeBackendError::Unsupported {
             backend: "gpu",
             op: "stream_power_incision",
-        })
+        })?;
+
+        let gpu_ms = pipeline.dispatch(world, params)?;
+        let cpu_ms = cpu_start.elapsed().as_secs_f64() * 1000.0;
+
+        Ok(StageTiming { cpu_ms, gpu_ms })
     }
 }
 
@@ -161,14 +180,13 @@ mod tests {
         assert_eq!(backend.name(), "gpu");
     }
 
-    /// Sprint 4.E contract: `supports(HillslopeDiffusion)` returns `true`
-    /// because `GpuBackend::new` constructs `Some(HillslopeComputePipeline)`.
-    /// `supports(StreamPowerIncision)` still returns `false` (4.F).
+    /// Sprint 4.F contract: both `supports(HillslopeDiffusion)` and
+    /// `supports(StreamPowerIncision)` return `true` after 4.F lands.
     ///
     /// Marked #[ignore] — requires a real GPU adapter.
     #[test]
     #[ignore = "requires a working GPU adapter; opt in with IPG_RUN_GPU_TESTS=1"]
-    fn gpu_backend_supports_hillslope_true_and_stream_power_false_at_4_e() {
+    fn gpu_backend_supports_both_ops_at_4_f() {
         if std::env::var("IPG_RUN_GPU_TESTS").as_deref() != Ok("1") {
             eprintln!("skipped — set IPG_RUN_GPU_TESTS=1 to run GPU tests");
             return;
@@ -178,11 +196,11 @@ mod tests {
         let backend = GpuBackend::new(ctx);
         assert!(
             backend.supports(ComputeOp::HillslopeDiffusion),
-            "HillslopeDiffusion must be supported at 4.E"
+            "HillslopeDiffusion must be supported at 4.F"
         );
         assert!(
-            !backend.supports(ComputeOp::StreamPowerIncision),
-            "StreamPowerIncision must NOT be supported at 4.E (4.F only)"
+            backend.supports(ComputeOp::StreamPowerIncision),
+            "StreamPowerIncision must be supported at 4.F"
         );
     }
 }

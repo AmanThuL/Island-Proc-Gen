@@ -90,6 +90,7 @@ impl SimulationStage for StreamPowerIncisionStage {
             space_k_bed: world.preset.erosion.space_k_bed,
             space_k_sed: world.preset.erosion.space_k_sed,
             h_star: world.preset.erosion.h_star,
+            hs_entrain_max: HS_ENTRAIN_MAX,
             sea_level: world.preset.sea_level,
             spim_variant: world.preset.erosion.spim_variant,
         };
