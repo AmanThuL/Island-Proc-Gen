@@ -1,15 +1,20 @@
 # PROGRESS
 
 **Last Updated:** 2026-04-26 (Sprint 4 Compute Productization Phase 1
-**closed** on `dev` — 9 atomic commits `66562ba → <this>`; `cargo test
---workspace` 618 → 672 passing / 8 → 19 ignored (net +54 non-ignored
-+11 GPU-gated); 5 `--headless` baselines under `--compute-backend cpu`
-bit-identical truth path; full 5-baseline cascade with
-`IPG_COMPUTE_BACKEND=gpu` exits 0 on Apple M4 Pro Metal. Sprint 4
-ships **measurement-rich GPU compute scaffold**; CPU stays canonical
-truth (DD5). DD8 parity met by 167-16,000× margins; GPU is 40-55×
-SLOWER end-to-end at 128² due to synchronous readback + small grid
-amortization — attribution clear, Sprint 4.x optimizes.)
+**closed** on `dev` — 9 atomic commits `66562ba → 289895d`; `cargo
+test --workspace` 618 → 672 passing / 8 → 19 ignored (net +54 non-
+ignored +11 GPU-gated); 5 `--headless` baselines under
+`--compute-backend cpu` bit-identical truth path; full 5-baseline
+cascade with `IPG_COMPUTE_BACKEND=gpu` exits 0 on Apple M4 Pro Metal.
+Sprint 4 ships **measurement-rich GPU compute scaffold**; CPU stays
+canonical truth (DD5). DD8 parity met by 167-16,000× margins; GPU
+is 40-55× SLOWER end-to-end at 128² due to synchronous readback +
+small grid amortization — attribution clear, Sprint 4.x optimizes.
+Sprint 3.5.G follow-up `ff0d012` adds picked-hex viewport highlight
+— closes a 3.5.E UX gap surfaced during interactive verification of
+4.B's Profiler tab; 4 of 5 baselines remain bit-identical, the 5th
+(`sprint_1a_baseline`) shows pre-existing metrics_hash
+nondeterminism not introduced by 3.5.G — see DEFERRED.)
 
 ---
 
@@ -159,6 +164,24 @@ below in RECENTLY SHIPPED.
 - Profiler tab evolution: per-iter sub-stage breakdown inside ErosionOuterLoop (visualize the 100 inner kernel calls); sparkline + last-N-tick ring buffer.
 - Tier-2 interactive ↔ headless beauty parity test evidence (still unran from Sprint 3.5).
 
+### Sprint 3.5.G — Picked-hex viewport highlight (2026-04-26, 1 commit `ff0d012` on `dev`)
+
+**Type:** Sprint 3.5 follow-up (UX gap caught during Sprint 4 interactive verification).
+**Test delta:** 672 → 676 passing / 19 → 19 ignored (+4 non-ignored: byte-layout lock, None→-1 packing, OffsetCoord→instance idx lookup, WGSL constants lock).
+
+Sprint 3.5.E (`9a4e7d9 → 776bca7`) shipped the click handler + `HexInspectPanel` populating `Runtime::picked_hex` and rendering the picked hex's attributes in the side panel — but the viewport had no visual feedback on WHICH hex the user picked. 3.5.G closes that gap with a white-edge band emphasized on the picked hex's surface in `HexOverlay` and `HexOnly` view modes (`Continuous` mode renders terrain, not the hex surface, so the highlight is naturally invisible there).
+
+| What shipped | Where |
+|---|---|
+| `HexSurfaceUniforms.selected_hex_idx: i32` (176-byte layout preserved — split trailing `_pad1: [f32; 4]` into `selected_hex_idx + _pad1: [f32; 3]`) | `crates/render/src/hex_surface.rs` |
+| WGSL fragment shader emphasizes `length(local_xy)` band when `instance_idx == selected_hex_idx`; constants `SEL_BAND_START=0.72`, `SEL_BLEND=0.85`, `SEL_WHITE_CH=1.0` locked | `shaders/hex_surface.wgsl` |
+| `frame.rs` converts `Runtime::picked_hex` → `idx = row * cols + col` (matching the row-major iteration in `build_hex_instances`); bounds-checked | `crates/app/src/runtime/frame.rs` |
+| Headless executor passes `None → -1` sentinel; fragment branch is dead code under `--headless` | `crates/app/src/headless/executor.rs` |
+
+**Bit-identicality:** 4 of 5 baselines (`sprint_1b_acceptance`, `sprint_2_erosion`, `sprint_3_sediment_climate`, `sprint_3_5_hex_surface`) bit-identical truth + beauty hashes to commit `289895d`. 5th baseline (`sprint_1a_baseline`) shows pre-existing `metrics_hash` nondeterminism between successive `--headless` runs — verified by stashing this commit's diff and re-running against pristine `289895d`. **Not introduced by 3.5.G** (forwarded as DEFERRED).
+
+**Visual verification:** user-confirmed in `cargo run -p app` interactive session — click any hex in `HexOverlay`/`HexOnly`; bright-white ring renders around the picked hex; `HexInspectPanel` populates the same hex's attributes. Off-grid clicks (DD7) leave the highlight stable (no clear).
+
 ### Sprint 3.5 — Hex Surface Readability (2026-04-24, 31 commits on `dev`)
 
 **Doc:** [`docs/design/sprints/sprint_3_5_hex_surface_readability.md`](docs/design/sprints/sprint_3_5_hex_surface_readability.md) (Obsidian symlink, gitignored)
@@ -307,6 +330,34 @@ see [`docs/history/progress_archive_milestone_1.md`](docs/history/progress_archi
 Live forwarded residuals. Items absorbed or shipped have been archived with
 the corresponding sprint in `docs/history/progress_archive_milestone_1.md`
 (vault symlink; see header note above).
+
+**New at Sprint 3.5.G surfacing (2026-04-26):**
+
+- **`sprint_1a_baseline` `metrics_hash` non-determinism.** Successive
+  `--headless` runs of `sprint_1a_baseline` produce different
+  `metrics_hash` values (other 4 baselines are deterministic).
+  Verified by stashing 3.5.G's diff and re-running against pristine
+  `289895d` — drift reproduces, **NOT introduced by 3.5.G**. Likely
+  cause: a fp-reduction order issue in one of the `SummaryMetrics`
+  fields not yet covered by Sprint 3 / 3.5's hash-locking work
+  (overlay PNG hashes ARE deterministic — only the metrics-side
+  rollup drifts). Affects only the v1-schema baseline; 4 newer
+  baselines unaffected. Investigate at next opportunity (Sprint 4.1
+  CLI productization is a natural slot — `island-gen bench` will
+  surface non-determinism via repeat-run comparison; or pull into a
+  small follow-up commit if a clear culprit emerges from grep).
+  Does NOT block Sprint 4.1 entry.
+- **Dock layout forward-compat backfill.** `DockLayout::load_or_default()`
+  only falls back to `default_layout()` on RON parse failure — but
+  adding a new `TabKind` variant to the enum is a non-breaking
+  change to old data, so saved layouts silently miss newer tabs
+  (`HexInspect` from 3.5, `Profiler` from 4.B). Workaround today:
+  `rm ~/.island_proc_gen/dock_layout.ron`. Proper fix (planned but
+  not yet shipped): walk the loaded `iter_all_tabs()` after parse
+  and append any missing canonical variants to the right column.
+  CLAUDE.md Gotchas §Sprint 3.5 bullet "Dock layout compat is NOT
+  automatic" carries the contract. ~30 LOC + 1 backfill test;
+  natural slot is anywhere in Sprint 4.1 / 4.x.
 
 **Resolved at Sprint 3.5 close-out:**
 

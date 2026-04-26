@@ -532,9 +532,36 @@ you need the "why" behind a constant or the full story of a decision.
   (Manhattan). Only clicks below threshold trigger hex pick; drags
   never touch `picked_hex`, so orbit-drag doesn't clobber the
   selection.
-- **Dock layout compat is forward-only.** Pre-3.5 layouts fall
-  through `dock.rs:122`'s `failed to parse` arm onto
-  `default_layout()`. No migration promised.
+- **Dock layout compat is NOT automatic.** The `failed to parse`
+  arm at `dock.rs:122` fires only on RON syntax errors, NOT when
+  the saved layout merely lacks newer `TabKind` variants — adding
+  a variant to the enum is a non-breaking change to old data, so
+  RON parses successfully and the saved layout wins (Profiler tab
+  added at Sprint 4.B was missing from any pre-Sprint-4 layout
+  for exactly this reason; HexInspect added at Sprint 3.5 had the
+  same latent gap). Workaround: `rm
+  ~/.island_proc_gen/dock_layout.ron` to force a fresh
+  `default_layout()`. Proper fix (planned but not yet shipped):
+  walk the loaded `iter_all_tabs()` after parse and append any
+  missing canonical variants to the right column.
+- **Picked-hex viewport highlight (3.5.G).** When
+  `Runtime::picked_hex` is `Some(coord)`, `frame.rs::tick`
+  computes `idx = row * cols + col` (matching the row-major
+  iteration in `build_hex_instances`) and passes it as the
+  `selected_hex_idx: i32` field on `HexSurfaceUniforms` (176-byte
+  layout preserved — the trailing `_pad1: [f32; 4]` was split
+  into `selected_hex_idx + _pad1: [f32; 3]`). The WGSL fragment
+  shader emphasizes a wide white-edge band on the matching hex
+  via the existing `length(local_xy)` radial-distance computation
+  (`SEL_BAND_START = 0.72`, `SEL_BLEND = 0.85`). Sentinel `-1`
+  means "no selection" and the fragment branch is dead code —
+  headless paths pass `None → -1`, beauty `byte_hash` stays
+  bit-identical to pre-3.5.G output. Selection takes visual
+  precedence over the DD4 coast-class edge-tint in the outer
+  zone (intentional). Visible in `HexOverlay` and `HexOnly` view
+  modes; `Continuous` mode renders terrain rather than the hex
+  surface so the highlight is naturally invisible there
+  (acceptable limitation per Sprint 3.5.G).
 - **`pixel_to_axial` cube-rounding is implementation-defined at
   3-way vertices**; tests assert "one of the three neighbours" to
   avoid coupling to the rounder's tie-break. Note: NE neighbour of
