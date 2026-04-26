@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use island_core::{seed::Seed, world::WorldState};
 use sim::{StageId, invalidate_from};
 
@@ -53,8 +55,14 @@ impl Runtime {
         self.world = WorldState::new(new_seed, new_preset, self.resolution);
         self.seed = new_seed;
 
-        // 3. Full pipeline run.
+        // 3. Full pipeline run. Reset profiler state before running so
+        //    cumulative_timings reflects only the new regen, not the old session.
+        self.cumulative_timings.clear();
+        self.dirty_frontier = None;
+        let regen_start = Instant::now();
         self.pipeline.run(&mut self.world)?;
+        self.last_regen_ms = regen_start.elapsed().as_secs_f64() * 1_000.0;
+        self.accumulate_tick_timings();
 
         // 4. Rebuild terrain renderer — picks up new sea_vbo height + new
         //    light uniform sea_level from the preset.
@@ -105,10 +113,14 @@ impl Runtime {
         self.preset.sea_level = new_sea_level;
         self.world.preset.sea_level = new_sea_level;
 
-        // 2. Invalidate + re-run from Coastal.
+        // 2. Invalidate + re-run from Coastal. Reset profiler cumulative so the
+        //    Profiler tab reflects only stages that actually re-ran.
+        self.cumulative_timings.clear();
+        self.dirty_frontier = Some(StageId::Coastal);
         invalidate_from(&mut self.world, StageId::Coastal);
         self.pipeline
             .run_from(&mut self.world, StageId::Coastal as usize)?;
+        self.accumulate_tick_timings();
 
         // 3. Update terrain renderer sea quad vertices + light uniform.
         self.terrain.update_sea_level(&self.gpu, new_sea_level);

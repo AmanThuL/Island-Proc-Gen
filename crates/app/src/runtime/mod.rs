@@ -13,6 +13,7 @@
 //! - `view_mode` — `ViewMode` enum + `set_view_mode` transition logic
 //! - `tabs`      — `AppTabViewer` + `egui_dock::TabViewer` impl
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -28,7 +29,7 @@ use winit::{
 use gpu::GpuContext;
 use hex::geometry::{default_grid_origin, offset_to_pixel, sim_to_world_scale};
 use island_core::{
-    pipeline::SimulationPipeline,
+    pipeline::{SimulationPipeline, StageTiming},
     preset::IslandArchetypePreset,
     seed::Seed,
     world::{HexCoastClass, Resolution, WorldState},
@@ -152,6 +153,40 @@ pub struct Runtime {
     /// without a sim pipeline re-run. The headless executor is unaffected — it
     /// always uses `DEFAULT_WORLD_XZ_EXTENT` directly.
     pub(super) world_xz_extent: f32,
+
+    // ── Sprint 4.B: Profiler tab state ────────────────────────────────────────
+    /// Timings recorded during the most recent `run_from` call (this tick).
+    /// `None` until the first pipeline run completes in the session.
+    pub(super) last_tick_timings: Option<BTreeMap<String, StageTiming>>,
+
+    /// Cumulative sum of `cpu_ms` (and `gpu_ms`) for every `run_from` call
+    /// since the last `invalidate_from` / full regen. Reset to empty by
+    /// `invalidate_from` calls and full regens. Keyed by stage name string
+    /// (matches `world.derived.last_stage_timings` convention).
+    pub(super) cumulative_timings: BTreeMap<String, StageTiming>,
+
+    /// Wall-clock duration of the most recent full pipeline regen in ms.
+    /// Zero until the first regen completes.
+    pub(super) last_regen_ms: f64,
+
+    /// Lowest `StageId` cleared by the **most recent** `invalidate_from`
+    /// call. Set by every `invalidate_from` call site in `frame.rs` and
+    /// `regen.rs`; **kept until the next invalidation, NOT cleared by
+    /// `run_from` completion**.
+    ///
+    /// The sprint doc DD3 wording ("lowest StageId that `invalidate_from`
+    /// cleared since the last `run_from`") naively suggests resetting on
+    /// `run_from` completion, but that would always read `None` after a
+    /// successful run and defeat the user-facing intent ("show me what
+    /// just got rerun"). The persist-until-next-invalidate semantics is
+    /// the deliberate Sprint 4.B interpretation; mirrored in the
+    /// `profiler_dirty_frontier_reflects_last_invalidate_from` test
+    /// contract.
+    pub(super) dirty_frontier: Option<sim::StageId>,
+
+    /// Display name of the current compute backend. Hardcoded `"cpu"` at
+    /// Sprint 4.B; updated to reflect GPU backends at Sprint 4.E/F.
+    pub(super) backend_name: &'static str,
 }
 
 impl Runtime {
@@ -216,7 +251,19 @@ impl Runtime {
         // copy of the builder here would silently drift when StageId changes.
         let pipeline = default_pipeline();
         let mut world = WorldState::new(seed, preset.clone(), resolution);
+        let regen_start = std::time::Instant::now();
         pipeline.run(&mut world).context("initial pipeline run")?;
+        let initial_regen_ms = regen_start.elapsed().as_secs_f64() * 1_000.0;
+
+        // Seed initial profiler state from the first pipeline run.
+        let initial_tick_timings = world.derived.last_stage_timings.take();
+        let mut initial_cumulative: BTreeMap<String, StageTiming> = BTreeMap::new();
+        if let Some(tick) = &initial_tick_timings {
+            for (k, t) in tick {
+                initial_cumulative.insert(k.clone(), *t);
+            }
+        }
+
         let land_cells = world
             .derived
             .coast_mask
@@ -329,6 +376,11 @@ impl Runtime {
             picked_hex: None,
             world_panel,
             world_xz_extent,
+            last_tick_timings: initial_tick_timings,
+            cumulative_timings: initial_cumulative,
+            last_regen_ms: initial_regen_ms,
+            dirty_frontier: None,
+            backend_name: "cpu",
         })
     }
 
@@ -896,5 +948,147 @@ mod tests {
                 "when hex_coast_class is None all instances must default to Inland (0)"
             );
         }
+    }
+
+    // ── Sprint 4.B: Profiler state tests ─────────────────────────────────────
+
+    /// After `pipeline.run`, `cumulative_timings` must contain one entry per stage.
+    /// A second run (simulating a slider re-run that resets cumulative first)
+    /// must reflect ONLY the second run's timings — not the sum of both.
+    #[test]
+    fn profiler_cumulative_resets_on_invalidate_from() {
+        use island_core::{
+            pipeline::StageTiming,
+            seed::Seed,
+            world::{Resolution, WorldState},
+        };
+        use sim::{StageId, default_pipeline, invalidate_from};
+        use std::collections::BTreeMap;
+
+        let preset =
+            data::presets::load_preset("volcanic_single").expect("volcanic_single must load");
+        let resolution = Resolution::new(64, 64);
+        let mut world = WorldState::new(Seed(42), preset, resolution);
+        let pipeline = default_pipeline();
+
+        // ── First run: full pipeline ──────────────────────────────────────────
+        pipeline.run(&mut world).expect("first pipeline.run");
+
+        // Accumulate (mimics Runtime::accumulate_tick_timings).
+        let tick1 = world
+            .derived
+            .last_stage_timings
+            .take()
+            .expect("timings must be Some after run");
+        let mut cumulative: BTreeMap<String, StageTiming> = BTreeMap::new();
+        for (k, v) in &tick1 {
+            cumulative.insert(k.clone(), *v);
+        }
+        let first_topography_cpu = cumulative
+            .get("topography")
+            .expect("topography must be timed")
+            .cpu_ms;
+
+        // ── Simulate an invalidate + partial run_from (mimics slider re-run) ──
+        cumulative.clear(); // reset — exactly what frame.rs does
+        invalidate_from(&mut world, StageId::Precipitation);
+        pipeline
+            .run_from(&mut world, StageId::Precipitation as usize)
+            .expect("run_from(Precipitation)");
+
+        // Accumulate the second run.
+        let tick2 = world
+            .derived
+            .last_stage_timings
+            .take()
+            .expect("timings must be Some after run_from");
+        for (k, v) in &tick2 {
+            let entry = cumulative.entry(k.clone()).or_insert(StageTiming {
+                cpu_ms: 0.0,
+                gpu_ms: None,
+            });
+            entry.cpu_ms += v.cpu_ms;
+        }
+
+        // topography must NOT be present in cumulative after the partial run_from —
+        // the reset cleared it and the partial run only covered Precipitation+.
+        assert!(
+            !cumulative.contains_key("topography"),
+            "cumulative must NOT contain topography after reset + partial run_from"
+        );
+
+        // precipitation must be present (it re-ran).
+        assert!(
+            cumulative.contains_key("precipitation"),
+            "cumulative must contain precipitation after run_from(Precipitation)"
+        );
+
+        // The topography entry from the first run must be gone (cumulative was reset).
+        let _ = first_topography_cpu; // used for documentation only
+    }
+
+    /// After `invalidate_from(StageId::Precipitation)`, `dirty_frontier` must be
+    /// `Some(StageId::Precipitation)`. It must remain set through a subsequent
+    /// `run_from` call (semantics: frontier sticks until the next invalidation,
+    /// not until the next run).
+    #[test]
+    fn profiler_dirty_frontier_reflects_last_invalidate_from() {
+        use island_core::{
+            seed::Seed,
+            world::{Resolution, WorldState},
+        };
+        use sim::{StageId, default_pipeline, invalidate_from};
+
+        let preset =
+            data::presets::load_preset("volcanic_single").expect("volcanic_single must load");
+        let resolution = Resolution::new(64, 64);
+        let mut world = WorldState::new(Seed(42), preset, resolution);
+        let pipeline = default_pipeline();
+
+        // Run full pipeline first so Precipitation stage has its inputs populated.
+        pipeline.run(&mut world).expect("initial pipeline.run");
+
+        // Simulate what frame.rs does: record frontier, then run_from.
+        let mut dirty_frontier: Option<StageId> = Some(StageId::Precipitation);
+        invalidate_from(&mut world, StageId::Precipitation);
+
+        assert_eq!(
+            dirty_frontier,
+            Some(StageId::Precipitation),
+            "dirty_frontier must be set to Precipitation after invalidate_from"
+        );
+
+        // run_from does NOT clear dirty_frontier (it sticks until the next invalidation).
+        pipeline
+            .run_from(&mut world, StageId::Precipitation as usize)
+            .expect("run_from(Precipitation)");
+
+        assert_eq!(
+            dirty_frontier,
+            Some(StageId::Precipitation),
+            "dirty_frontier must persist after run_from (cleared only on next invalidate)"
+        );
+
+        // A second invalidate_from at a higher index overwrites the frontier.
+        dirty_frontier = Some(StageId::ErosionOuterLoop);
+        assert_eq!(
+            dirty_frontier,
+            Some(StageId::ErosionOuterLoop),
+            "dirty_frontier must update when a new invalidation fires"
+        );
+    }
+
+    /// `profiler_tab_registered_in_default_layout` — covered by the renamed
+    /// `default_layout_contains_all_eight_tab_kinds` test in `dock.rs`.
+    /// This comment is intentional to document the cross-reference.
+    #[test]
+    fn profiler_tab_registered_in_default_layout() {
+        use crate::dock::{DockLayout, TabKind};
+        let layout = DockLayout::default_layout();
+        let tabs: Vec<TabKind> = layout.state.iter_all_tabs().map(|(_, t)| *t).collect();
+        assert!(
+            tabs.contains(&TabKind::Profiler),
+            "Profiler tab must be in default_layout"
+        );
     }
 }

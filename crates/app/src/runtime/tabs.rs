@@ -1,11 +1,15 @@
+use std::collections::BTreeMap;
+
+use island_core::pipeline::StageTiming;
+use island_core::world::WorldState;
 use render::overlay::OverlayRegistry;
+use sim::StageId;
 
 use crate::camera::Camera;
 use crate::dock::TabKind;
 use crate::hex_inspect_panel::HexInspectPanel;
+use crate::profiler_tab::ProfilerPanel;
 use crate::world_panel::{WorldPanel, WorldPanelEvent};
-
-use island_core::world::WorldState;
 
 use super::view_mode::ViewMode;
 
@@ -35,6 +39,13 @@ pub(super) struct AppTabViewer<'a> {
     pub(super) world_event: &'a mut WorldPanelEvent,
     pub(super) world: &'a WorldState,
     pub(super) picked_hex: Option<hex::OffsetCoord>,
+    // ── Sprint 4.B: Profiler tab borrows ─────────────────────────────────────
+    pub(super) last_tick_timings: Option<&'a BTreeMap<String, StageTiming>>,
+    pub(super) cumulative_timings: &'a BTreeMap<String, StageTiming>,
+    pub(super) last_tick_ms: f64,
+    pub(super) last_regen_ms: f64,
+    pub(super) backend_name: &'a str,
+    pub(super) dirty_frontier: Option<StageId>,
 }
 
 impl egui_dock::TabViewer for AppTabViewer<'_> {
@@ -88,6 +99,17 @@ impl egui_dock::TabViewer for AppTabViewer<'_> {
             }
             TabKind::HexInspect => {
                 HexInspectPanel::show(ui, self.world, self.picked_hex);
+            }
+            TabKind::Profiler => {
+                ProfilerPanel::show(
+                    ui,
+                    self.last_tick_timings,
+                    self.cumulative_timings,
+                    self.last_tick_ms,
+                    self.last_regen_ms,
+                    self.backend_name,
+                    self.dirty_frontier,
+                );
             }
         }
     }

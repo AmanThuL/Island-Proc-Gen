@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use island_core::pipeline::StageTiming;
 use tracing::warn;
 use winit::dpi::PhysicalSize;
 
@@ -11,6 +12,31 @@ use super::tabs::AppTabViewer;
 use super::view_mode::{RenderLayer, ViewMode, render_stack_for};
 
 impl Runtime {
+    /// Drain `world.derived.last_stage_timings` and merge the entries into
+    /// `self.cumulative_timings`. Also updates `self.last_tick_timings` with
+    /// the just-run timings for the per-tick column in the Profiler tab.
+    ///
+    /// Call this once after every successful `pipeline.run` / `pipeline.run_from`.
+    /// No-op if `last_stage_timings` is `None` (the pipeline produced no data).
+    pub(super) fn accumulate_tick_timings(&mut self) {
+        if let Some(tick) = self.world.derived.last_stage_timings.take() {
+            for (k, t) in &tick {
+                let entry = self
+                    .cumulative_timings
+                    .entry(k.clone())
+                    .or_insert(StageTiming {
+                        cpu_ms: 0.0,
+                        gpu_ms: None,
+                    });
+                entry.cpu_ms += t.cpu_ms;
+                if let Some(g) = t.gpu_ms {
+                    entry.gpu_ms = Some(entry.gpu_ms.unwrap_or(0.0) + g);
+                }
+            }
+            self.last_tick_timings = Some(tick);
+        }
+    }
+
     /// Refresh the overlay texture bakes + rebuild the hex-surface instance
     /// buffer after a slider re-run or regen. Shared by the three slider
     /// branches (`wind_dir_changed`, `erosion`/`space`, `climate`) so
@@ -209,6 +235,18 @@ impl Runtime {
         let world_panel = &mut self.world_panel;
         let world = &self.world;
         let picked_hex = self.picked_hex;
+        // Sprint 4.B: profiler borrows — short-lived references for this frame.
+        // `last_tick_ms` is the egui FRAME time (1000/fps_ema), NOT the per-stage
+        // pipeline time. Pipeline cost lives in `cumulative_timings`/`last_tick_timings`
+        // and is only updated when `pipeline.run_from` actually runs (slider release,
+        // regen click). The Profiler header line "Last tick: X ms (FPS Y)" reflects
+        // the wall-clock between successive ticks, matching DD3's mock-up.
+        let last_tick_ms = 1_000.0 / fps.max(f32::EPSILON) as f64;
+        let last_tick_timings = self.last_tick_timings.as_ref();
+        let cumulative_timings = &self.cumulative_timings;
+        let last_regen_ms = self.last_regen_ms;
+        let backend_name = self.backend_name;
+        let dirty_frontier = self.dirty_frontier;
         {
             #[allow(deprecated)]
             egui::CentralPanel::default()
@@ -230,6 +268,12 @@ impl Runtime {
                         world_event: &mut world_event,
                         world,
                         picked_hex,
+                        last_tick_timings,
+                        cumulative_timings,
+                        last_tick_ms,
+                        last_regen_ms,
+                        backend_name,
+                        dirty_frontier,
                     };
                     egui_dock::DockArea::new(dock_state).show_inside(ui, &mut viewer);
                 });
@@ -249,12 +293,16 @@ impl Runtime {
         // fields on the very next draw.
         if params_result.wind_dir_changed {
             self.world.preset = self.preset.clone();
+            // Record dirty frontier before run_from so Profiler tab reflects it.
+            self.cumulative_timings.clear();
+            self.dirty_frontier = Some(StageId::Precipitation);
             if let Err(err) = self
                 .pipeline
                 .run_from(&mut self.world, StageId::Precipitation as usize)
             {
                 warn!("slider re-run failed: {err}");
             } else {
+                self.accumulate_tick_timings();
                 self.refresh_derived_views();
             }
         }
@@ -268,6 +316,8 @@ impl Runtime {
         // double invalidate + double run_from on frames where both fire together.
         if params_result.erosion_changed || params_result.space_changed {
             self.world.preset = self.preset.clone();
+            self.cumulative_timings.clear();
+            self.dirty_frontier = Some(StageId::ErosionOuterLoop);
             invalidate_from(&mut self.world, StageId::ErosionOuterLoop);
             if let Err(err) = self
                 .pipeline
@@ -275,6 +325,7 @@ impl Runtime {
             {
                 warn!("erosion/space slider re-run failed: {err}");
             } else {
+                self.accumulate_tick_timings();
                 self.refresh_derived_views();
             }
         }
@@ -283,12 +334,15 @@ impl Runtime {
         // Frontier: Precipitation — same as the Sprint 1B wind-dir slider.
         if params_result.climate_changed {
             self.world.preset = self.preset.clone();
+            self.cumulative_timings.clear();
+            self.dirty_frontier = Some(StageId::Precipitation);
             if let Err(err) = self
                 .pipeline
                 .run_from(&mut self.world, StageId::Precipitation as usize)
             {
                 warn!("climate slider re-run failed: {err}");
             } else {
+                self.accumulate_tick_timings();
                 self.refresh_derived_views();
             }
         }

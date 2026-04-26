@@ -26,6 +26,8 @@ pub enum TabKind {
     Stats,
     /// Read-only hex attribute inspector (Sprint 3.5.E DD7).
     HexInspect,
+    /// Read-only per-stage timing profiler (Sprint 4.B).
+    Profiler,
 }
 
 impl TabKind {
@@ -39,6 +41,7 @@ impl TabKind {
             TabKind::Params => "Params",
             TabKind::Stats => "Stats",
             TabKind::HexInspect => "Hex Inspect",
+            TabKind::Profiler => "Profiler",
         }
     }
 
@@ -105,6 +108,7 @@ impl DockLayout {
                 TabKind::Params,
                 TabKind::Stats,
                 TabKind::HexInspect,
+                TabKind::Profiler,
             ],
         );
 
@@ -187,16 +191,17 @@ mod tests {
             TabKind::Params,
             TabKind::Stats,
             TabKind::HexInspect,
+            TabKind::Profiler,
         ] {
             assert!(kind.closeable(), "{kind:?} must be user-closeable");
         }
     }
 
     #[test]
-    fn default_layout_contains_all_seven_tab_kinds() {
+    fn default_layout_contains_all_eight_tab_kinds() {
         let layout = DockLayout::default_layout();
         let tabs: Vec<TabKind> = layout.state.iter_all_tabs().map(|(_, t)| *t).collect();
-        // 7 tabs: Viewport + Overlays + World + Camera + Params + Stats + HexInspect
+        // 8 tabs: Viewport + Overlays + World + Camera + Params + Stats + HexInspect + Profiler
         for kind in [
             TabKind::Viewport,
             TabKind::Overlays,
@@ -205,6 +210,7 @@ mod tests {
             TabKind::Params,
             TabKind::Stats,
             TabKind::HexInspect,
+            TabKind::Profiler,
         ] {
             assert!(tabs.contains(&kind), "{kind:?} must be in default layout");
         }
