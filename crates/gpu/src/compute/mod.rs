@@ -1,14 +1,22 @@
-//! GPU compute module — Sprint 4.D scaffold.
+//! GPU compute module — Sprint 4.D / 4.E.
 //!
 //! Provides:
 //! - [`GpuBackend`]: implements [`island_core::pipeline::ComputeBackend`].
-//!   Both pilot pipeline slots are `None` at 4.D — 4.E / 4.F will populate
-//!   them. Every dispatch currently returns
-//!   [`island_core::pipeline::ComputeBackendError::Unsupported`].
+//!   `HillslopeDiffusion` is supported from Sprint 4.E onward.
+//!   `StreamPowerIncision` remains `None` until Sprint 4.F.
 //! - [`buffers`]: helpers to upload/readback `ScalarField2D<f32>`.
 //! - [`timestamp`]: `ComputePassDescriptor::timestamp_writes`-based timer.
-//! - [`hillslope_pipeline`]: stub for Sprint 4.E.
+//! - [`hillslope_pipeline`]: fully implemented at Sprint 4.E.
 //! - [`stream_power_pipeline`]: stub for Sprint 4.F.
+//!
+//! # Interior-mutability pattern
+//!
+//! `HillslopeComputePipeline::dispatch` takes `&mut self` because it may
+//! reallocate internal ping-pong buffers when the grid dimensions change.
+//! The `ComputeBackend` trait takes `&self` so the pipeline is wrapped in
+//! `std::sync::Mutex<Option<HillslopeComputePipeline>>`. The mutex is
+//! `lock()`-ed on every dispatch; contention is impossible in practice because
+//! `ErosionOuterLoop` is single-threaded.
 //!
 //! # Crate-DAG contract
 //!
@@ -20,7 +28,8 @@ pub mod hillslope_pipeline;
 pub mod stream_power_pipeline;
 pub mod timestamp;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use island_core::pipeline::{
     ComputeBackend, ComputeBackendError, ComputeOp, HillslopeParams, StageTiming, StreamPowerParams,
@@ -33,35 +42,40 @@ use stream_power_pipeline::StreamPowerComputePipeline;
 
 // ─── GpuBackend ──────────────────────────────────────────────────────────────
 
-/// GPU compute backend — Sprint 4.D skeleton.
+/// GPU compute backend — Sprint 4.D / 4.E.
 ///
-/// Both pilot pipeline slots (`hillslope`, `stream_power`) are `None` at
-/// Sprint 4.D. `supports()` returns `false` for both operations and every
-/// `run_*` call returns [`ComputeBackendError::Unsupported`] with a clear
-/// message directing the reader to Sprint 4.E / 4.F.
+/// From Sprint 4.E, `HillslopeDiffusion` is fully supported: `supports` returns
+/// `true` and `run_hillslope_diffusion` dispatches the WGSL compute shader.
+/// `StreamPowerIncision` remains `Err(Unsupported)` until Sprint 4.F.
 ///
 /// The struct is `Send + Sync` because [`GpuContext`] holds only `wgpu`
-/// handles that are `Send + Sync` on native backends.
+/// handles that are `Send + Sync` on native backends. Interior mutability for
+/// buffer reallocation is handled via `Mutex`.
 pub struct GpuBackend {
     /// Shared wgpu context. `Arc` allows the backend to be wrapped in
     /// `Arc<dyn ComputeBackend>` for use with `ErosionOuterLoop`.
-    #[allow(dead_code)] // Used by 4.E / 4.F pilots.
+    #[allow(dead_code)] // Used indirectly via Arc<GpuContext> inside the pipelines.
     ctx: Arc<GpuContext>,
-    /// Hillslope diffusion pipeline. `None` at 4.D; `Some` at 4.E.
-    hillslope: Option<HillslopeComputePipeline>,
-    /// Stream power incision pipeline. `None` at 4.D; `Some` at 4.F.
+    /// Hillslope diffusion pipeline. `Some` from Sprint 4.E.
+    ///
+    /// Wrapped in `Mutex` because `dispatch` requires `&mut HillslopeComputePipeline`
+    /// (may reallocate ping-pong buffers) while `ComputeBackend::run_hillslope_diffusion`
+    /// takes `&self`.
+    hillslope: Mutex<Option<HillslopeComputePipeline>>,
+    /// Stream power incision pipeline. `None` at 4.E; `Some` at 4.F.
     stream_power: Option<StreamPowerComputePipeline>,
 }
 
 impl GpuBackend {
     /// Construct a `GpuBackend` from an existing headless [`GpuContext`].
     ///
-    /// Both pilot pipeline slots are left `None` at Sprint 4.D. Sprint 4.E
-    /// and 4.F will construct and assign the real pipelines here.
+    /// From Sprint 4.E, `HillslopeComputePipeline` is constructed here.
+    /// `StreamPowerComputePipeline` is left `None` until Sprint 4.F.
     pub fn new(ctx: Arc<GpuContext>) -> Self {
+        let hillslope = HillslopeComputePipeline::new(Arc::clone(&ctx));
         Self {
             ctx,
-            hillslope: None,    // Sprint 4.E
+            hillslope: Mutex::new(Some(hillslope)),
             stream_power: None, // Sprint 4.F
         }
     }
@@ -69,6 +83,8 @@ impl GpuBackend {
 
 // SAFETY: wgpu native handles are Send + Sync.
 // Arc<GpuContext> is Send + Sync because GpuContext's fields are Send + Sync.
+// Mutex<Option<HillslopeComputePipeline>> is Send + Sync if HillslopeComputePipeline
+// is Send. wgpu resources (Buffer, ComputePipeline, BindGroupLayout) are Send.
 unsafe impl Send for GpuBackend {}
 unsafe impl Sync for GpuBackend {}
 
@@ -79,20 +95,34 @@ impl ComputeBackend for GpuBackend {
 
     fn supports(&self, op: ComputeOp) -> bool {
         match op {
-            ComputeOp::HillslopeDiffusion => self.hillslope.is_some(),
+            ComputeOp::HillslopeDiffusion => {
+                self.hillslope.lock().map(|g| g.is_some()).unwrap_or(false)
+            }
             ComputeOp::StreamPowerIncision => self.stream_power.is_some(),
         }
     }
 
     fn run_hillslope_diffusion(
         &self,
-        _world: &mut WorldState,
-        _params: &HillslopeParams,
+        world: &mut WorldState,
+        params: &HillslopeParams,
     ) -> Result<StageTiming, ComputeBackendError> {
-        Err(ComputeBackendError::Unsupported {
+        let cpu_start = Instant::now();
+
+        let mut guard = self
+            .hillslope
+            .lock()
+            .map_err(|_| ComputeBackendError::Other("hillslope Mutex poisoned".into()))?;
+
+        let pipeline = guard.as_mut().ok_or(ComputeBackendError::Unsupported {
             backend: "gpu",
             op: "hillslope_diffusion",
-        })
+        })?;
+
+        let gpu_ms = pipeline.dispatch(world, params)?;
+        let cpu_ms = cpu_start.elapsed().as_secs_f64() * 1000.0;
+
+        Ok(StageTiming { cpu_ms, gpu_ms })
     }
 
     fn run_stream_power_incision(
@@ -131,13 +161,14 @@ mod tests {
         assert_eq!(backend.name(), "gpu");
     }
 
-    /// Sprint 4.D contract: both pilot op slots are `None`, so `supports`
-    /// returns `false` for both operations.
+    /// Sprint 4.E contract: `supports(HillslopeDiffusion)` returns `true`
+    /// because `GpuBackend::new` constructs `Some(HillslopeComputePipeline)`.
+    /// `supports(StreamPowerIncision)` still returns `false` (4.F).
     ///
     /// Marked #[ignore] — requires a real GPU adapter.
     #[test]
     #[ignore = "requires a working GPU adapter; opt in with IPG_RUN_GPU_TESTS=1"]
-    fn gpu_backend_supports_returns_false_for_both_pilot_ops_at_4_d() {
+    fn gpu_backend_supports_hillslope_true_and_stream_power_false_at_4_e() {
         if std::env::var("IPG_RUN_GPU_TESTS").as_deref() != Ok("1") {
             eprintln!("skipped — set IPG_RUN_GPU_TESTS=1 to run GPU tests");
             return;
@@ -146,12 +177,12 @@ mod tests {
             Arc::new(crate::GpuContext::new_headless((64, 64)).expect("headless context required"));
         let backend = GpuBackend::new(ctx);
         assert!(
-            !backend.supports(ComputeOp::HillslopeDiffusion),
-            "HillslopeDiffusion must not be supported at 4.D"
+            backend.supports(ComputeOp::HillslopeDiffusion),
+            "HillslopeDiffusion must be supported at 4.E"
         );
         assert!(
             !backend.supports(ComputeOp::StreamPowerIncision),
-            "StreamPowerIncision must not be supported at 4.D"
+            "StreamPowerIncision must NOT be supported at 4.E (4.F only)"
         );
     }
 }

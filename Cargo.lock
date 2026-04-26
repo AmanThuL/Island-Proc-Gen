@@ -973,6 +973,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "core",
+ "naga",
  "pollster",
  "tracing",
  "wgpu",
