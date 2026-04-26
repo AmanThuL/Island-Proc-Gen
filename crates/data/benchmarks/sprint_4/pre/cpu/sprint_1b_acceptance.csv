@@ -1,0 +1,16 @@
+shot_id,pipeline_ms,bake_ms,gpu_render_ms
+s00_baseline_default,19.60975,6.9817919999999996,27.774542
+s40_overlay_temperature,19.080916,0.6389170000000001,23.672334
+s41_overlay_precipitation,19.106583,0.934,25.4865
+s42_overlay_soil_moisture,18.797292,0.555416,24.966458
+s43_overlay_curvature,19.736458,0.62975,23.856208
+s44_overlay_dominant_biome,19.166249999999998,0.436459,24.380833000000003
+s45_overlay_hex_aggregated,19.320458,0.35966600000000004,24.905416
+s46_overlay_precip_plus_rivers,19.401125,1.247708,25.308875
+s70_all_overlays_on,19.726334,14.119167000000001,24.979042
+wind_0_volcanic_single_seed42,19.421042,8.028125000000001,
+wind_pi_2_volcanic_single_seed42,19.261125,6.521,
+wind_pi_volcanic_single_seed42,19.221208999999998,7.744083,
+wind_3pi_2_volcanic_single_seed42,18.424958,6.654375,
+wind_0_soil_volcanic_single_seed42,19.190292,6.991542,
+wind_pi_soil_volcanic_single_seed42,19.192833,6.182957999999999,

@@ -1,13 +1,12 @@
 # PROGRESS
 
-**Last Updated:** 2026-04-24 (Sprint 3.5 Hex Surface Readability closed on
-`dev` — 31 commits `6c0059f → a2992c5`; `cargo test --workspace` 528 → 618
-passing / 8 ignored (net +90 A–F); 4 existing baselines per-task regen +
-1 first-shipped `sprint_3_5_hex_surface/` at `schema_version: 3` (27 shots,
-3 view modes × 3 archetypes × 3 seeds). DD1 flat-top / DD2 axial-offset
-kernel / DD3 6-edge river / DD4 `HexCoastClass` / DD5 surface contract /
-DD6 bounded G7 retune / DD7 pick + `HexInspectPanel` / DD8 schema v3 all
-shipped. **Sprint 4 Compute Productization** is now active-next.)
+**Last Updated:** 2026-04-25 (Sprint 4 Compute Productization Phase 1
+*active* — Task 4.0 pre-flight gates green; 5 `--headless` baselines
+exit 0 idempotently; lump-sum CPU BEFORE benchmark captured under
+`crates/data/benchmarks/sprint_4/pre/cpu/<5>.csv` against the v3
+`summary.ron` lump-sum trio (`pipeline_ms`, `bake_ms`, `gpu_render_ms`).
+Per-stage extension lands at 4.B once `RunSummary.schema_version: 3 →
+4` ships.)
 
 ---
 
@@ -35,15 +34,34 @@ is at [`docs/design/sprints/sprint_3_5_hex_surface_readability.md`](docs/design/
 
 ## CURRENT FOCUS
 
-**Primary:** Sprint 4 — Compute Productization (*active-next*). `crates/gpu/`
-+ `ComputeBackend` refactor, GPU passes (hillslope / rainfall-proxy-v2 /
-hex-projection + stream-power / flow-accumulation), `island-gen` CLI
-productization, CPU/GPU parity harness, artifact-system maturity.
-Physical-unit calibration closes §10 G4. Sprint 3.5's forwarded G5 (Cliff
-coverage) and G7 CoastalScrub foothold land here too — the DD4 empirical
-escape was triggered at 3.5 close-out; slopes need the Sprint 4 unit-flux
-rework to sharpen before Cliff thresholds fire. Does NOT do first-pass
-beauty, semantic layer, or re-shape hex readability.
+**Primary:** Sprint 4 — Compute Productization (Phase 1, *active*).
+`crates/gpu/` + `ComputeBackend` scaffold, per-stage CPU/GPU timing
+harness, **HillslopeDiffusion + StreamPowerIncision** GPU pilots inside
+`ErosionOuterLoop`. CPU stays canonical truth; GPU is opt-in benchmark
+via `IPG_COMPUTE_BACKEND=gpu` env / `--compute-backend gpu` CLI flag.
+`RunSummary.schema_version: 3 → 4` adds `stage_timings` (BTreeMap of
+`StageId` debug name → `StageTiming { cpu_ms, gpu_ms? }`). Profiler
+egui_dock tab MVP joins the existing dock layout; `--print-breakdown`
+prints per-shot console tables. Sprint 4's plan doc is at
+[`docs/design/sprints/sprint_4_compute_productization.md`](docs/design/sprints/sprint_4_compute_productization.md).
+
+**Sprint 4 is intentionally Phase 1 of the roadmap §Sprint 4 arc.** The
+roadmap's full bundle (CLI productization + physical-unit calibration +
+remaining GPU ports + multi-platform CI) is decomposed into:
+
+- **Sprint 4** (active, this doc): GPU compute scaffold + per-stage
+  timing + 2 GPU pilots
+- **Sprint 4.1** — CLI productization: `crates/cli/`, `island-gen`
+  binary, `batch / bench / sweep / atlas` subcommands
+- **Sprint 4.2** — Physical-unit calibration (mm/yr, m, mm·yr⁻¹).
+  Closes §10 G4 (max_z drop), G5 (Cliff coverage), G7 (CoastalScrub
+  foothold). All forwarded from Sprint 3.1 / 3.5 land here.
+- **Sprint 4.x** — Remaining GPU ports (HexProjection, FlowAccumulation,
+  LFPM v3, CoastType v2 fetch integral, FogLikelihood) + multi-platform
+  CI matrix (Linux / Windows headless backend)
+
+Sprint 4 does NOT do first-pass beauty (Sprint 4.5), semantic layer
+(Sprint 5), or re-shape hex readability (Sprint 3.5 territory, closed).
 
 Sprint 3.5's closed contracts (frozen in CLAUDE.md Gotchas §Sprint 3.5):
 flat-top hex convention; DD2 axial-offset aggregation kernel; 6-edge
@@ -53,10 +71,6 @@ SM floor `COASTAL_MARGIN_MAX_DIST=3` + floor 0.25; CloudForest
 `T_PEAK=18 / T_SIGMA=6`; DD7 off-grid-clicks-are-no-op + read-only
 `HexInspectPanel`; DD8 schema_version 3 + optional `view_mode` on
 `CaptureShot`; `render_stack_for(ViewMode)` parity tier-1 gate.
-
-Sprint 4's plan doc is not yet authored; the empty placeholder file at
-`docs/design/sprints/sprint_4_*.md` will be written when Sprint 4 starts.
-Until then, the roadmap §Sprint 4 entry carries the forward-looking intent.
 
 **Last shipped:** Sprint 3.5 Hex Surface Readability (2026-04-24, 31
 commits A→F). **Previous:** Sprint 3.4 Module Boundary Cleanup
@@ -317,7 +331,9 @@ doc gets authored.
 
 | Sprint | Type | Focus | Source of truth |
 |---|---|---|---|
-| 4 | infra | `crates/gpu/` + `ComputeBackend` refactor, GPU passes (hillslope / rainfall-proxy-v2 / hex-projection + stream-power / flow-accumulation), `island-gen` CLI productization, CPU/GPU parity harness, artifact-system maturity. Physical-unit calibration closes §10 G4 (and unblocks 3.5's forwarded G5 Cliff coverage + G7 CoastalScrub foothold). Does NOT do first-pass beauty, semantic layer, or re-shape hex readability. | Roadmap §Sprint 4 |
+| 4.1 | infra (productization) | Extract `crates/cli/` + `island-gen` binary; `batch / bench / sweep / atlas` subcommands; benchmark CSV format documented for `bench`; consumes Sprint 4's per-stage timing surface as a first-class `island-gen bench` output. No new GPU compute, no new sim science. | Sprint 4 §8 Handoff + Roadmap §Sprint 4 |
+| 4.2 | calibration | Physical-unit calibration: erosion `K_bed / K_sed / H*` to mm·yr⁻¹, height as meters above sea level, LFPM v3 `q` as mm·yr⁻¹. Closes §10 G4 (max_z drop), G5 (Cliff coverage), G7 (CoastalScrub foothold). Cascade-regen all 5 baselines (deliberate truth-path bump). Save format `IPGF` version bump + load-time migration. | Sprint 4 §8 Handoff + Roadmap §Sprint 4 |
+| 4.x | infra (GPU breadth) | Remaining GPU ports — HexProjection (scatter/atomics), FlowAccumulation (DAG/parallel scan), LFPM v3 Precipitation (sequential sweep), CoastType v2 fetch integral (raycast), FogLikelihood (cheap). Multi-platform CI matrix (Linux/Windows). Profiler tab evolution (per-iter sub-stage breakdown inside `ErosionOuterLoop`). Compute-trait migration toward primitives if op count grows past 6. | Sprint 4 §8 Handoff |
 | 4.5 | presentation | Canonical base-look lock (sky / fog / sea tonality, terrain shading polish, day-light rig), Water/Coast Presentation Pass, Depth & Framing Pass, Hero Seed Pack (6–10 curated worlds), Demo Artifact Pack (polished screenshots + GIFs + before/after strip), README / Demo Story Pass. First sprint where screenshots alone sell the repo. | Roadmap §Sprint 4.5 |
 | 5 S2 | semantics | Settlement suitability + village/town placement + road graph v1 (MST + Dijkstra on hex, weighted by Sprint 3.5's semantic-consumable `accessibility_cost`). | Roadmap §Sprint 5 S2 |
 | 5 S3 | semantics | WFC / rule-based semantic filling (points of interest, local pattern coherence). Rule-based guaranteed; 5×5 WFC patch experiment stretch. | Roadmap §Sprint 5 S3 |
@@ -333,16 +349,24 @@ Nothing paused.
 
 ## QUICK REFERENCE
 
-Active sprint: **Sprint 4 — Compute Productization** (*infra*).
+Active sprint: **Sprint 4 — Compute Productization (Phase 1)** (*infra*).
 
-**High energy?** → Author the Sprint 4 plan doc into
-`docs/design/sprints/sprint_4_compute_productization.md` (currently empty
-placeholder), then start the `crates/gpu/` + `ComputeBackend` scaffolding.
-Sprint 3.5 closed with `HexSurfaceRenderer` / `HexRiverRenderer` already
-instancing-based and `render_stack_for(ViewMode)` bridging interactive
-and headless paths — GPU ports of sim stages land alongside these
-without re-shaping the render layer. CLAUDE.local.md's subagent cadence
-(implementer → simplifier → superpowers reviewer Opus) applies.
+**High energy?** → Sprint 4 task ladder per
+[`docs/design/sprints/sprint_4_compute_productization.md`](docs/design/sprints/sprint_4_compute_productization.md):
+4.0 (pre-flight + doc-sync + lump-sum BEFORE benchmark) → 4.A (per-stage
+CPU timing substrate + `RunSummary.schema_version: 3 → 4` + `--print-breakdown`)
+→ 4.B (5-baseline cascade regen v4 + Profiler tab MVP) → 4.C
+(`ComputeBackend` boundary + kernel extraction; behavioural equivalence)
+→ 4.D (`GpuContext::TIMESTAMP_QUERY` + GpuBackend skeleton + helpers)
+→ 4.E (HillslopeDiffusion GPU port + parity test) → 4.F
+(StreamPowerIncision GPU port + accumulated parity test) → 4.G
+(close-out: AFTER benchmarks + CLAUDE.md / PROGRESS.md / sprint
+summary). CLAUDE.local.md's subagent cadence (implementer → simplifier
+→ superpowers reviewer Opus) applies. Sprint 3.5 closed with
+`HexSurfaceRenderer` / `HexRiverRenderer` already instancing-based and
+`render_stack_for(ViewMode)` bridging interactive and headless paths —
+GPU ports of sim stages land alongside these without re-shaping the
+render layer.
 
 **Medium energy?** → Tier-2 interactive ↔ headless parity evidence.
 Run `IPG_RUN_VISUAL_PARITY=1 cargo test -p app --test

@@ -1,0 +1,11 @@
+shot_id,pipeline_ms,bake_ms,gpu_render_ms
+pre_volcanic_single_seed42,20.199,15.817375000000002,28.207
+post_volcanic_single_seed42,19.238959,14.98,24.332708
+pre_volcanic_twin_seed42,27.568333,21.489583,23.632375
+post_volcanic_twin_seed42,27.883333999999998,19.217292,21.682375
+pre_caldera_seed42,17.254584,15.793083,27.534333
+post_caldera_seed42,16.900790999999998,14.595708,26.995666
+pre_volcanic_caldera_young_seed42,17.38825,15.549375000000001,25.883791
+post_volcanic_caldera_young_seed42,16.712334,14.360042,26.117291
+pre_volcanic_twin_old_seed42,16.661833,17.409750000000003,20.418667000000003
+post_volcanic_twin_old_seed42,15.902916,15.565792,20.35775
