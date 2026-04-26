@@ -82,23 +82,37 @@ impl Runtime {
         // Compute the world-space hex_size from the sim-space value in hex_grid.
         // If hex_grid is not yet populated, fall back to 1.0 (the renderer's
         // initial default); the 0-instance draw in HexSurface is a no-op.
-        let world_hex_size = self
+        // Compute world-space hex_size and the flat instance index for the
+        // currently picked hex in a single pass over hex_grid.
+        let (world_hex_size, selected_hex_idx) = self
             .world
             .derived
             .hex_grid
             .as_ref()
             .map(|g| {
-                g.hex_size
+                let size = g.hex_size
                     * hex::geometry::sim_to_world_scale(
                         self.world.resolution.sim_width,
                         self.world_xz_extent,
-                    )
+                    );
+                // Convert OffsetCoord → flat instance index (row * cols + col).
+                // This is the same row-major iteration used by build_hex_instances,
+                // so the index matches the GPU instance buffer order.
+                let idx = self.picked_hex.and_then(|hx| {
+                    if hx.col < g.cols && hx.row < g.rows {
+                        Some(hx.row * g.cols + hx.col)
+                    } else {
+                        None
+                    }
+                });
+                (size, idx)
             })
-            .unwrap_or(1.0);
+            .unwrap_or((1.0, None));
         self.hex_surface.update_view_projection(
             &self.gpu.queue,
             &vp.to_cols_array_2d(),
             world_hex_size,
+            selected_hex_idx,
         );
 
         // ── Hex-river uniform update (per-frame) ──────────────────────────────

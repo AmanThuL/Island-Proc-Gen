@@ -201,7 +201,7 @@ impl HexInstance {
 
 // ── Uniform ───────────────────────────────────────────────────────────────────
 
-/// View-projection + hex_size + DD4 coast-class edge-tint uniform — 176 bytes.
+/// View-projection + hex_size + DD4 coast-class edge-tint + selection uniform — 176 bytes.
 ///
 /// Mirrors `struct Uniforms` in `shaders/hex_surface.wgsl` byte-for-byte:
 ///
@@ -211,7 +211,8 @@ impl HexInstance {
 /// | `hex_size`          | 64     | 4    | world-space centre-to-vertex radius |
 /// | `_pad0`             | 68     | 12   | pads `hex_size` to 16-byte boundary |
 /// | `coast_class_tints` | 80     | 80   | 5 × vec4<f32> — DD4 edge tint colours |
-/// | `_pad1`             | 160    | 16   | pads to 176-byte struct |
+/// | `selected_hex_idx`  | 160    | 4    | flat instance index of picked hex; -1 = none |
+/// | `_pad1`             | 164    | 12   | pads to 176-byte struct |
 ///
 /// Total: 176 bytes. `#[repr(C)]` + `bytemuck::Pod` guarantees byte layout
 /// matches the WGSL struct at every field boundary. Asserted by
@@ -221,6 +222,11 @@ impl HexInstance {
 /// (Beach, RockyHeadland, Estuary, Cliff, LavaDelta). Inland (0) and
 /// OpenOcean (1) skip the edge-tint path entirely in the shader.
 /// Each entry is `[r, g, b, alpha]`; `alpha` controls blend intensity.
+///
+/// `selected_hex_idx` encodes the flat instance index of the currently picked
+/// hex (`row * cols + col`). `-1i32` means no hex is selected. The shader's
+/// selection branch is dead when this field is -1, so headless shots (which
+/// never pick a hex) are bit-identical to pre-selection baselines.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct HexSurfaceUniforms {
@@ -230,7 +236,10 @@ struct HexSurfaceUniforms {
     /// DD4 edge-tint colours, indexed `[class - 2]` for `class ∈ 2..=6`.
     /// `[r, g, b, alpha]` — alpha controls blend intensity in the edge band.
     coast_class_tints: [[f32; 4]; 5], //  80..160 bytes — 5 × vec4<f32>
-    _pad1: [f32; 4],          // 160..176 bytes — pads to 16-byte boundary
+    /// Flat instance index of the picked hex (`row * cols + col`).
+    /// `-1i32` when no hex is selected (headless, pre-click).
+    selected_hex_idx: i32, // 160..164 bytes
+    _pad1: [f32; 3],          // 164..176 bytes — pads to 16-byte boundary
 }
 
 // ── CPU-side mesh builders ────────────────────────────────────────────────────
@@ -382,7 +391,8 @@ impl HexSurfaceRenderer {
             hex_size: 1.0,
             _pad0: [0.0; 3],
             coast_class_tints: COAST_CLASS_TINTS,
-            _pad1: [0.0; 4],
+            selected_hex_idx: -1,
+            _pad1: [0.0; 3],
         };
         let view_proj_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("hex_surface_view_proj_buf"),
@@ -528,7 +538,7 @@ impl HexSurfaceRenderer {
         self.instance_count = needed;
     }
 
-    /// Update the view-projection + hex_size uniforms in a single call.
+    /// Update the view-projection + hex_size + selection uniforms in a single call.
     ///
     /// Call once per frame before [`draw`], passing the same matrix used by the
     /// terrain renderer (for consistent projection) and the current
@@ -536,14 +546,21 @@ impl HexSurfaceRenderer {
     /// `[0, DEFAULT_WORLD_XZ_EXTENT = 5.0]`, so hexes must scale with the grid,
     /// not render at a hardcoded 1 world unit).
     ///
-    /// Takes both parameters together rather than splitting into separate
-    /// setters so callers cannot forget one — the pre-c8 split variant made
-    /// forgetting to update `hex_size` silently produce 1-world-unit hexes.
+    /// `selected_hex_idx` is the flat instance index of the currently picked hex,
+    /// computed as `row * cols + col`. Pass `None` (encoded as `-1i32`) when no
+    /// hex is selected. The shader's selection highlight is inactive when the
+    /// index is -1, so headless shots — which never pick a hex — produce
+    /// bit-identical output to the pre-selection baselines.
+    ///
+    /// Takes all parameters together rather than splitting into separate setters
+    /// so callers cannot forget one — the pre-c8 split variant made forgetting
+    /// to update `hex_size` silently produce 1-world-unit hexes.
     pub fn update_view_projection(
         &self,
         queue: &wgpu::Queue,
         view_proj: &[[f32; 4]; 4],
         hex_size: f32,
+        selected_hex_idx: Option<u32>,
     ) {
         // Tints are fixed at construction (COAST_CLASS_TINTS). Re-supply them
         // here so a single full write keeps all uniform fields coherent. This
@@ -554,7 +571,9 @@ impl HexSurfaceRenderer {
             hex_size,
             _pad0: [0.0; 3],
             coast_class_tints: COAST_CLASS_TINTS,
-            _pad1: [0.0; 4],
+            // -1 encodes "no selection"; the shader skips the highlight branch.
+            selected_hex_idx: selected_hex_idx.map(|i| i as i32).unwrap_or(-1),
+            _pad1: [0.0; 3],
         };
         queue.write_buffer(&self.view_proj_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
@@ -787,7 +806,7 @@ mod tests {
             size_of::<HexSurfaceUniforms>(),
             176,
             "HexSurfaceUniforms must be exactly 176 bytes to match shaders/hex_surface.wgsl \
-             (64 view_proj + 4 hex_size + 12 pad0 + 80 coast_class_tints + 16 pad1)"
+             (64 view_proj + 4 hex_size + 12 pad0 + 80 coast_class_tints + 4 selected_hex_idx + 12 pad1)"
         );
 
         // WGSL side — parse the shader and compute the Uniforms struct span.
@@ -811,7 +830,7 @@ mod tests {
             span, 176,
             "WGSL `Uniforms` struct must be exactly 176 bytes; naga computed \
              {span}. Breakdown: 64 view_proj + 4 hex_size + 12 _pad0 (three f32) \
-             + 80 coast_class_tints (5 × vec4) + 16 _pad1 (vec4)."
+             + 80 coast_class_tints (5 × vec4) + 4 selected_hex_idx (i32) + 12 _pad1 (three f32)."
         );
     }
 
@@ -1016,5 +1035,119 @@ mod tests {
                 "corner {i} radius = {r}, expected 1.0"
             );
         }
+    }
+
+    // ── hex_surface_uniforms_byte_layout_unchanged ────────────────────────────
+
+    /// Sprint 3.5.G layout lock: `HexSurfaceUniforms` must remain exactly
+    /// 176 bytes after adding `selected_hex_idx`. Mirrors the stricter
+    /// `uniforms_buffer_size_matches_wgsl_layout` test (which also parses the
+    /// WGSL), but is a cheap pure-Rust assert that fires first.
+    #[test]
+    fn hex_surface_uniforms_byte_layout_unchanged() {
+        assert_eq!(
+            size_of::<HexSurfaceUniforms>(),
+            176,
+            "HexSurfaceUniforms must remain 176 bytes after Sprint 3.5.G changes \
+             (selected_hex_idx replaces the first f32 of _pad1; total unchanged)"
+        );
+    }
+
+    // ── selected_hex_idx_packs_none_as_negative_one ───────────────────────────
+
+    /// Sprint 3.5.G contract: `update_view_projection(..., None)` must write
+    /// `-1i32` at offset 160 of the uniform buffer. The shader treats `-1` as
+    /// "no selection" and skips the highlight branch entirely, so headless shots
+    /// (which never pick a hex) remain bit-identical to pre-3.5.G baselines.
+    #[test]
+    fn selected_hex_idx_packs_none_as_negative_one() {
+        // Construct the uniforms directly (mirrors what update_view_projection does).
+        let uniforms_no_sel = HexSurfaceUniforms {
+            view_proj: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            hex_size: 1.0,
+            _pad0: [0.0; 3],
+            coast_class_tints: COAST_CLASS_TINTS,
+            selected_hex_idx: None::<u32>.map(|i| i as i32).unwrap_or(-1),
+            _pad1: [0.0; 3],
+        };
+        assert_eq!(
+            uniforms_no_sel.selected_hex_idx, -1,
+            "selected_hex_idx must be -1 when no hex is selected (None input)"
+        );
+
+        // Verify the byte offset: `selected_hex_idx` is at offset 160.
+        // Cast to bytes and read the i32 at that position.
+        let bytes: &[u8] = bytemuck::bytes_of(&uniforms_no_sel);
+        let idx_bytes: [u8; 4] = bytes[160..164].try_into().unwrap();
+        let idx_value = i32::from_ne_bytes(idx_bytes);
+        assert_eq!(
+            idx_value, -1,
+            "Byte offset 160 must encode -1i32 when no hex is selected"
+        );
+    }
+
+    // ── picked_hex_to_instance_idx_lookup ─────────────────────────────────────
+
+    /// Sprint 3.5.G: the flat instance index formula `row * cols + col` must
+    /// match the iteration order used by `build_hex_instances` (outer loop =
+    /// row, inner loop = col). Verified with a small synthetic grid:
+    /// - `(col=0, row=0)` → index 0
+    /// - `(col=cols-1, row=rows-1)` → index `cols * rows - 1`
+    /// - `(col=2, row=1)` in a 5-col grid → index 7
+    #[test]
+    fn picked_hex_to_instance_idx_lookup() {
+        let cols: u32 = 5;
+        let rows: u32 = 3;
+
+        // Simulate the conversion in frame.rs: `hx.row * g.cols + hx.col`
+        let idx = |col: u32, row: u32| -> u32 { row * cols + col };
+
+        assert_eq!(idx(0, 0), 0, "(col=0, row=0) must be instance 0");
+        assert_eq!(
+            idx(cols - 1, rows - 1),
+            cols * rows - 1,
+            "(col=cols-1, row=rows-1) must be the last instance"
+        );
+        assert_eq!(idx(2, 1), 7, "(col=2, row=1) in a 5-col grid: 1*5+2 = 7");
+
+        // Verify the inverse: each unique (col, row) maps to a unique index.
+        let mut seen = std::collections::HashSet::new();
+        for row in 0..rows {
+            for col in 0..cols {
+                let flat = idx(col, row);
+                assert!(
+                    flat < cols * rows,
+                    "flat index {flat} must be < cols*rows = {}",
+                    cols * rows
+                );
+                assert!(
+                    seen.insert(flat),
+                    "flat index {flat} is not unique for (col={col}, row={row})"
+                );
+            }
+        }
+    }
+
+    // ── hex_surface_wgsl_sel_band_constants_locked ────────────────────────────
+
+    /// Sprint 3.5.G pick-once-and-commit lock: the WGSL `SEL_BAND_START` and
+    /// `SEL_BLEND` constants must remain at their design values. Any change to
+    /// the visual threshold or blend weight requires this test to be updated.
+    #[test]
+    fn hex_surface_wgsl_sel_band_constants_locked() {
+        let src = include_str!("../../../shaders/hex_surface.wgsl");
+        assert!(
+            src.contains("const SEL_BAND_START: f32 = 0.72;"),
+            "hex_surface.wgsl SEL_BAND_START drifted from Sprint 3.5.G lock (0.72)"
+        );
+        assert!(
+            src.contains("const SEL_BLEND: f32 = 0.85;"),
+            "hex_surface.wgsl SEL_BLEND drifted from Sprint 3.5.G lock (0.85)"
+        );
     }
 }

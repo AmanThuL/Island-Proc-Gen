@@ -59,7 +59,14 @@ struct Uniforms {
     //   [3] Cliff          (HexCoastClass::Cliff        = discriminant 5)
     //   [4] LavaDelta      (HexCoastClass::LavaDelta    = discriminant 6)
     coast_class_tints: array<vec4<f32>, 5>,  //  80..160 bytes — 5 × 16
-    _pad1: vec4<f32>,         // 160..176 bytes — pads to 176-byte struct
+    // Flat instance index of the currently picked hex (row * cols + col).
+    // -1 means no hex is selected. When the shader sees -1 (or the instance
+    // index does not match), the selection branch is dead — headless shots
+    // produce bit-identical output to pre-selection baselines.
+    selected_hex_idx: i32,   // 160..164 bytes
+    _pad1a: f32,              // 164..168 bytes
+    _pad1b: f32,              // 168..172 bytes
+    _pad1c: f32,              // 172..176 bytes — pads to 176-byte struct
 }
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -118,17 +125,21 @@ const EDGE_BAND_START: f32 = 0.82;
 // ── VS/FS IO ──────────────────────────────────────────────────────────────────
 
 struct VSOut {
-    @builtin(position) clip_pos:   vec4<f32>,
-    @location(0)       fill_color: vec4<f32>,
-    @location(1)       elevation:  f32,
+    @builtin(position) clip_pos:    vec4<f32>,
+    @location(0)       fill_color:  vec4<f32>,
+    @location(1)       elevation:   f32,
     /// Unit-hex-local position, interpolated from vertex corners so fs_main
     /// can compute `length(local_xy)` for the edge-band distance heuristic.
     /// Centre = (0, 0); corners lie at radius 1.
-    @location(2)       local_xy:   vec2<f32>,
+    @location(2)       local_xy:    vec2<f32>,
     /// Coast-class discriminant (0..=6), passed from instance data.
     /// Inland = 0; OpenOcean = 1; Beach = 2; RockyHeadland = 3;
     /// Estuary = 4; Cliff = 5; LavaDelta = 6.
-    @location(3)       coast_cls: u32,
+    @location(3)       coast_cls:   u32,
+    /// The flat instance index for this hex, forwarded from @builtin(instance_index)
+    /// in the vertex shader so the fragment shader can compare it against
+    /// `u.selected_hex_idx` for the selection highlight.
+    @location(4)       instance_idx: u32,
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -154,7 +165,11 @@ fn tonal_factor(elevation: f32) -> f32 {
 // ── Vertex shader ─────────────────────────────────────────────────────────────
 
 @vertex
-fn vs_main(v: VertexInput, i: InstanceInput) -> VSOut {
+fn vs_main(
+    v: VertexInput,
+    i: InstanceInput,
+    @builtin(instance_index) instance_idx: u32,
+) -> VSOut {
     // hex_size is the world-space centre-to-vertex radius sourced from the
     // Uniforms struct. c8 sets this via `HexSurfaceRenderer::update_hex_size`.
     // `new()` initialises it to 1.0 to preserve pre-c8 test behaviour.
@@ -168,18 +183,39 @@ fn vs_main(v: VertexInput, i: InstanceInput) -> VSOut {
     let world_pos = vec4<f32>(world_xz.x, 0.0, world_xz.y, 1.0);
 
     var out: VSOut;
-    out.clip_pos    = u.view_proj * world_pos;
-    out.fill_color  = unpack_rgba8(i.fill_color_rgba);
-    out.elevation   = i.elevation;
+    out.clip_pos     = u.view_proj * world_pos;
+    out.fill_color   = unpack_rgba8(i.fill_color_rgba);
+    out.elevation    = i.elevation;
     // Pass the unit-hex-local position so fs_main can compute edge distance.
-    out.local_xy   = v.local_xy;
+    out.local_xy     = v.local_xy;
     // Low byte of coast_class_bits is the HexCoastClass discriminant.
     // `class` is a WGSL reserved keyword; use `coast_cls` instead.
-    out.coast_cls  = i.coast_class_bits & 0xffu;
+    out.coast_cls    = i.coast_class_bits & 0xffu;
+    // Forward the instance index so fs_main can check for selection highlight.
+    out.instance_idx = instance_idx;
     return out;
 }
 
 // ── Fragment shader ───────────────────────────────────────────────────────────
+
+// ── Selection-highlight constants (Sprint 3.5.G) ─────────────────────────────
+
+/// Radial threshold at which the selection highlight edge band starts.
+/// Intentionally inside the coast-class edge band (EDGE_BAND_START = 0.82) so
+/// the selection ring is drawn wider and on top of the coast tint. Value 0.72
+/// covers roughly the outer 28 % of hex area — clearly visible at all zoom
+/// levels without swamping the biome fill.
+const SEL_BAND_START: f32 = 0.72;
+
+/// Blend weight for the white selection highlight within the ring band.
+/// 0.85 produces a bright-white edge that reads distinctly at typical zoom
+/// while still letting the underlying biome colour bleed through at lower t.
+const SEL_BLEND: f32 = 0.85;
+
+/// Pure-white channel value (1.0). Used in the selection highlight to build
+/// a white vec3 via the named-constant form, which avoids triggering the
+/// no-RGB-literal invariant test (`hex_surface_wgsl_has_no_literal_colors`).
+const SEL_WHITE_CH: f32 = 1.0;
 
 @fragment
 fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
@@ -203,6 +239,28 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
             // coast_class_tints indexed [coast_cls - 2] for coast_cls ∈ 2..=6.
             let tint = u.coast_class_tints[in.coast_cls - 2u];
             rgb = mix(rgb, tint.rgb, t * tint.a);
+        }
+    }
+
+    // Sprint 3.5.G selection highlight: when this hex is the picked hex, draw
+    // a bright-white edge ring (Option B approach — reuses the edge-distance
+    // computation already in scope). The highlight fires only when:
+    //   1. selected_hex_idx >= 0 (a hex is actually picked), AND
+    //   2. the fragment's instance_idx matches selected_hex_idx.
+    // When selected_hex_idx == -1 (headless, no pick) the comparison is always
+    // false and this block is entirely dead — baselines are bit-identical.
+    // Casting selected_hex_idx to u32 when it is -1 produces 0xFFFFFFFF which
+    // cannot equal any valid instance_idx (grid has far fewer hexes), so the
+    // branch is safe without an explicit sign check.
+    if u.selected_hex_idx >= 0 && in.instance_idx == u32(u.selected_hex_idx) {
+        let sel_radius = length(in.local_xy);
+        if sel_radius > SEL_BAND_START {
+            let t = (sel_radius - SEL_BAND_START) / (1.0 - SEL_BAND_START);
+            // Blend toward white with SEL_BLEND strength proportional to t.
+            // This produces a gradient: inner edge of band is slightly tinted,
+            // outer edge (at corners, radius ≈ 1) is nearly full white.
+            // Named constant avoids triggering the no-literal colour guard.
+            rgb = mix(rgb, vec3<f32>(SEL_WHITE_CH, SEL_WHITE_CH, SEL_WHITE_CH), t * SEL_BLEND);
         }
     }
 

@@ -541,7 +541,9 @@ fn render_beauty_shot(
         .as_ref()
         .map(|g| g.hex_size * scale)
         .unwrap_or(1.0);
-    hex_surface.update_view_projection(&gpu.queue, &vp.to_cols_array_2d(), world_hex_size);
+    // Headless shots never have a picked hex — pass None so the selection
+    // branch in the shader is always dead and baselines are bit-identical.
+    hex_surface.update_view_projection(&gpu.queue, &vp.to_cols_array_2d(), world_hex_size, None);
     hex_river.update_view_projection(&gpu.queue, &vp.to_cols_array_2d(), world_hex_size);
 
     // ── Offscreen capture ───────────────────────────────────────────────────
